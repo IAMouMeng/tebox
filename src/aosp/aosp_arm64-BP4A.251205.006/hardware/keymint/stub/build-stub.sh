@@ -6,17 +6,16 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/../../../../../.." && pwd)
 VARIANT=$(basename "$(cd "$SCRIPT_DIR/../../.." && pwd)")
+# shellcheck source=scripts/env.sh
+source "$ROOT/scripts/env.sh"
 HAL=$ROOT/src/aosp/$VARIANT/hardware/keymint
 GEN=$ROOT/out/keymint-ndk-gen
 OUT=$ROOT/out/keymint-stub
 GSI_LIBS="${GSI_LIBS:-$ROOT/src/aosp/$VARIANT/prebuilts/gsi-lib64}"
-NDK=${NDK:-/opt/homebrew/Caskroom/android-ndk/30/AndroidNDK16248370.app/Contents/NDK}
-AIDL=${AIDL:-/Users/myt/Library/Android/sdk/build-tools/36.1.0/aidl}
 HI=$ROOT/thirdparty/hardware-interfaces
 API=34
-HOST_TAG=darwin-x86_64
-CC=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/aarch64-linux-android${API}-clang++
-NM=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/llvm-nm
+CC=$NDK/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin/aarch64-linux-android${API}-clang++
+NM=$NDK/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin/llvm-nm
 
 KEYMINT_HASH=$(cat "$HI/security/keymint/aidl/aidl_api/android.hardware.security.keymint/4/.hash")
 SECURECLOCK_HASH=$(cat "$HI/security/secureclock/aidl/aidl_api/android.hardware.security.secureclock/1/.hash")
