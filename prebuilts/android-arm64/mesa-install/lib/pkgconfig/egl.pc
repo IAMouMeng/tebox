@@ -1,0 +1,11 @@
+prefix=/Users/myt/Desktop/work/GKI/prebuilts/android-arm64/mesa-install
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: egl
+Description: Mesa EGL Library
+Version: 24.3.4
+Requires.private: libdrm >=  2.4.75
+Libs: -L${libdir} -lEGL
+Libs.private: -lpthread -pthread -lm
+Cflags: -I${includedir}

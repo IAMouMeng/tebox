@@ -1,0 +1,10 @@
+prefix=/Users/myt/Desktop/work/GKI/prebuilts/android-arm64/mesa-install
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: glesv2
+Description: Mesa OpenGL ES 2.0 library
+Version: 24.3.4
+Libs: -L${libdir} -lGLESv2
+Libs.private: -lpthread -pthread -lm
+Cflags: -I${includedir}

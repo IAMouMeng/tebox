@@ -1,0 +1,4 @@
+interface:
+  display_name: "GKI GSI Adapt"
+  short_description: "Adapt the project to a new system.img / GSI build"
+  default_prompt: "Use $gki-gsi to adapt this workspace to a new Android system.img."
