@@ -1,0 +1,37 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+aidl_interface {
+    name: "android.system.vold",
+    vendor_available: true,
+    stability: "vintf",
+    host_supported: true,
+    srcs: [
+        "android/system/vold/CheckpointingState.aidl",
+        "android/system/vold/IVold.aidl",
+        "android/system/vold/IVoldCheckpointListener.aidl",
+    ],
+    backend: {
+        java: {
+            enabled: false,
+        },
+        cpp: {
+            enabled: true,
+        },
+        ndk: {
+            enabled: true,
+        },
+        rust: {
+            enabled: true,
+        },
+    },
+    frozen: true,
+    versions_with_info: [
+        {
+            version: "1",
+            imports: [],
+        },
+    ],
+
+}

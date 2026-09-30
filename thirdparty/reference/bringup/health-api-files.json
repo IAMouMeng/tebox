@@ -1,0 +1,130 @@
+[
+  {
+    "name": "BatteryCapacityLevel.aidl",
+    "path": "health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryCapacityLevel.aidl",
+    "sha": "e5438865c1cda1ed77401aead9128e60b97b33eb",
+    "size": 1906,
+    "url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryCapacityLevel.aidl?ref=lineage-22.2",
+    "html_url": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryCapacityLevel.aidl",
+    "git_url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/e5438865c1cda1ed77401aead9128e60b97b33eb",
+    "download_url": "https://raw.githubusercontent.com/LineageOS/android_hardware_interfaces/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryCapacityLevel.aidl",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryCapacityLevel.aidl?ref=lineage-22.2",
+      "git": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/e5438865c1cda1ed77401aead9128e60b97b33eb",
+      "html": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryCapacityLevel.aidl"
+    }
+  },
+  {
+    "name": "BatteryHealth.aidl",
+    "path": "health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryHealth.aidl",
+    "sha": "4ce7952af2aa96ce9aee6e7a0ef2003132b0553b",
+    "size": 1913,
+    "url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryHealth.aidl?ref=lineage-22.2",
+    "html_url": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryHealth.aidl",
+    "git_url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/4ce7952af2aa96ce9aee6e7a0ef2003132b0553b",
+    "download_url": "https://raw.githubusercontent.com/LineageOS/android_hardware_interfaces/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryHealth.aidl",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryHealth.aidl?ref=lineage-22.2",
+      "git": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/4ce7952af2aa96ce9aee6e7a0ef2003132b0553b",
+      "html": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryHealth.aidl"
+    }
+  },
+  {
+    "name": "BatteryStatus.aidl",
+    "path": "health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryStatus.aidl",
+    "sha": "340b2ecc3f2401013c442b07068a85e3f9cc9e89",
+    "size": 1881,
+    "url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryStatus.aidl?ref=lineage-22.2",
+    "html_url": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryStatus.aidl",
+    "git_url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/340b2ecc3f2401013c442b07068a85e3f9cc9e89",
+    "download_url": "https://raw.githubusercontent.com/LineageOS/android_hardware_interfaces/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryStatus.aidl",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryStatus.aidl?ref=lineage-22.2",
+      "git": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/340b2ecc3f2401013c442b07068a85e3f9cc9e89",
+      "html": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/BatteryStatus.aidl"
+    }
+  },
+  {
+    "name": "DiskStats.aidl",
+    "path": "health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/DiskStats.aidl",
+    "sha": "5aa58900bb3544c8853751cef35f9192baf98e23",
+    "size": 1979,
+    "url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/DiskStats.aidl?ref=lineage-22.2",
+    "html_url": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/DiskStats.aidl",
+    "git_url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/5aa58900bb3544c8853751cef35f9192baf98e23",
+    "download_url": "https://raw.githubusercontent.com/LineageOS/android_hardware_interfaces/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/DiskStats.aidl",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/DiskStats.aidl?ref=lineage-22.2",
+      "git": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/5aa58900bb3544c8853751cef35f9192baf98e23",
+      "html": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/DiskStats.aidl"
+    }
+  },
+  {
+    "name": "HealthInfo.aidl",
+    "path": "health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/HealthInfo.aidl",
+    "sha": "97d9e845db6a7a5849a74d4be44694cfc59c4c50",
+    "size": 2703,
+    "url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/HealthInfo.aidl?ref=lineage-22.2",
+    "html_url": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/HealthInfo.aidl",
+    "git_url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/97d9e845db6a7a5849a74d4be44694cfc59c4c50",
+    "download_url": "https://raw.githubusercontent.com/LineageOS/android_hardware_interfaces/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/HealthInfo.aidl",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/HealthInfo.aidl?ref=lineage-22.2",
+      "git": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/97d9e845db6a7a5849a74d4be44694cfc59c4c50",
+      "html": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/HealthInfo.aidl"
+    }
+  },
+  {
+    "name": "IHealth.aidl",
+    "path": "health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealth.aidl",
+    "sha": "7016ae4c86f0031d8a92c406e8de57a33607e0b5",
+    "size": 2403,
+    "url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealth.aidl?ref=lineage-22.2",
+    "html_url": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealth.aidl",
+    "git_url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/7016ae4c86f0031d8a92c406e8de57a33607e0b5",
+    "download_url": "https://raw.githubusercontent.com/LineageOS/android_hardware_interfaces/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealth.aidl",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealth.aidl?ref=lineage-22.2",
+      "git": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/7016ae4c86f0031d8a92c406e8de57a33607e0b5",
+      "html": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealth.aidl"
+    }
+  },
+  {
+    "name": "IHealthInfoCallback.aidl",
+    "path": "health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealthInfoCallback.aidl",
+    "sha": "1b6366fa7a29dba4637ea6598c9d6694db7135cb",
+    "size": 1866,
+    "url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealthInfoCallback.aidl?ref=lineage-22.2",
+    "html_url": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealthInfoCallback.aidl",
+    "git_url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/1b6366fa7a29dba4637ea6598c9d6694db7135cb",
+    "download_url": "https://raw.githubusercontent.com/LineageOS/android_hardware_interfaces/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealthInfoCallback.aidl",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealthInfoCallback.aidl?ref=lineage-22.2",
+      "git": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/1b6366fa7a29dba4637ea6598c9d6694db7135cb",
+      "html": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/IHealthInfoCallback.aidl"
+    }
+  },
+  {
+    "name": "StorageInfo.aidl",
+    "path": "health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/StorageInfo.aidl",
+    "sha": "eaae5a611049de99505a2cf9cc5a439d3616d0c9",
+    "size": 1845,
+    "url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/StorageInfo.aidl?ref=lineage-22.2",
+    "html_url": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/StorageInfo.aidl",
+    "git_url": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/eaae5a611049de99505a2cf9cc5a439d3616d0c9",
+    "download_url": "https://raw.githubusercontent.com/LineageOS/android_hardware_interfaces/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/StorageInfo.aidl",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/contents/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/StorageInfo.aidl?ref=lineage-22.2",
+      "git": "https://api.github.com/repos/LineageOS/android_hardware_interfaces/git/blobs/eaae5a611049de99505a2cf9cc5a439d3616d0c9",
+      "html": "https://github.com/LineageOS/android_hardware_interfaces/blob/lineage-22.2/health/aidl/aidl_api/android.hardware.health/1/android/hardware/health/StorageInfo.aidl"
+    }
+  }
+]

@@ -1,0 +1,10 @@
+on early-init
+    setprop ro.hardware ranchu
+    setprop ro.zygote zygote64
+    setprop debug.renderengine.backend skiaglthreaded
+
+on early-boot
+    start vendor.health-default
+
+on boot
+    start vendor.health-default

@@ -1,0 +1,9 @@
+package: "suspend_service.flags"
+container: "system"
+
+flag {
+  name: "fast_kernel_wakelock_reporting"
+  namespace: "wear_frameworks"
+  description: "Controls using new codepath to speed up polling of /sys/class/wakeup for kernel wakelocks."
+  bug: "364368163"
+}
