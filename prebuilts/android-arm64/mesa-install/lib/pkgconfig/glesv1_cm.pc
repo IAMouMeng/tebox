@@ -1,0 +1,10 @@
+prefix=/Users/myt/Desktop/work/GKI/prebuilts/android-arm64/mesa-install
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: glesv1_cm
+Description: Mesa OpenGL ES 1.1 CM library
+Version: 24.3.4
+Libs: -L${libdir} -lGLESv1_CM
+Libs.private: -lpthread -pthread -lm
+Cflags: -I${includedir}

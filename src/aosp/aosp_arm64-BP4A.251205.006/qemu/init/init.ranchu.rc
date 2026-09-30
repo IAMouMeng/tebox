@@ -1,0 +1,37 @@
+on early-init
+    setprop ro.hardware ranchu
+    setprop ro.zygote zygote64
+    setprop debug.renderengine.backend skiaglthreaded
+    setprop ro.vendor.build.version.sdk 36
+    setprop ro.vendor.build.security_patch 2025-12-05
+    setprop dalvik.vm.dex2oat64 true
+
+on init
+    restorecon_recursive /dev/dri
+
+# The initramfs already mounts unencrypted userdata; no vold decrypt event follows.
+on post-fs-data
+    trigger nonencrypted
+
+on property:sys.boot_completed=1
+    # settings is a shell script, not an init service executable. Use the shell
+    # domain explicitly so init can launch it and the plugged-in VM stays awake.
+    exec_background u:r:shell:s0 shell shell -- /system/bin/sh /system/bin/settings put global stay_on_while_plugged_in 1
+
+# Opt-in local serial diagnostics for this bring-up image.
+on init && property:ro.boot.qemu_debug=1
+    chcon u:object_r:console_device:s0 /dev/hvc0
+    start qemu-debug-shell
+
+service qemu-debug-shell /system/bin/sh
+    disabled
+    console hvc0
+    user root
+    group root shell log readproc
+    seclabel u:r:shell:s0
+
+on early-boot
+    start vendor.health-default
+
+on boot
+    start vendor.health-default

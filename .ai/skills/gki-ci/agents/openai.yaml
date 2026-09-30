@@ -1,0 +1,4 @@
+interface:
+  display_name: "GKI CI"
+  short_description: "Maintain reproducible ARM64 project builds"
+  default_prompt: "Use $gki-ci to validate and improve the ARM64 build workflow."

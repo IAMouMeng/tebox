@@ -1,0 +1,4 @@
+interface:
+  display_name: "GKI HAL"
+  short_description: "Develop and pack soft vendor HALs for QEMU GSI"
+  default_prompt: "Use $gki-hal to implement or fix a vendor HAL for this GSI bring-up."

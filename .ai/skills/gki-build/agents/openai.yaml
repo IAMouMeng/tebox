@@ -1,0 +1,4 @@
+interface:
+  display_name: "GKI Build"
+  short_description: "Compile QEMU host and Android ARM64 runtime"
+  default_prompt: "Use $gki-build to compile the requested host or guest components."

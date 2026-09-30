@@ -1,0 +1,9 @@
+prefix=/Users/myt/Desktop/work/GKI/prebuilts/android-arm64/libdrm
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: libdrm
+Description: Userspace interface to kernel DRM services
+Version: 2.4.124
+Libs: -L${libdir} -ldrm
+Cflags: -I${includedir} -I${includedir}/libdrm

@@ -1,0 +1,5 @@
+# Soft WiFi: inject foreign fake scan results (no kernel/nl80211 required).
+# Settings WiFi list uses framework faking; connection is not expected to work.
+
+on property:sys.boot_completed=1
+    exec_background - root root -- /vendor/bin/qemu-wifi-fake-scan.sh

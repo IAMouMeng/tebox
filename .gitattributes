@@ -1,0 +1,6 @@
+# Large boot/runtime binaries (install Git LFS before commit).
+*.img filter=lfs diff=lfs merge=lfs -text
+*.raw filter=lfs diff=lfs merge=lfs -text
+*.ko filter=lfs diff=lfs merge=lfs -text
+**/gki/Image filter=lfs diff=lfs merge=lfs -text
+**/gki/Image.prev filter=lfs diff=lfs merge=lfs -text

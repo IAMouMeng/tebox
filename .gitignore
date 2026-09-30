@@ -1,0 +1,38 @@
+# Build products and download caches only.
+# prebuilts/ is tracked (host QEMU/VirGL + android-arm64 Mesa/libdrm).
+# Variant GSI system.img stays under src/aosp/<variant>/images/;
+# vendor.img / initramfs.img are rebuilt by ./run and are not committed.
+/out/
+
+# Rebuildable guest images (inputs: qemu/vendor, qemu/busybox, qemu/init, Mesa).
+src/aosp/*/images/vendor.img
+src/aosp/*/images/initramfs.img
+
+*.log
+
+# Local secrets / editor settings (project keybox under hardware/ is tracked).
+.env
+.env.*
+*.key
+*.p12
+*.pfx
+*.jks
+/secrets/
+/.claude/settings.local.json
+/.gemini/settings.json
+/.cursor/worktrees.json
+/.codebuddy/settings.local.json
+AGENTS.override.md
+
+# Editor/OS caches.
+.DS_Store
+._*
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.swp
+*.swo
+*~
+/.idea/
+/.vscode/

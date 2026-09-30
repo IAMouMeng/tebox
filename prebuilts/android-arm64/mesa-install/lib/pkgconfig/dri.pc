@@ -1,0 +1,10 @@
+prefix=/Users/myt/Desktop/work/GKI/prebuilts/android-arm64/mesa-install
+includedir=${prefix}/include
+
+dridriverdir=/Users/myt/Desktop/work/GKI/prebuilts/android-arm64/mesa-install/lib/dri
+
+Name: dri
+Description: Direct Rendering Infrastructure
+Version: 24.3.4
+Requires.private: libdrm >=  2.4.109
+Cflags: -I${includedir}
