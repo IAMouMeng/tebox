@@ -1,0 +1,301 @@
+# Top level framework (android.media) flags
+# Only add flags here which must be included in framework.jar
+# Flags used in both framework.jar and native can be added here
+#
+# Please add flags in alphabetical order.
+
+package: "android.media.audio"
+container: "system"
+
+flag {
+    name: "auto_public_volume_api_hardening"
+    namespace: "media_audio"
+    description: "On AAOS, make volume and ringer SDK APIs in AudioManager no-ops."
+    bug: "302751899"
+}
+
+flag {
+    name: "automatic_bt_device_type"
+    namespace: "media_audio"
+    description:
+        "Enable the automatic Bluetooth audio device type "
+        "categorization based on BluetoothDevice class metadata."
+    bug: "302323921"
+}
+
+flag {
+    name: "cache_get_stream_min_max_volume"
+    namespace: "media_audio"
+    description:
+       "Cache getStream[Min|Max]Volume calls between AudioManager and AudioService"
+    bug: "383667500"
+}
+
+flag {
+    name: "cache_get_stream_volume"
+    namespace: "media_audio"
+    description:
+       "Cache getStreamVolume calls between AudioManager and AudioService"
+    bug: "383667500"
+}
+
+flag {
+    name: "concurrent_audio_record_bypass_permission"
+    namespace: "media_audio"
+    description:
+       "New privileged permission to allow bypassing concurrent audio"
+       "capture rules."
+    bug: "374751406"
+    is_exported: true
+}
+
+flag {
+    name: "deprecate_stream_bt_sco"
+    namespace: "media_audio"
+    description: "Deprecate STREAM_BLUETOOTH_SCO"
+    is_exported: true
+    bug: "376756660"
+}
+
+flag {
+    name: "enable_multichannel_group_device"
+    namespace: "media_audio"
+    description:
+        "Enable new audio device type for wireless connected speaker group"
+        "supporting multichannel content."
+    is_exported: true
+    is_fixed_read_only: true
+    bug: "344031109"
+}
+
+flag{
+    name: "enable_ringtone_haptics_customization"
+    namespace: "media_audio"
+    description: "Enables haptic customization for playing ringtone."
+    bug: "351974934"
+}
+
+flag {
+    name: "feature_spatial_audio_headtracking_low_latency"
+    is_exported: true
+    namespace: "media_audio"
+    description: "Define feature for low latency headtracking for SA"
+    bug: "324291076"
+}
+
+flag {
+    name: "focus_exclusive_with_recording"
+    is_exported: true
+    namespace: "media_audio"
+    description:
+        "Audio focus GAIN_TRANSIENT_EXCLUSIVE only mutes"
+        "notifications when the focus owner is also recording"
+    bug: "316414750"
+}
+
+flag {
+    name: "dolby_ac4_level4_encoding_api"
+    namespace: "media_audio"
+    description: "Feature flag for Dolby AC-4 level 4 AudioFormat encoding."
+    is_fixed_read_only: true
+    bug: "266537650"
+    is_exported: true
+}
+
+flag {
+    name: "sony_360ra_mpegh_3d_format"
+    namespace: "media_audio"
+    description: "360 Reality Audio MPEG-H 3D Format"
+    is_fixed_read_only: true
+    bug: "238402306"
+}
+
+# TODO remove
+flag {
+    name: "foreground_audio_control"
+    is_exported: true
+    namespace: "media_audio"
+    description:
+        "Audio focus gain requires FGS or delegation to "
+        "take effect"
+    bug: "296232417"
+    is_fixed_read_only: true
+}
+
+# TODO remove
+flag {
+    name: "focus_freeze_test_api"
+    is_exported: true
+    namespace: "media_audio"
+    description: "\
+ AudioManager audio focus test APIs:\
+ AudioManager.enterAudioFocusFreezeForTest(java.util.List)\
+ AudioManager.exitAudioFocusFreezeForTest()\
+ AudioManager.getFocusDuckedUidsForTest()\
+ AudioManager.getFocusFadeOutDurationForTest()\
+ AudioManager.getFocusUnmuteDelayAfterFadeOutForTest()"
+    bug: "301713440"
+}
+
+flag {
+    name: "hardening_permission_api"
+    is_exported: true
+    namespace: "media_audio"
+    description: "API flag for additional appop/perm constructs for hardening."
+    bug: "376480814"
+}
+
+flag {
+    name: "hardening_permission_spa"
+    is_exported: true
+    namespace: "media_audio"
+    description: "Flag for special app access impl for hardening."
+    bug: "376480814"
+}
+
+flag {
+    name: "iamf_definitions_api"
+    is_exported: true
+    namespace: "media_audio"
+    description: "API definitions for the IAMF format"
+    bug: "337522902"
+}
+
+flag {
+    name: "loudness_configurator_api"
+    is_exported: true
+    namespace: "media_audio"
+    description: "\
+Enable the API for providing loudness metadata and CTA-2075 \
+support."
+    bug: "298463873"
+    is_exported: true
+}
+
+flag {
+    name: "mute_background_audio"
+    namespace: "media_audio"
+    description: "mute audio playing in background"
+    bug: "296232417"
+}
+
+flag {
+    name: "muted_by_port_volume_api"
+    namespace: "media_audio"
+    description: "Playback monitoring flag used when player muted by port volume"
+    bug: "319515324"
+    is_exported: true
+}
+
+flag {
+    name: "ringtone_user_uri_check"
+    is_exported: true
+    namespace: "media_audio"
+    description: "check user for RingtonePlayer URIs"
+    bug: "400434060"
+}
+
+flag {
+    name: "sco_managed_by_audio"
+    is_exported: true
+    namespace: "media_audio"
+    description: "\
+Enable new implementation of headset profile device connection and\
+SCO audio activation."
+    bug: "265057196"
+}
+
+flag {
+    name: "supported_device_types_api"
+    is_exported: true
+    namespace: "media_audio"
+    description: "Surface new API method AudioManager.getSupportedDeviceTypes()"
+    bug: "307537538"
+}
+
+flag {
+    name: "ro_foreground_audio_control"
+    is_exported: true
+    namespace: "media_audio"
+    description:
+        "Audio focus gain requires FGS or delegation to "
+        "take effect"
+    bug: "296232417"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "ro_volume_ringer_api_hardening"
+    namespace: "media_audio"
+    description: "Limit access to volume and ringer SDK APIs in AudioManager"
+    bug: "296232417"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "routed_device_ids"
+    namespace: "media_audio"
+    description:
+        "Enable Java and native functions to get"
+        "multiple routed device ids"
+    bug: "367816690"
+    is_exported: true
+}
+
+flag {
+    name: "spatial_audio_settings_versioning"
+    namespace: "media_audio"
+    description: "introduce versioning of spatial audio settings"
+    bug: "377977731"
+}
+
+flag {
+    name: "spatializer_capabilities"
+    namespace: "media_audio"
+    description: "spatializer reports effective channel masks"
+    bug: "377582613"
+    is_exported: true
+}
+
+flag {
+    name: "speaker_cleanup_usage"
+    namespace: "media_audio"
+    description: "Support new AudioAttributes usage for speaker cleanup"
+    bug: "355050846"
+    is_exported: true
+}
+
+flag {
+    name: "speaker_layout_api"
+    namespace: "media_audio"
+    description: "Surface new API method for returning speaker layout channel mask for devices"
+    bug: "337522902"
+    is_exported: true
+}
+
+flag {
+    name: "unify_absolute_volume_management"
+    namespace: "media_audio"
+    description: "Unify absolute volume management in AudioService for A2DP, LEA, SCO, ASHA"
+    is_exported: true
+    bug: "393657380"
+}
+
+# TODO remove
+flag {
+    name: "volume_ringer_api_hardening"
+    namespace: "media_audio"
+    description: "Limit access to volume and ringer SDK APIs in AudioManager"
+    bug: "296232417"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "register_volume_callback_api_hardening"
+    namespace: "media_audio"
+    description:
+            "Add modify audio settings privilege permission to un/register volume group "
+            "callback APIs"
+    bug: "402502314"
+    is_fixed_read_only: true
+}
