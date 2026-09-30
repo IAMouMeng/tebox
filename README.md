@@ -65,6 +65,28 @@
   <img src="docs/screenshots/launched.png" width="240" alt="tebox 启动界面">
 </p>
 
+## 正确拉取源码
+
+本仓库使用 **Git LFS** 保存 `system.img`、GKI 内核 `Image` 和内核模块 `*.ko`。请先安装 Git 和 Git LFS：macOS 可执行 `brew install git-lfs`；Ubuntu / Debian 可执行 `sudo apt-get install git-lfs`。
+
+```bash
+git lfs install
+git clone https://github.com/opencecs/tebox.git
+cd tebox
+git lfs pull
+```
+
+如果已经克隆过仓库，在仓库根目录执行以下命令即可补齐大文件：
+
+```bash
+git lfs install
+git lfs pull
+```
+
+`system.img` 应为 GB 级镜像。如果文件只有一百多字节，内容以 `version https://git-lfs.github.com/spec/v1` 开头，说明拿到的是 LFS 指针，尚未下载真实文件；内核和模块也可能处于同样状态，无法用于启动。请完成 `git lfs pull` 后再运行。发布仓库时，维护者也必须上传对应的 LFS 对象；仅推送指针文件无法让其他人取得完整镜像。
+
+`vendor.img` 和 `initramfs.img` 不提交到仓库，由 `./run` 根据源码自动生成。首次使用还需准备当前宿主平台的 QEMU/VirGL，构建入口见 [构建说明](.ci/README.md)；`out/` 中的本地编译结果不会随克隆下载。
+
 ## 快速开始
 
 ```bash
