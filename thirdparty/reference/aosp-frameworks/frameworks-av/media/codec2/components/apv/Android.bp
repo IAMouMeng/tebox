@@ -1,0 +1,64 @@
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_av_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_av_license"],
+}
+
+cc_library {
+    enabled: true,
+    name: "libcodec2_soft_apvenc",
+    defaults: [
+        "libcodec2_soft-defaults",
+        "libcodec2_soft_sanitize_cfi-defaults",
+        "libcodec2_soft_sanitize_signed-defaults",
+    ],
+
+    static_libs: [
+        "android.media.swcodec.flags-aconfig-cc",
+        "libopenapv",
+    ],
+
+    srcs: [
+        "C2SoftApvEnc.cpp",
+        "isAtLeastRelease.cpp",
+    ],
+
+    cflags: [
+        "-DOAPV_STATIC_DEFINE",
+        "-Wno-reorder-ctor",
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+    ],
+}
+
+cc_library {
+    enabled: true,
+    name: "libcodec2_soft_apvdec",
+    defaults: [
+        "libcodec2_soft-defaults",
+        "libcodec2_soft_sanitize_cfi-defaults",
+        "libcodec2_soft_sanitize_signed-defaults",
+    ],
+
+    static_libs: [
+        "android.media.swcodec.flags-aconfig-cc",
+        "libopenapv",
+    ],
+
+    srcs: [
+        "C2SoftApvDec.cpp",
+        "isAtLeastRelease.cpp",
+    ],
+
+    cflags: [
+        "-DOAPV_STATIC_DEFINE",
+        "-Wno-reorder-ctor",
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+    ],
+}

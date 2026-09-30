@@ -1,0 +1,121 @@
+{
+  "presubmit-large": [
+    {
+      "name": "CtsMediaMiscTestCases",
+      "options": [
+        {
+          "include-annotation": "android.platform.test.annotations.Presubmit"
+        },
+        {
+          "exclude-annotation": "android.platform.test.annotations.RequiresDevice"
+        }
+      ]
+    },
+    {
+      "name": "CtsMediaAudioTestCases",
+      "options": [
+        {
+          "include-annotation": "android.platform.test.annotations.Presubmit"
+        },
+        {
+          "exclude-annotation": "android.platform.test.annotations.RequiresDevice"
+        },
+        {
+          "exclude-filter": "android.media.audio.cts.AudioPlaybackCaptureTest"
+        },
+        {
+          "exclude-filter": "android.media.audio.cts.AudioRecordTest"
+        }
+      ]
+    },
+    {
+      "name": "CtsMediaDecoderTestCases",
+      "options": [
+        {
+          "include-annotation": "android.platform.test.annotations.Presubmit"
+        },
+        {
+          "exclude-annotation": "android.platform.test.annotations.RequiresDevice"
+        }
+      ]
+    },
+    {
+      "name": "CtsMediaEncoderTestCases",
+      "options": [
+        {
+          "include-annotation": "android.platform.test.annotations.Presubmit"
+        },
+        {
+          "exclude-annotation": "android.platform.test.annotations.RequiresDevice"
+        }
+      ]
+    },
+    {
+      "name": "CtsMediaCodecTestCases",
+      "options": [
+        {
+          "include-annotation": "android.platform.test.annotations.Presubmit"
+        },
+        {
+          "exclude-annotation": "android.platform.test.annotations.RequiresDevice"
+        }
+      ]
+    },
+    {
+      "name": "CtsMediaPlayerTestCases",
+      "options": [
+        {
+          "include-annotation": "android.platform.test.annotations.Presubmit"
+        },
+        {
+          "exclude-annotation": "android.platform.test.annotations.RequiresDevice"
+        }
+      ]
+    }
+  ],
+  "presubmit": [
+    {
+      "name": "mediacodecTest"
+    },
+    {
+      "name": "CtsMediaTranscodingTestCases"
+    },
+    {
+        "name": "BatteryChecker_test"
+    },
+    {
+        "name": "ExtractorFactoryTest"
+    },
+    {
+        "name": "HEVCUtilsUnitTest"
+    },
+    {
+      "name": "MctsMediaCodecTestCases",
+      "options": [
+        {
+          "include-annotation": "android.platform.test.annotations.Presubmit"
+        }
+      ]
+    },
+    {
+      "name": "MctsMediaDecoderTestCases",
+      "options": [
+        {
+          "include-annotation": "android.platform.test.annotations.Presubmit"
+        }
+      ]
+    },
+    {
+      "name": "MctsMediaEncoderTestCases",
+      "options": [
+        {
+          "include-annotation": "android.platform.test.annotations.Presubmit"
+        }
+      ]
+    }
+  ]
+  // "postsubmit": [
+  //   writerTest fails about 5 out of 66
+  //   { "name": "writerTest" },
+  // ]
+}

@@ -1,0 +1,132 @@
+package {
+    default_applicable_licenses: [
+        "frameworks_av_media_libmediaplayerservice_license",
+    ],
+}
+
+// Added automatically by a large-scale-change
+// See: http://go/android-license-faq
+license {
+    name: "frameworks_av_media_libmediaplayerservice_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-Apache-2.0",
+    ],
+    license_text: [
+        "NOTICE",
+    ],
+}
+
+filegroup {
+    name: "libmediaplayerservice_sources",
+
+    srcs: [
+        "ActivityManager.cpp",
+        "DeathNotifier.cpp",
+        "MediaPlayerFactory.cpp",
+        "MediaPlayerService.cpp",
+        "MediaRecorderClient.cpp",
+        "MetadataRetrieverClient.cpp",
+        "StagefrightMetadataRetriever.cpp",
+        "StagefrightRecorder.cpp",
+        "TestPlayerStub.cpp",
+    ],
+}
+
+cc_defaults {
+    name: "libmediaplayerservice_defaults",
+
+    srcs: [
+        ":libmediaplayerservice_sources",
+    ],
+
+    shared_libs: [
+        "android.hardware.media.c2@1.0",
+        "android.hardware.media.omx@1.0",
+        "av-types-aidl-cpp",
+        "framework-permission-aidl-cpp",
+        "libaconfig_storage_read_api_cc",
+        "libactivitymanager_aidl",
+        "libandroid_net",
+        "libaudioclient",
+        "libaudioclient_aidl_conversion",
+        "libaudiofoundation",
+        "libbase",
+        "libbinder",
+        "libbinder_ndk",
+        "libcamera_client",
+        "libcodec2_client",
+        "libcrypto",
+        "libcutils",
+        "libdatasource",
+        "libdl",
+        "libdrmframework",
+        "libgui",
+        "libhidlbase",
+        "liblog",
+        "libmedia",
+        "libmedia_codeclist",
+        "libmedia_omx",
+        "libmediadrm",
+        "libmediametrics",
+        "libmediautils",
+        "libmemunreachable",
+        "libnetd_client",
+        "libpowermanager",
+        "libstagefright",
+        "libstagefright_foundation",
+        "libstagefright_httplive",
+        "libutils",
+        "packagemanager_aidl-cpp",
+        "server_configurable_flags",
+    ],
+
+    header_libs: [
+        "libmediautils_headers",
+        "libstagefright_rtsp_headers",
+        "libstagefright_webm_headers",
+        "media_plugin_headers",
+    ],
+
+    static_libs: [
+        "com.android.media.flags.editing-aconfig-cc",
+        "framework-permission-aidl-cpp",
+        "libplayerservice_datasource",
+        "libstagefright_nuplayer",
+        "libstagefright_rtsp",
+        "libstagefright_timedtext",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-error=deprecated-declarations",
+    ],
+
+    sanitize: {
+        cfi: true,
+    },
+}
+
+cc_library {
+    name: "libmediaplayerservice",
+
+    defaults: [
+        "libmediaplayerservice_defaults",
+    ],
+
+    export_shared_lib_headers: [
+        "framework-permission-aidl-cpp",
+        "libmedia",
+    ],
+
+    export_header_lib_headers: [
+        "libmediautils_headers",
+    ],
+
+    export_include_dirs: [
+        ".",
+    ],
+
+    local_include_dirs: ["include"],
+}

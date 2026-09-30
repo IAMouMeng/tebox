@@ -1,0 +1,24 @@
+# Bug component: 1344
+# go/android-fwk-media-solutions for info on areas of ownership.
+
+andrewlewis@google.com
+bachinger@google.com
+claincly@google.com
+dancho@google.com
+ibaker@google.com
+ivanbuper@google.com
+jbibik@google.com
+michaelkatz@google.com
+rohks@google.com
+sheenachhabra@google.com
+simakova@google.com
+tianyifeng@google.com
+tonihei@google.com
+
+# MediaRouter and native mirroring only:
+aquilescanta@google.com
+
+# Emergency rollbacks and fixes outside LON timezone
+jmtrivi@google.com # US-MTV
+lajos@google.com # US-MTV
+scottnien@google.com # TW-NTC

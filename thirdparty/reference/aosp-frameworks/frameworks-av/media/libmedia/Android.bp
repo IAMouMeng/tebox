@@ -1,0 +1,501 @@
+package {
+    default_applicable_licenses: ["frameworks_av_media_libmedia_license"],
+}
+
+// Added automatically by a large-scale-change
+// See: http://go/android-license-faq
+license {
+    name: "frameworks_av_media_libmedia_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-Apache-2.0",
+    ],
+    license_text: [
+        "NOTICE",
+    ],
+}
+
+cc_library_headers {
+    name: "libmedia_headers",
+    vendor_available: true,
+    min_sdk_version: "29",
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media.swcodec",
+    ],
+
+    export_include_dirs: ["include"],
+    header_libs: [
+        "av-headers",
+        "libbase_headers",
+        "libgui_headers",
+        "libstagefright_headers",
+        "media_plugin_headers",
+    ],
+    export_header_lib_headers: [
+        "av-headers",
+        "libgui_headers",
+        "libstagefright_headers",
+        "media_plugin_headers",
+    ],
+}
+
+cc_library_headers {
+    name: "libmedia_datasource_headers",
+    export_include_dirs: ["include"],
+    host_supported: true,
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
+    header_libs: [
+        "libbinder_headers",
+    ],
+    export_header_lib_headers: [
+        "libbinder_headers",
+    ],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media",
+    ],
+    min_sdk_version: "29",
+}
+
+filegroup {
+    name: "libmedia_omx_aidl",
+    srcs: [
+        "aidl/android/IOMXBufferSource.aidl",
+    ],
+    path: "aidl",
+}
+
+filegroup {
+    name: "mediaextractorservice_aidl",
+    srcs: [
+        "aidl/android/IMediaExtractorService.aidl",
+    ],
+    path: "aidl",
+}
+
+cc_library_shared {
+    name: "libmedia_omx",
+    vendor_available: true,
+    double_loadable: true,
+
+    srcs: [
+        ":libmedia_omx_aidl",
+
+        "IOMX.cpp",
+        "MediaCodecBuffer.cpp",
+        "OMXBuffer.cpp",
+        "omx/1.0/WOmxBufferSource.cpp",
+        "omx/1.0/WOmxNode.cpp",
+        "omx/1.0/WOmxObserver.cpp",
+    ],
+
+    aidl: {
+        local_include_dirs: ["aidl"],
+        export_aidl_headers: true,
+    },
+
+    local_include_dirs: [
+        "include",
+    ],
+
+    shared_libs: [
+        "android.hardware.media.omx@1.0",
+        "android.hidl.token@1.0-utils",
+        "libbinder",
+        "libcutils",
+        "libhidlbase",
+        "liblog",
+        "libstagefright_foundation",
+        "libui",
+        "libutils",
+    ],
+
+    export_shared_lib_headers: [
+        "android.hardware.media.omx@1.0",
+        "android.hidl.token@1.0-utils",
+        "libstagefright_foundation",
+        "libui",
+    ],
+
+    header_libs: [
+        "libstagefright_headers",
+        "media_plugin_headers",
+    ],
+
+    export_header_lib_headers: [
+        "libstagefright_headers",
+        "media_plugin_headers",
+    ],
+
+    export_include_dirs: [
+        "aidl",
+        "include",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-error=deprecated-declarations",
+    ],
+
+    sanitize: {
+        misc_undefined: [
+            "signed-integer-overflow",
+            "unsigned-integer-overflow",
+        ],
+        cfi: true,
+    },
+}
+
+cc_library_shared {
+    name: "libmedia_omx_client",
+
+    srcs: [
+        "omx/1.0/WOmx.cpp",
+    ],
+
+    local_include_dirs: [
+        "include",
+    ],
+
+    shared_libs: [
+        "libbinder",
+        "libcutils",
+        "libgui",
+        "libhidlbase",
+        "liblog",
+        "libmedia_omx",
+        "libstagefright_foundation",
+        "libui",
+        "libutils",
+    ],
+
+    export_shared_lib_headers: [
+        "libgui",
+        "libmedia_omx",
+        "libstagefright_foundation",
+        "libui",
+    ],
+
+    header_libs: [
+        "libstagefright_headers",
+        "media_plugin_headers",
+    ],
+
+    export_header_lib_headers: [
+        "libstagefright_headers",
+        "media_plugin_headers",
+    ],
+
+    export_include_dirs: [
+        "include",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-error=deprecated-declarations",
+    ],
+
+    sanitize: {
+        misc_undefined: [
+            "signed-integer-overflow",
+            "unsigned-integer-overflow",
+        ],
+        cfi: true,
+    },
+}
+
+cc_library_static {
+    name: "libmedia_midiiowrapper",
+
+    min_sdk_version: "29",
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media",
+    ],
+
+    srcs: ["MidiIoWrapper.cpp"],
+
+    static_libs: [
+        "libsonivoxwithoutjet",
+    ],
+
+    header_libs: [
+        "libmedia_datasource_headers",
+        "media_ndk_headers",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-error=deprecated-declarations",
+    ],
+
+    sanitize: {
+        misc_undefined: [
+            "signed-integer-overflow",
+            "unsigned-integer-overflow",
+        ],
+        cfi: true,
+    },
+
+    host_supported: true,
+
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
+}
+
+cc_library_shared {
+    name: "libmedia_codeclist_capabilities",
+
+    srcs: [
+        "AudioCapabilities.cpp",
+        "CodecCapabilities.cpp",
+        "CodecCapabilitiesUtils.cpp",
+        "EncoderCapabilities.cpp",
+        "VideoCapabilities.cpp",
+    ],
+
+    local_include_dirs: [
+        "include",
+    ],
+
+    shared_libs: [
+        "libaconfig_storage_read_api_cc",
+        "libbinder",
+        "liblog",
+        "libstagefright_foundation",
+        "libutils",
+    ],
+
+    static_libs: [
+        "android.media.codec-aconfig-cc",
+    ],
+
+    export_include_dirs: [
+        "include",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-error=deprecated-declarations",
+    ],
+
+    sanitize: {
+        misc_undefined: [
+            "signed-integer-overflow",
+            "unsigned-integer-overflow",
+        ],
+        cfi: true,
+    },
+}
+
+cc_library_shared {
+    name: "libmedia_codeclist",
+
+    srcs: [
+        "IMediaCodecList.cpp",
+        "MediaCodecInfo.cpp",
+    ],
+
+    local_include_dirs: [
+        "include",
+    ],
+
+    shared_libs: [
+        "android.hardware.media.omx@1.0",
+        "libbinder",
+        "liblog",
+        "libmedia_codeclist_capabilities",
+        "libstagefright_foundation",
+        "libutils",
+    ],
+
+    static_libs: [
+        "android.media.codec-aconfig-cc",
+    ],
+
+    export_include_dirs: [
+        "include",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-error=deprecated-declarations",
+    ],
+
+    sanitize: {
+        misc_undefined: [
+            "signed-integer-overflow",
+            "unsigned-integer-overflow",
+        ],
+        cfi: true,
+    },
+}
+
+cc_library {
+    name: "libmedia",
+
+    defaults: [
+        "latest_android_media_audio_common_types_cpp_shared",
+    ],
+
+    srcs: [
+        ":mediaextractorservice_aidl",
+        "BufferingSettings.cpp",
+        "CharacterEncodingDetector.cpp",
+        "IDataSource.cpp",
+        "IMediaDeathNotifier.cpp",
+        "IMediaExtractor.cpp",
+        "IMediaHTTPConnection.cpp",
+        "IMediaHTTPService.cpp",
+        "IMediaMetadataRetriever.cpp",
+        "IMediaPlayer.cpp",
+        "IMediaPlayerClient.cpp",
+        "IMediaPlayerService.cpp",
+        "IMediaRecorder.cpp",
+        "IMediaRecorderClient.cpp",
+        "IMediaSource.cpp",
+        "IRemoteDisplay.cpp",
+        "IRemoteDisplayClient.cpp",
+        "IStreamSource.cpp",
+        "MediaProfiles.cpp",
+        "MediaResource.cpp",
+        "MediaResourcePolicy.cpp",
+        "MediaScanner.cpp",
+        "MediaScannerClient.cpp",
+        "Metadata.cpp",
+        "NdkMediaErrorPriv.cpp",
+        "NdkMediaFormatPriv.cpp",
+        "StringArray.cpp",
+        "mediametadataretriever.cpp",
+        "mediaplayer.cpp",
+        "mediarecorder.cpp",
+    ],
+
+    aidl: {
+        local_include_dirs: ["aidl"],
+        export_aidl_headers: true,
+    },
+
+    header_libs: [
+        "jni_headers",
+        "libstagefright_headers",
+        "media_ndk_headers",
+    ],
+
+    export_header_lib_headers: [
+        "jni_headers",
+        "libstagefright_headers",
+        "media_ndk_headers",
+    ],
+
+    shared_libs: [
+        "android.hidl.token@1.0-utils",
+        "audioclient-types-aidl-cpp",
+        "av-types-aidl-cpp",
+        "libbinder",
+        "libbinder_ndk",
+        //"libsonivox",
+        "framework-permission-aidl-cpp",
+        "libandroidicu",
+        "libaudioclient",
+        "libaudiofoundation",
+        "libcamera_client",
+        "libcutils",
+        "libdl",
+        "libexpat",
+        "libgui",
+        "liblog",
+        "libmedia_codeclist",
+        "libmedia_omx",
+        "libstagefright_foundation",
+        "libutils",
+    ],
+
+    export_shared_lib_headers: [
+        "libaudioclient",
+        "libaudiofoundation",
+        "libbinder",
+        //"libsonivox",
+        "framework-permission-aidl-cpp",
+        "libmedia_omx",
+    ],
+
+    static_libs: [
+        "framework-permission-aidl-cpp",
+        "resourcemanager_aidl_interface-ndk",
+    ],
+
+    export_static_lib_headers: [
+        "framework-permission-aidl-cpp",
+        "resourcemanager_aidl_interface-ndk",
+    ],
+
+    export_include_dirs: [
+        "include",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-error=deprecated-declarations",
+    ],
+
+    version_script: "exports.lds",
+
+    sanitize: {
+        misc_undefined: [
+            "signed-integer-overflow",
+            "unsigned-integer-overflow",
+        ],
+        cfi: true,
+    },
+}
+
+cc_library_static {
+    name: "libmedia_ndkformatpriv",
+
+    host_supported: true,
+
+    srcs: [
+        "NdkMediaErrorPriv.cpp",
+        "NdkMediaFormatPriv.cpp",
+    ],
+
+    header_libs: [
+        "libstagefright_foundation_headers",
+        "libstagefright_headers",
+        "media_ndk_headers",
+    ],
+
+    cflags: [
+        "-DEXPORT=__attribute__((visibility(\"default\")))",
+        "-Wall",
+        "-Werror",
+    ],
+
+    export_include_dirs: ["include"],
+
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
+
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media",
+    ],
+}

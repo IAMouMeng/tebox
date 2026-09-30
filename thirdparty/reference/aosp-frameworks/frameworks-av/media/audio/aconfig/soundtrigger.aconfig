@@ -1,0 +1,31 @@
+# Flags for sound trigger
+#
+# Please add flags in alphabetical order.
+
+package: "android.media.soundtrigger"
+container: "system"
+
+flag {
+    name: "detection_service_paused_resumed_api"
+    is_exported: true
+    namespace: "media_audio"
+    description: "Feature flag for adding SoundTriggerDetectionService onRecognitionPaused and onRecognitionResumed APIs to SystemApi"
+    bug: "392968319"
+}
+
+flag {
+    name: "generic_model_api"
+    is_exported: true
+    namespace: "media_audio"
+    description: "Feature flag for adding GenericSoundModel to SystemApi"
+    bug: "339267254"
+}
+
+flag {
+    name: "manager_api"
+    is_exported: true
+    namespace: "media_audio"
+    description: "Feature flag for adding SoundTriggerManager API to SystemApi"
+    bug: "339267254"
+}
+
