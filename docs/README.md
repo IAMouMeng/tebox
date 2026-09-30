@@ -61,17 +61,9 @@ The guest is an **aarch64 Android GSI**. A usable GPU and graphical session are 
 
 ## Screenshots
 
-Place images under [`screenshots/`](screenshots/), then uncomment:
-
-<!--
 <p align="center">
-  <img src="screenshots/boot-1.png" width="240" alt="boot">
-  &nbsp;
-  <img src="screenshots/boot-2.png" width="240" alt="home">
-  &nbsp;
-  <img src="screenshots/boot-3.png" width="240" alt="UI">
+  <img src="screenshots/launched.png" width="240" alt="tebox launched">
 </p>
--->
 
 ## Quick start
 

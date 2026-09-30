@@ -61,17 +61,9 @@
 
 ## 启动截图
 
-将截图放入 [`docs/screenshots/`](docs/screenshots/)，取消下方注释即可展示：
-
-<!--
 <p align="center">
-  <img src="docs/screenshots/boot-1.png" width="240" alt="开机">
-  &nbsp;
-  <img src="docs/screenshots/boot-2.png" width="240" alt="桌面">
-  &nbsp;
-  <img src="docs/screenshots/boot-3.png" width="240" alt="界面">
+  <img src="docs/screenshots/launched.png" width="240" alt="tebox 启动界面">
 </p>
--->
 
 ## 快速开始
 
