@@ -4,6 +4,10 @@
 # vendor.img / initramfs.img are rebuilt by ./run and are not committed.
 /out/
 
+# Local machine NDK/SDK symlinks (see toolchains/README.md); never commit abs paths.
+/toolchains/android-ndk
+/toolchains/android-sdk
+
 # Rebuildable guest images (inputs: qemu/vendor, qemu/busybox, qemu/init, Mesa).
 src/aosp/*/images/vendor.img
 src/aosp/*/images/initramfs.img
