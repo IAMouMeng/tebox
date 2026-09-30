@@ -1,0 +1,15 @@
+dbehr@chromium.org
+ddavenport@chromium.org
+niwa@chromium.org
+olv@google.com
+ryanneph@google.com
+zzyiwei@google.com
+
+# just reference for backend specific reviews
+per-file amdgpu.c = ddavenport@chromium.org, olv@google.com
+per-file i915.c = justonli@google.com, ryanneph@google.com
+per-file mediatek.c = fshao@chromium.org, zzyiwei@google.com
+per-file virtgpu* = natsu@google.com, zzyiwei@google.com
+
+# Robots.
+per-file common.mk = file:chromiumos/owners:v1:/bots/OWNERS.copybara

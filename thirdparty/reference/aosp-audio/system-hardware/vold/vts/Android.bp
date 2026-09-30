@@ -1,0 +1,24 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_test {
+    name: "VtsHalVendorVoldTest",
+    defaults: [
+        "VtsHalTargetTestDefaults",
+        "use_libaidlvintf_gtest_helper_static",
+    ],
+    srcs: ["VtsHalVendorVoldTest.cpp"],
+    static_libs: [
+        "android.system.vold-V1-cpp",
+    ],
+    shared_libs: [
+        "libbinder",
+        "libbase",
+        "libutils",
+    ],
+    test_suites: [
+        "general-tests",
+        "vts",
+    ],
+}
