@@ -115,9 +115,9 @@ Released under the [Apache License 2.0](../LICENSE). Third-party sources and bin
 Thanks to everyone who has contributed to tebox.
 
 <a href="https://github.com/opencecs/tebox/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=opencecs/tebox" alt="contributors" />
+  <img src="https://stg.contrib.rocks/image?repo=opencecs/tebox" alt="contributors" />
 </a>
 
-Made with [contrib.rocks](https://contrib.rocks).
+Made with [contrib.rocks](https://stg.contrib.rocks).
 
 Issues / PRs welcome on [GitHub](https://github.com/opencecs/tebox).
