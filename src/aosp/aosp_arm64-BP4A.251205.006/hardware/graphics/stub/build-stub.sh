@@ -150,7 +150,7 @@ file "$MAPPER_SO"
 ls -lh "$MAPPER_SO"
 "$NM" -D "$MAPPER_SO" 2>/dev/null | grep -E 'AIMapper_loadIMapper|ANDROID_HAL' || \
   "$NM" "$MAPPER_SO" | grep -E 'AIMapper_loadIMapper|ANDROID_HAL'
-READELF=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/llvm-readelf
+READELF=$NDK/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin/llvm-readelf
 echo "NEEDED:"
 "$READELF" -d "$MAPPER_SO" | grep NEEDED || true
 if "$READELF" -d "$MAPPER_SO" | grep -q 'libc++_shared'; then

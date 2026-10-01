@@ -15,10 +15,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <poll.h>
 #include <unistd.h>
 
 #define LOG_TAG "mapper-stub"
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define ALOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 enum {
@@ -52,6 +55,8 @@ typedef struct {
     void* mapped;
     int lock_count;
     int used;
+    int mapped_anonymous;
+    int cpu_mappable;
 } BufSlot;
 
 #define MAX_BUFS 256
@@ -108,8 +113,21 @@ static int parse_handle(const native_handle_t* h, BufSlot* info) {
     info->stride = ints[2];
     info->format = ints[3];
     info->usage = ((uint64_t)(uint32_t)ints[5] << 32) | (uint32_t)ints[4];
+    if (info->width <= 0 || info->height <= 0 || info->stride < info->width) return 0;
     info->size = (uint64_t)info->stride * (uint64_t)info->height * 4u;
-    return info->width > 0 && info->height > 0 && info->stride > 0;
+    info->cpu_mappable = 0;
+    struct stat st;
+    if (fstat(h->data[0], &st) != 0) {
+        ALOGW("import fstat failed w=%d h=%d stride=%d format=%d errno=%d", info->width,
+              info->height, info->stride, info->format, errno);
+        return 1;
+    }
+    if (st.st_size == 0 || (uint64_t)st.st_size >= info->size) info->cpu_mappable = 1;
+    else
+        ALOGW("import undersized dma-buf w=%d h=%d stride=%d format=%d logical=%llu st_size=%lld",
+              info->width, info->height, info->stride, info->format,
+              (unsigned long long)info->size, (long long)st.st_size);
+    return 1;
 }
 
 static BufSlot* find_buf(const native_handle_t* h) {
@@ -131,7 +149,11 @@ static BufSlot* alloc_slot(void) {
 static AIMapper_Error importBuffer(const native_handle_t* handle, buffer_handle_t* out) {
     BufSlot tmp;
     memset(&tmp, 0, sizeof(tmp));
-    if (!parse_handle(handle, &tmp)) return AIMAPPER_ERROR_BAD_BUFFER;
+    if (!parse_handle(handle, &tmp)) {
+        ALOGE("importBuffer reject fds=%d ints=%d", handle ? handle->numFds : -1,
+              handle ? handle->numInts : -1);
+        return AIMAPPER_ERROR_BAD_BUFFER;
+    }
     native_handle_t* clone = native_handle_clone(handle);
     if (!clone) return AIMAPPER_ERROR_NO_RESOURCES;
     pthread_mutex_lock(&g_mu);
@@ -179,11 +201,28 @@ static AIMapper_Error getTransportSize(buffer_handle_t buffer, uint32_t* outFds,
     return AIMAPPER_ERROR_NONE;
 }
 
+static int fence_is_signaled(int acquireFence) {
+    if (acquireFence < 0) return 1;
+    struct pollfd fence = {acquireFence, POLLIN, 0};
+    int ret;
+    int err = 0;
+    do {
+        ret = poll(&fence, 1, 150);
+        err = errno;
+    } while (ret < 0 && err == EINTR);
+    int revents = fence.revents;
+    close(acquireFence);
+    if (ret > 0 && (revents & POLLIN) && !(revents & (POLLERR | POLLNVAL | POLLHUP))) return 1;
+    ALOGW("acquire fence not signaled ret=%d revents=0x%x errno=%d", ret, revents,
+          ret < 0 ? err : 0);
+    return 0;
+}
+
 static AIMapper_Error lock(buffer_handle_t buffer, uint64_t cpuUsage, ARect accessRegion,
                            int acquireFence, void** outData) {
     (void)cpuUsage;
     (void)accessRegion;
-    if (acquireFence >= 0) close(acquireFence);
+    int signaled = fence_is_signaled(acquireFence);
     pthread_mutex_lock(&g_mu);
     BufSlot* slot = find_buf(buffer);
     if (!slot) {
@@ -191,14 +230,28 @@ static AIMapper_Error lock(buffer_handle_t buffer, uint64_t cpuUsage, ARect acce
         return AIMAPPER_ERROR_BAD_BUFFER;
     }
     if (!slot->mapped) {
-        void* p = mmap(NULL, (size_t)slot->size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->data[0],
-                       0);
+        void* p = MAP_FAILED;
+        int anonymous = 0;
+        if (signaled && slot->cpu_mappable) {
+            p = mmap(NULL, (size_t)slot->size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->data[0],
+                     0);
+        }
         if (p == MAP_FAILED) {
-            pthread_mutex_unlock(&g_mu);
-            ALOGE("mmap failed size=%llu errno=%d", (unsigned long long)slot->size, errno);
-            return AIMAPPER_ERROR_NO_RESOURCES;
+            p = mmap(NULL, (size_t)slot->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+                     -1, 0);
+            if (p == MAP_FAILED) {
+                int err = errno;
+                pthread_mutex_unlock(&g_mu);
+                ALOGE("mmap failed size=%llu errno=%d", (unsigned long long)slot->size, err);
+                return AIMAPPER_ERROR_NO_RESOURCES;
+            }
+            anonymous = 1;
+            memset(p, 0, (size_t)slot->size);
+            ALOGI("CPU-lock fallback to anonymous mapping size=%llu signaled=%d mappable=%d",
+                  (unsigned long long)slot->size, signaled, slot->cpu_mappable);
         }
         slot->mapped = p;
+        slot->mapped_anonymous = anonymous;
     }
     slot->lock_count++;
     *outData = slot->mapped;
@@ -214,6 +267,11 @@ static AIMapper_Error unlock(buffer_handle_t buffer, int* releaseFence) {
         return AIMAPPER_ERROR_BAD_BUFFER;
     }
     if (slot->lock_count > 0) slot->lock_count--;
+    if (slot->lock_count == 0 && slot->mapped_anonymous && slot->mapped) {
+        munmap(slot->mapped, (size_t)slot->size);
+        slot->mapped = NULL;
+        slot->mapped_anonymous = 0;
+    }
     pthread_mutex_unlock(&g_mu);
     *releaseFence = -1;
     return AIMAPPER_ERROR_NONE;

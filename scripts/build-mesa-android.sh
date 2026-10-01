@@ -1,73 +1,47 @@
 #!/usr/bin/env bash
 # Cross-build guest Mesa (VirGL / virtio_gpu) for aarch64 Android → prebuilt/arm64.
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$(dirname "$0")/env.sh"
 SRC="$ROOT/thirdparty/mesa/src"
 OUT="$ROOT/out/mesa-android"
 PRE="$ROOT/thirdparty/mesa/prebuilt/arm64"
-CROSS="$OUT/android-aarch64.cross"
-PKGDIR="$OUT/pkgconfig"
-SDK_VER="${PLATFORM_SDK_VERSION:-34}"
-NDK="${ANDROID_NDK:-}"
 
-if [[ -z "$NDK" ]]; then
+# CI exports ANDROID_NDK. A local tree may only have an SDK or Homebrew NDK.
+if [[ ! -x "$NDK/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin/clang" ]]; then
+  found=
+  shopt -s nullglob
   for c in \
+    "$HOME/Android/Sdk/ndk/"* \
+    "$HOME/Library/Android/sdk/ndk/"* \
     /opt/homebrew/Caskroom/android-ndk/*/AndroidNDK*/Contents/NDK \
-    "$HOME/Library/Android/sdk/ndk/"*; do
-    [[ -d "$c/toolchains/llvm/prebuilt" ]] && NDK=$c && break
+    /usr/local/lib/android/sdk/ndk/*; do
+    if [[ -x "$c/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin/clang" ]]; then
+      found=$c
+      break
+    fi
   done
+  shopt -u nullglob
+  if [[ -z "$found" ]]; then
+    echo "set ANDROID_NDK to an NDK with a $NDK_HOST_TAG toolchain" >&2
+    exit 1
+  fi
+  NDK=$found
+  export ANDROID_NDK="$NDK"
 fi
-[[ -d "$NDK" ]] || { echo "set ANDROID_NDK" >&2; exit 1; }
+source "$ROOT/scripts/android-cross.sh"
 [[ -d "$SRC/.git" || -f "$SRC/meson.build" ]] || {
   echo "missing mesa src; run scripts/fetch-mesa-src.sh" >&2
   exit 1
 }
 
-HOST_TAG=darwin-x86_64
-TC="$NDK/toolchains/llvm/prebuilt/$HOST_TAG"
-[[ -d "$TC" ]] || { echo "missing NDK toolchain $TC" >&2; exit 1; }
-CLANG="$TC/bin/aarch64-linux-android${SDK_VER}-clang"
-CLANGXX="$TC/bin/aarch64-linux-android${SDK_VER}-clang++"
-[[ -x "$CLANG" ]] || { echo "missing $CLANG" >&2; exit 1; }
-
-export PATH="/opt/homebrew/bin:/usr/bin:/bin:$PATH"
-mkdir -p "$OUT" "$PKGDIR" "$PRE"/{egl,dri,hw}
-
-# Minimal pkg-config dir so meson is happy (android-stub avoids most deps).
-# zlib often comes from NDK sysroot; provide a tiny .pc if needed.
-if [[ ! -f "$PKGDIR/zlib.pc" ]]; then
-  cat > "$PKGDIR/zlib.pc" <<EOF
-prefix=$TC/sysroot/usr
-libdir=\${prefix}/lib/aarch64-linux-android
-includedir=\${prefix}/include
-Name: zlib
-Description: zlib
-Version: 1.2.11
-Libs: -lz
-Cflags: -I\${includedir}
-EOF
+if [[ -z "${JOBS:-}" ]]; then
+  if [[ "$HOST_OS" == darwin ]]; then
+    JOBS="$(sysctl -n hw.ncpu)"
+  else
+    JOBS="$(nproc)"
+  fi
 fi
-
-cat > "$CROSS" <<EOF
-[binaries]
-ar = '$TC/bin/llvm-ar'
-c = ['$CLANG', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables']
-cpp = ['$CLANGXX', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++']
-c_ld = 'lld'
-cpp_ld = 'lld'
-strip = '$TC/bin/llvm-strip'
-pkg-config = ['env', 'PKG_CONFIG_LIBDIR=$PKGDIR', '$(command -v pkg-config)']
-
-[host_machine]
-system = 'android'
-cpu_family = 'aarch64'
-cpu = 'armv8'
-endian = 'little'
-
-[properties]
-needs_exe_wrapper = true
-pkg_config_libdir = '$PKGDIR'
-EOF
+mkdir -p "$OUT" "$PRE"/{egl,dri,hw}
 
 BUILD="$OUT/build"
 if [[ "${MESA_RECONF:-0}" == "1" || ! -f "$BUILD/build.ninja" ]]; then
@@ -101,7 +75,7 @@ if [[ "${MESA_RECONF:-0}" == "1" || ! -f "$BUILD/build.ninja" ]]; then
     -Dxmlconfig=disabled
 fi
 
-ninja -C "$BUILD" -j"$(sysctl -n hw.ncpu)"
+ninja -C "$BUILD" -j"$JOBS"
 meson install -C "$BUILD" --no-rebuild
 
 # Stage Android EGL loader names + DRI

@@ -3,6 +3,8 @@
 # Variant GSI system.img stays under src/aosp/<variant>/images/;
 # vendor.img / initramfs.img are rebuilt by ./run and are not committed.
 /out/
+/dist/
+/downloads/
 
 # Local machine NDK/SDK symlinks (see toolchains/README.md); never commit abs paths.
 /toolchains/android-ndk
