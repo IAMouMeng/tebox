@@ -9,7 +9,7 @@
 <h1 align="center">OPENCECS</h1>
 
 <p align="center">
-  <a href="https://opencecs.com"><b>opencecs.com</b></a>
+  <a href="https://www.opencecs.com"><b>www.opencecs.com</b></a>
   <a href="https://github.com/opencecs/tebox">GitHub</a>
 </p>
 
