@@ -1,7 +1,7 @@
 [English](docs/README.md) | 简体中文
 
 <p align="center">
-  <a href="https://opencecs.com">
+  <a href="https://www.opencecs.com">
     <img src="docs/assets/logo.png" alt="OPENCECS" width="128">
   </a>
 </p>
@@ -22,14 +22,14 @@
   <a href="https://github.com/opencecs/tebox/stargazers"><img src="https://img.shields.io/github/stars/opencecs/tebox?style=flat-square" alt="stars"></a>
   <a href="https://github.com/opencecs/tebox/network/members"><img src="https://img.shields.io/github/forks/opencecs/tebox?style=flat-square" alt="forks"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="license"></a>
-  <a href="https://opencecs.com"><img src="https://img.shields.io/badge/Website-opencecs.com-informational?style=flat-square" alt="website"></a>
+  <a href="https://www.opencecs.com"><img src="https://img.shields.io/badge/Website-opencecs.com-informational?style=flat-square" alt="website"></a>
 </p>
 
 ## 项目简介
 
 **tebox** 是一套面向桌面端的 **Android GSI 运行基座**：在 QEMU 上提供通用的 ARM64 GSI 镜像启动能力，并内置 VirGL / Mesa 图形加速、GKI 内核与 soft vendor HAL 示例，方便你直接上手验证、二次开发和自动化。
 
-仓库：[github.com/opencecs/tebox](https://github.com/opencecs/tebox)  官网：[opencecs.com](https://opencecs.com)
+仓库：[github.com/opencecs/tebox](https://github.com/opencecs/tebox)  官网：[www.opencecs.com](https://www.opencecs.com)
 
 ### 基座能力
 
