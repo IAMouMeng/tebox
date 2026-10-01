@@ -13,10 +13,14 @@ Work from clean-checkout requirements. `qemu/`, `thirdparty/`, `prebuilts/`
 (Git LFS for large files). Only `out/`, `dist/` and `downloads/` are disposable
 build/cache products.
 
-Keep native host builds on `macos-14` and `ubuntu-24.04-arm`, with an architecture
-assertion in the build script. Android outputs are ARM64, built using official
-NDK tools on the Linux x86_64 job. Extra download checksums belong in
-`.ci/guest.lock.json`, not in ad hoc runner commands.
+Keep native host builds on `macos-26` and `ubuntu-24.04-arm`, with an architecture
+assertion in the build script. After QEMU is packaged, `.ci/package-systems.py`
+builds `vendor.img` and `initramfs.img` and emits one bootable tar.gz per variant
+(QEMU, `system.img`, vendor, initramfs, kernel, `./run`) plus
+`tebox-vendor-init.tar.gz` (vendor and initramfs only, no `system.img`). Do not
+add a job that recompiles guest HALs, Mesa, or BusyBox; those stay tracked
+prebuilts under `src/`. Extra download checksums belong in `.ci/guest.lock.json`,
+not in ad hoc runner commands.
 
 Keep workflow permissions at `contents: read` for compile/upload-artifact work.
 Use PR workflows without secret-dependent build steps. Upload only selected

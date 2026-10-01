@@ -115,9 +115,9 @@ FORCE_VIRGL=1 SNAPSHOT=1 ./run
 感谢所有参与 tebox 的贡献者。
 
 <a href="https://github.com/opencecs/tebox/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=opencecs/tebox" alt="contributors" />
+  <img src="https://stg.contrib.rocks/image?repo=opencecs/tebox" alt="contributors" />
 </a>
 
-Made with [contrib.rocks](https://contrib.rocks).
+Made with [contrib.rocks](https://stg.contrib.rocks).
 
 欢迎在 [GitHub](https://github.com/opencecs/tebox) 提交 Issue / PR。

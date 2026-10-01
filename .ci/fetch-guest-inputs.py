@@ -12,6 +12,17 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def lfs_pointer(path):
+    """True when checkout left a Git LFS pointer instead of the blob."""
+    try:
+        if not path.is_file() or path.stat().st_size > 1024:
+            return False
+        return path.read_text(errors='ignore').startswith(
+            'version https://git-lfs.github.com/spec/v1')
+    except OSError:
+        return False
+
+
 def download(spec, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -31,7 +42,7 @@ def main():
     gsi = downloads / 'aosp-arm64-BP4A.251205.006.zip'
     download(lock['gsi'], gsi)
     system = ROOT / f"src/aosp/{lock['variant']}/images/system.img"
-    if not system.exists():
+    if not system.exists() or lfs_pointer(system):
         system.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(gsi) as archive:
             names = [n for n in archive.namelist() if Path(n).name == 'system.img']
