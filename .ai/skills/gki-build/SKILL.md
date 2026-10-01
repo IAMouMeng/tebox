@@ -38,7 +38,8 @@ bash .ci/install-deps.sh
 export PATH="$PWD/out/ci-venv/bin:$PATH"
 python3 .ci/validate.py
 bash .ci/build-host.sh      # ARM64 host only
-bash .ci/build-android.sh   # Linux x86_64 only
+python3 .ci/package-systems.py  # pack vendor/init and bootable system archives
+bash .ci/build-android.sh   # Linux x86_64 only; not a GitHub Actions job
 ```
 
 ## Reporting

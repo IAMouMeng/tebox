@@ -5351,9 +5351,14 @@ static void vrend_draw_bind_vertex_legacy(struct vrend_context *ctx,
          /* Glyph UVs are R16G16_UINT, but the shader declares in vec4 and
           * bitcasts with floatBitsToUint. IPointer into a float input does
           * not preserve those bits on Apple, so the sample misses the atlas.
-          * Fetch them as numeric floats; the shader casts with uvec4(). */
+          * Fetch them as numeric floats; the shader casts with uvec4().
+          * Other hosts keep the integer fetch. */
+#ifdef __APPLE__
          if (util_format_is_pure_integer(ve->base.src_format) &&
              !apple_vs_input_is_float(ctx, i)) {
+#else
+         if (util_format_is_pure_integer(ve->base.src_format)) {
+#endif
             glVertexAttribIPointer(loc, size, ve->type, vbo->base.stride, (void *)(uintptr_t)(ve->base.src_offset + vbo->base.buffer_offset));
          } else {
             glVertexAttribPointer(loc, size, ve->type, ve->norm, vbo->base.stride, (void *)(uintptr_t)(ve->base.src_offset + vbo->base.buffer_offset));

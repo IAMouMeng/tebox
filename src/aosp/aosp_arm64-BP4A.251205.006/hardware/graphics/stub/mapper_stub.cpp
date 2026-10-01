@@ -24,6 +24,7 @@
 
 #define LOG_TAG "mapper-stub"
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define ALOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 enum {
@@ -57,6 +58,11 @@ typedef struct {
     void* mapped;
     int lock_count;
     int used;
+    // VirGL/GBM BOs are often not CPU-mappable; lock() may use anonymous pages.
+    int mapped_anonymous;
+    // 0 when the dma-buf must not be mmap'd (fstat failed, or st_size is a
+    // positive value smaller than the logical image).
+    int cpu_mappable;
 } BufSlot;
 
 #define MAX_BUFS 256
@@ -114,13 +120,48 @@ static int parse_handle(const native_handle_t* h, BufSlot* info) {
     info->format = ints[3];
     info->usage = ((uint64_t)(uint32_t)ints[5] << 32) | (uint32_t)ints[4];
     int bpp = bufferFormat(info->format).bytes;
-    if (!bpp) return 0;
+    if (!bpp || info->width <= 0 || info->height <= 0 || info->stride < info->width) return 0;
     info->size = (uint64_t)info->stride * (uint64_t)info->height * (uint64_t)bpp;
+    info->cpu_mappable = 0;
     struct stat st;
-    if (fstat(h->data[0], &st) != 0 || info->size > (uint64_t)st.st_size) return 0;
+    if (fstat(h->data[0], &st) != 0) {
+        // Still import: ImageReader must be able to lock. CPU reads stay anonymous.
+        ALOGW("import fstat failed w=%d h=%d stride=%d format=%d errno=%d", info->width,
+              info->height, info->stride, info->format, errno);
+        info->id = 0;
+        return 1;
+    }
     // dma-buf inode identity remains stable across processes and re-imports.
     info->id = (uint64_t)st.st_ino;
-    return info->width > 0 && info->height > 0 && info->stride >= info->width;
+    // st_size == 0 is normal for virtio-gpu. A smaller positive size is not safe to mmap.
+    if (st.st_size == 0 || (uint64_t)st.st_size >= info->size) {
+        info->cpu_mappable = 1;
+    } else {
+        ALOGW("import undersized dma-buf w=%d h=%d stride=%d format=%d logical=%llu st_size=%lld",
+              info->width, info->height, info->stride, info->format,
+              (unsigned long long)info->size, (long long)st.st_size);
+    }
+    return 1;
+}
+
+static void log_import_reject(const native_handle_t* handle) {
+    int numFds = handle ? handle->numFds : -1;
+    int numInts = handle ? handle->numInts : -1;
+    int w = 0, h = 0, stride = 0, format = 0;
+    long long st_size = -1;
+    int err = 0;
+    if (handle && numFds >= 1 && numInts >= 4) {
+        const int* ints = &handle->data[numFds];
+        w = ints[0];
+        h = ints[1];
+        stride = ints[2];
+        format = ints[3];
+        struct stat st;
+        if (fstat(handle->data[0], &st) == 0) st_size = (long long)st.st_size;
+        else err = errno;
+    }
+    ALOGE("importBuffer reject fds=%d ints=%d w=%d h=%d stride=%d format=%d st_size=%lld errno=%d",
+          numFds, numInts, w, h, stride, format, st_size, err);
 }
 
 static BufSlot* find_buf(const native_handle_t* h) {
@@ -142,7 +183,10 @@ static BufSlot* alloc_slot(void) {
 static AIMapper_Error importBuffer(const native_handle_t* handle, buffer_handle_t* out) {
     BufSlot tmp;
     memset(&tmp, 0, sizeof(tmp));
-    if (!parse_handle(handle, &tmp)) return AIMAPPER_ERROR_BAD_BUFFER;
+    if (!parse_handle(handle, &tmp)) {
+        log_import_reject(handle);
+        return AIMAPPER_ERROR_BAD_BUFFER;
+    }
     native_handle_t* clone = native_handle_clone(handle);
     if (!clone) return AIMAPPER_ERROR_NO_RESOURCES;
     pthread_mutex_lock(&g_mu);
@@ -189,17 +233,37 @@ static AIMapper_Error getTransportSize(buffer_handle_t buffer, uint32_t* outFds,
     return AIMAPPER_ERROR_NONE;
 }
 
+// Virtio-GPU sync fds often poll as POLLERR/POLLNVAL immediately. A failed wait
+// must not fail the lock: ImageReader turns that into an uncaught exception that
+// kills system_server, and init then SIGKILLs zygote.
+static int fence_is_signaled(int acquireFence) {
+    if (acquireFence < 0) return 1;
+    struct pollfd fence = {acquireFence, POLLIN, 0};
+    int ret;
+    int err = 0;
+    do {
+        ret = poll(&fence, 1, 150);
+        err = errno;
+    } while (ret < 0 && err == EINTR);
+    int revents = fence.revents;
+    close(acquireFence);
+    if (ret > 0 && (revents & POLLIN) && !(revents & (POLLERR | POLLNVAL | POLLHUP))) return 1;
+    ALOGW("acquire fence not signaled ret=%d revents=0x%x errno=%d", ret, revents,
+          ret < 0 ? err : 0);
+    return 0;
+}
+
+static void* map_anonymous(uint64_t size) {
+    void* p = mmap(NULL, (size_t)size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p != MAP_FAILED) memset(p, 0, (size_t)size);
+    return p;
+}
+
 static AIMapper_Error lock(buffer_handle_t buffer, uint64_t cpuUsage, ARect accessRegion,
                            int acquireFence, void** outData) {
     (void)cpuUsage;
     (void)accessRegion;
-    if (acquireFence >= 0) {
-        struct pollfd fence = {acquireFence, POLLIN, 0};
-        int ret;
-        do { ret = poll(&fence, 1, 3000); } while (ret < 0 && errno == EINTR);
-        close(acquireFence);
-        if (ret <= 0 || (fence.revents & (POLLERR | POLLNVAL))) return AIMAPPER_ERROR_NO_RESOURCES;
-    }
+    int signaled = fence_is_signaled(acquireFence);
     pthread_mutex_lock(&g_mu);
     BufSlot* slot = find_buf(buffer);
     if (!slot) {
@@ -207,18 +271,34 @@ static AIMapper_Error lock(buffer_handle_t buffer, uint64_t cpuUsage, ARect acce
         return AIMAPPER_ERROR_BAD_BUFFER;
     }
     if (!slot->mapped) {
-        void* p = mmap(NULL, (size_t)slot->size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->data[0],
-                       0);
+        void* p = MAP_FAILED;
+        int anonymous = 0;
+        // Only touch the GBM dma-buf when the GPU is done and the fd covers the image.
+        // Otherwise serve zeroed pages so a CPU unlock cannot clobber scanout.
+        if (signaled && slot->cpu_mappable) {
+            p = mmap(NULL, (size_t)slot->size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->data[0],
+                     0);
+        }
         if (p == MAP_FAILED) {
-            pthread_mutex_unlock(&g_mu);
-            ALOGE("mmap failed size=%llu errno=%d", (unsigned long long)slot->size, errno);
-            return AIMAPPER_ERROR_NO_RESOURCES;
+            p = map_anonymous(slot->size);
+            if (p == MAP_FAILED) {
+                int err = errno;
+                pthread_mutex_unlock(&g_mu);
+                ALOGE("mmap failed size=%llu errno=%d", (unsigned long long)slot->size, err);
+                return AIMAPPER_ERROR_NO_RESOURCES;
+            }
+            anonymous = 1;
+            ALOGI("CPU-lock fallback to anonymous mapping size=%llu signaled=%d mappable=%d",
+                  (unsigned long long)slot->size, signaled, slot->cpu_mappable);
         }
         slot->mapped = p;
+        slot->mapped_anonymous = anonymous;
     }
     slot->lock_count++;
-    struct dma_buf_sync sync = {DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW};
-    ioctl(buffer->data[0], DMA_BUF_IOCTL_SYNC, &sync);
+    if (!slot->mapped_anonymous) {
+        struct dma_buf_sync sync = {DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW};
+        ioctl(buffer->data[0], DMA_BUF_IOCTL_SYNC, &sync);
+    }
     *outData = slot->mapped;
     pthread_mutex_unlock(&g_mu);
     return AIMAPPER_ERROR_NONE;
@@ -232,8 +312,15 @@ static AIMapper_Error unlock(buffer_handle_t buffer, int* releaseFence) {
         return AIMAPPER_ERROR_BAD_BUFFER;
     }
     if (slot->lock_count > 0) slot->lock_count--;
-    struct dma_buf_sync sync = {DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW};
-    ioctl(buffer->data[0], DMA_BUF_IOCTL_SYNC, &sync);
+    if (!slot->mapped_anonymous) {
+        struct dma_buf_sync sync = {DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW};
+        ioctl(buffer->data[0], DMA_BUF_IOCTL_SYNC, &sync);
+    } else if (slot->lock_count == 0 && slot->mapped) {
+        // Drop the blank mapping so a later lock can retry a real CPU map.
+        munmap(slot->mapped, (size_t)slot->size);
+        slot->mapped = NULL;
+        slot->mapped_anonymous = 0;
+    }
     pthread_mutex_unlock(&g_mu);
     *releaseFence = -1;
     return AIMAPPER_ERROR_NONE;
