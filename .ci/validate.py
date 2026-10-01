@@ -95,7 +95,9 @@ def validate_ci_files() -> None:
         ROOT / '.ci/build-android.sh',
         ROOT / '.ci/install-deps.sh',
         ROOT / '.ci/package-host.py',
+        ROOT / '.ci/package-systems.py',
         ROOT / '.ci/package-android.py',
+        ROOT / 'scripts/run-packed.sh',
         ROOT / '.ci/fetch-guest-inputs.py',
         ROOT / '.ci/guest.lock.json',
         ROOT / '.ci/requirements.txt',
@@ -112,9 +114,10 @@ def validate_ci_files() -> None:
     workflow = ROOT / '.github/workflows/build.yml'
     if workflow.is_file():
         text = workflow.read_text()
-        for needle in ('macos-14', 'ubuntu-24.04-arm', 'ubuntu-24.04',
-                       '.ci/validate.py', '.ci/build-host.sh', '.ci/build-android.sh',
-                       'project-ai-skills', 'qemu-gki-', 'gki-android-arm64'):
+        for needle in ('macos-26', 'ubuntu-24.04-arm', 'ubuntu-24.04',
+                       '.ci/validate.py', '.ci/build-host.sh',
+                       '.ci/package-systems.py', 'tebox-vendor-init',
+                       'project-ai-skills', 'qemu-gki-'):
             if needle not in text:
                 fail(f'workflow missing reference: {needle}')
         if 'contents: write' in text or 'permissions:\n  contents: write' in text:
@@ -126,12 +129,14 @@ def validate_gitignore() -> None:
     if not gi.is_file():
         return
     text = gi.read_text()
-    for pattern in ('/out/', '/dist/', '/downloads/', '.env'):
+    for pattern in ('/out/', '/dist/', '/downloads/', '.env',
+                    '/toolchains/android-ndk', '/toolchains/android-sdk'):
         if pattern not in text:
             fail(f'.gitignore missing pattern: {pattern}')
-    # These must remain trackable (not ignored).
-    for banned in ('/prebuilts/', '/thirdparty/reference/', '/toolchains/android-sdk',
-                   '/toolchains/android-ndk', '/toolchains/android-cmdline-tools',
+    # These must remain trackable (not ignored). Local NDK/SDK symlinks are
+    # machine paths and stay ignored; see toolchains/README.md.
+    for banned in ('/prebuilts/', '/thirdparty/reference/',
+                   '/toolchains/android-cmdline-tools',
                    '/toolchains/*-venv/',
                    '/src/aosp/*/qemu/busybox',
                    '/src/aosp/*/qemu/vendor/bin/',
