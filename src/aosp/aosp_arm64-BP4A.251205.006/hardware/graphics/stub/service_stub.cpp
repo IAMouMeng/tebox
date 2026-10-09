@@ -103,11 +103,11 @@ namespace {
 
 constexpr int64_t kPrimaryDisplay = 0;
 constexpr int32_t kConfigId = 0;
-constexpr int32_t kWidth = 1280;
-constexpr int32_t kHeight = 720;
+constexpr int32_t kWidth = 1080;
+constexpr int32_t kHeight = 2400;
 constexpr int32_t kVsyncPeriodNs = 16666666;  // ~60 Hz
-constexpr int32_t kDpiX = 160000;
-constexpr int32_t kDpiY = 160000;
+constexpr int32_t kDpiX = 420000;
+constexpr int32_t kDpiY = 420000;
 
 int ashmemCreate(size_t size) {
     int fd = open("/dev/ashmem", O_RDWR | O_CLOEXEC);
