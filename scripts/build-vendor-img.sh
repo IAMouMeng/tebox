@@ -116,6 +116,7 @@ CMD="$(mktemp)"
     case "$f" in
       etc|etc/*|manifest.xml) context=vendor_configs_file ;;
       lib64|lib64/*) context=same_process_hal_file ;;
+      overlay|overlay/*) context=vendor_overlay_file ;;
       *) context=vendor_file ;;
     esac
     echo "ea_set /$f security.selinux u:object_r:$context:s0"
