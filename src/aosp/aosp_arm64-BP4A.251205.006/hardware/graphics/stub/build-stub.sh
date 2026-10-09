@@ -96,6 +96,8 @@ compile_one() {
     -DBINDER_STABILITY_SUPPORT \
     -I"$GEN/include" \
     -I"$HAL/stub" \
+    -I"$DRM_PREFIX/include" -I"$DRM_PREFIX/include/libdrm" \
+    -I"$MESA_PREFIX/include" \
     -I"$GSI_LIBS/include" \
     -Wno-unused-parameter \
     -Wno-deprecated-declarations
@@ -113,6 +115,7 @@ BIN="$OUT/bin/android.hardware.graphics-service"
   -L"$GSI_LIBS" \
   -Wl,-rpath,/system/lib64 \
   -static-libstdc++ \
+  -L"$MESA_PREFIX/lib" -Wl,-rpath,/vendor/lib64 -lgbm \
   -lbinder_ndk -llog \
   -Wl,--allow-shlib-undefined
 
