@@ -25,7 +25,7 @@ repository setup, commits, pushes and publication require an explicit request.
 - `scripts/env.sh` owns host, SDK/NDK and prebuilt paths. Support macOS ARM64 and
   Linux ARM64 for host QEMU. Android ARM64 cross-compilation uses macOS or Linux
   x86_64 because Google's Linux NDK host tools are x86_64.
-- `.ci/guest.lock.json` pins runtime GSI/busybox download URLs and kernel/module digests
+- `.ci/guest.lock.json` pins GSI/busybox download URLs and kernel/module digests
   for CI. Prefer editing the tracked trees in-place. Do not delete nested sources
   to “save space” without asking.
 - `thirdparty/virglrenderer/`, `thirdparty/audio-deps/`,
@@ -48,7 +48,7 @@ repository setup, commits, pushes and publication require an explicit request.
   on that path can overwrite GPU-rendered content.
 - Use the software KeyMint in `hardware/keymint/soft`; the old KeyMint stub cannot
   provide the crypto operations Android needs to finish booting.
-- Default validation uses `SNAPSHOT=1` and a read-only runtime `system.img`. Keep
+- Default validation uses `SNAPSHOT=1` and read-only `system.img`. Keep
   `out/test-<variant>/userdata.img`. Stop a VM before replacing its input images.
 
 ## Validation and reporting

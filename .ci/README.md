@@ -2,7 +2,7 @@
 
 ## Goals
 
-- Native **QEMU + libepoxy + VirGL** packages for **macOS ARM64** and **Linux ARM64**
+- Native **QEMU + libepoxy + VirGL** packages for **macOS ARM64**, **Linux ARM64** and **Windows x64**
 - Portable **skill ZIPs** for WorkBuddy / local importers
 - HALs and kernel modules (`*.ko`) stay as tracked prebuilts under `src/`; GSI
   `system.img` and GKI `Image` are runtime downloads
@@ -66,4 +66,4 @@ Failure logs upload `out/*.log` and meson logs only.
 
 ## Windows x64 host CI
 
-Windows 2022/UCRT64 builds VirGL and QEMU as native x64 PE binaries. Launcher tests, dependency closure and an imageless paused TCG VM are checked. tebox-windows-x64.zip contains host binaries and scripts, without Android images. No guest HAL build or actual GPU/display acceptance. macOS/Linux jobs unchanged.
+Windows 2022/UCRT64 builds VirGL and QEMU as native x64 PE binaries (TCG). Launcher tests, dependency closure and an imageless paused TCG VM are checked. tebox-windows-x64.zip contains host binaries and scripts, without Android images. macOS/Linux jobs unchanged.

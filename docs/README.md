@@ -35,6 +35,7 @@ Repository: [github.com/opencecs/tebox](https://github.com/opencecs/tebox)  Webs
 
 - **Generic GSI runtime**: ships with an official aosp_arm64 GSI as the default example; you can swap in any compatible ARM64 GSI (e.g. Google or Samsung GSI / Treble images, or a system image extracted from devices such as Pixel or Galaxy)
 - **Graphics & input**: VirGL GPU acceleration, virtio touchscreen
+- **Codecs**: Gallium video pass-through to the host backend (Linux VA-API / macOS VideoToolbox); the Mesa guest registers `c2.mesa.*` codec components (H.264 / H.265 / VP9 / AV1)
 - **Boot-oriented HAL examples**: Graphics, KeyMint (soft), Health, Power, Audio soft / stub implementations — trim or replace them for your product
 
 > Note: whether a given image boots fully depends on its Treble / VINTF requirements. Vendor-private partitions and closed-source services need your own adaptation. tebox is an extensible runtime and HAL framework, not a one-click flash package for a specific phone. If you extract or use third-party / OEM images, firmware, or proprietary components, you are responsible for complying with applicable laws, OEM license terms, and copyright; legal and compliance risk rests with you.
@@ -56,6 +57,7 @@ Repository: [github.com/opencecs/tebox](https://github.com/opencecs/tebox)  Webs
 | **macOS ARM64** (Apple silicon, M1–M4) | Recommended; HVF + VirGL verified |
 | **Linux ARM64** | Native build and run (KVM) |
 | **Linux x86_64** | Primarily for cross-compiling Android ARM64 guests |
+| **Windows x86_64** | Native QEMU/VirGL PE runtime |
 
 The guest is an **aarch64 Android GSI**. A usable GPU and graphical session are recommended.
 
@@ -67,17 +69,14 @@ The guest is an **aarch64 Android GSI**. A usable GPU and graphical session are 
 
 ## Clone
 
+Install and initialize Git LFS first (macOS: `brew install git-lfs`; Ubuntu/Debian: `sudo apt-get install git-lfs`):
+
 ```bash
+git lfs install
 git clone https://github.com/opencecs/tebox.git
 cd tebox
+git lfs pull
 ```
-
-Kernel modules (`*.ko`) ship in Git. `system.img` and the GKI `Image` download on
-first `./run` from [mirror.opencecs.com](https://mirror.opencecs.com) (URLs and
-SHA-256 in `.ci/guest.lock.json`). Place compatible custom files at the expected
-paths to skip the download.
-
-`vendor.img` and `initramfs.img` are generated from source by `./run` and are not committed. You also need QEMU/VirGL for your host platform; see the [build instructions](../.ci/README.md). Local build outputs in `out/` are not included in a clone.
 
 ## Quick start
 

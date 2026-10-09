@@ -11,12 +11,13 @@ Work from clean-checkout requirements. `qemu/`, `thirdparty/`, `prebuilts/`
 (host + android-arm64), `toolchains/`, each variant’s `images/` metadata
 (`gsi-lib64/`; `system.img` is downloaded at runtime), `vendor`, KeyMint
 `keybox.xml` and kernel modules (`*.ko`) are tracked in Git; `system.img` and
-`gki/Image` download at runtime. Only
-`out/`, `dist/` and `downloads/` are disposable
-build/cache products.
+`gki/Image` download at runtime. Only `out/`, `dist/` and `downloads/` are
+disposable build/cache products.
 
 Keep native host builds on `macos-26` and `ubuntu-24.04-arm`, with an architecture
-assertion in the build script. After QEMU is packaged, `.ci/package-systems.py`
+assertion in the build script; the separate `windows` job builds native x64 PE
+QEMU/VirGL on `windows-2022` (UCRT64, TCG). After QEMU is packaged,
+`.ci/package-systems.py`
 builds `vendor.img` and `initramfs.img` and emits one bootable tar.gz per variant
 (QEMU, vendor, initramfs, kernel, `./run`; `system.img` downloads at runtime) plus
 `tebox-vendor-init.tar.gz` (vendor and initramfs only, no `system.img`). Do not
