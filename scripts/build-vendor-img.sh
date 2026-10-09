@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Pack vendor (+ optional Mesa prebuilts) into images/vendor.img.
 set -euo pipefail
+# Guest libraries must be readable independently of the launcher's host umask.
+umask 022
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VARIANT="${1:-aosp_arm64-BP4A.251205.006}"
 AOSP="$ROOT/src/aosp/$VARIANT"

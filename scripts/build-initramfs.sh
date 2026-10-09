@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build AOSP-side initramfs: virtio kos + busybox init + vendor SELinux stub → switch_root Android.
 set -euo pipefail
+umask 022
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VARIANT="${1:-aosp_arm64-BP4A.251205.006}"
 AOSP="$ROOT/src/aosp/$VARIANT"
