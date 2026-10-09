@@ -83,6 +83,19 @@ if [[ -n "$MESA_PRE" ]]; then
 else
   echo "note: no Mesa prebuilts under ${MESA_PRE_CANDIDATES[*]} (props already mesa/virtio)"
 fi
+# Keep Android's stable mapper lookup and Mesa's explicit hw lookup identical.
+# Prefer the maintained HAL template over mapper copies bundled with Mesa.
+if [[ -f "$STUB/lib64/hw/mapper.stub.so" ]]; then
+  mkdir -p "$STAGE/lib64/hw"
+  install -m 0644 "$STUB/lib64/hw/mapper.stub.so" "$STAGE/lib64/hw/mapper.stub.so"
+elif [[ -f "$STUB/lib64/mapper.stub.so" ]]; then
+  mkdir -p "$STAGE/lib64/hw"
+  install -m 0644 "$STUB/lib64/mapper.stub.so" "$STAGE/lib64/hw/mapper.stub.so"
+fi
+if [[ -f "$STAGE/lib64/hw/mapper.stub.so" ]]; then
+  install -m 0644 "$STAGE/lib64/hw/mapper.stub.so" "$STAGE/lib64/mapper.stub.so"
+fi
+
 if [[ "${VENDOR_IMG_MB:-}" == "" ]]; then
   SIZE_MB=256
 fi
