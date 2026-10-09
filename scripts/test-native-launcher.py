@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -63,7 +64,9 @@ class NativeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             identity = MANAGER.process_identity(os.getpid())
-            self.assertTrue(identity["exe"].endswith("python.exe"))
+            self.assertIsNotNone(identity)
+            self.assertTrue(os.path.samefile(identity["exe"], sys.executable))
+            self.assertGreater(identity["creation_time"], 0)
             record = {"pid": os.getpid(), "identity": dict(identity, creation_time=identity["creation_time"] - 1)}
             (work / "launch.json").write_text(json.dumps(record))
             self.assertIsNone(MANAGER.native_pid(work))
