@@ -52,6 +52,9 @@ struct sdl2_console {
     egl_fb win_fb;
     bool y0_top;
     bool scanout_mode;
+#ifdef CONFIG_WIN32
+    void *win32_present;
+#endif
 #endif
 };
 
@@ -103,5 +106,8 @@ void sdl2_gl_release_dmabuf(DisplayChangeListener *dcl,
                             QemuDmaBuf *dmabuf);
 bool sdl2_gl_has_dmabuf(DisplayChangeListener *dcl);
 void sdl2_gl_console_init(struct sdl2_console *scon);
+#if defined(CONFIG_WIN32) && defined(CONFIG_OPENGL)
+void sdl2_gl_win32_present_destroy(struct sdl2_console *scon);
+#endif
 
 #endif /* SDL2_H */

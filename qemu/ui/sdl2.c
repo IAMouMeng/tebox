@@ -162,6 +162,9 @@ void sdl2_window_destroy(struct sdl2_console *scon)
         return;
     }
 
+#if defined(CONFIG_WIN32) && defined(CONFIG_OPENGL)
+    sdl2_gl_win32_present_destroy(scon);
+#endif
     if (scon->winctx) {
         SDL_GL_DeleteContext(scon->winctx);
         scon->winctx = NULL;
