@@ -6,7 +6,7 @@
 ln -sfn /path/to/ndk toolchains/android-ndk
 ln -sfn /path/to/sdk toolchains/android-sdk
 # 或：
-ANDROID_NDK=/path/to/ndk ANDROID_SDK_ROOT=/path/to/sdk bash scripts/build-mesa-android.sh
+ANDROID_NDK=/path/to/ndk ANDROID_SDK_ROOT=/path/to/sdk bash .ci/build-mesa-android.sh
 ```
 
 当前使用 NDK 30、SDK build-tools 36.1.0、Android API 34。macOS ARM 上，NDK 的工具子目录仍叫 `darwin-x86_64`。

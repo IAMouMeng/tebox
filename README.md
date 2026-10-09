@@ -43,10 +43,10 @@ VirGL renderer 和 Mesa guest driver 已支持把 Gallium video 命令转发到�
 Mesa VA-API。Linux 宿主可按下面的顺序启用这条路径：
 
 ```bash
-VIRGL_VIDEO=1 bash scripts/build-virglrenderer.sh
+VIRGL_VIDEO=1 bash .ci/build-virglrenderer.sh
 MESA_VIDEO_CODECS=h264dec,h264enc,h265dec,h265enc,vp9dec,av1dec \
-  ./scripts/build-mesa-android.sh
-VIRGL_VIDEO=1 ./scripts/build-qemu.sh
+  ./.ci/build-mesa-android.sh
+VIRGL_VIDEO=1 ./.ci/build-qemu.sh
 ```
 
 宿主需要 `libva`、`libva-drm`、Mesa VA-API 驱动和可访问的 `/dev/dri/renderD*`；

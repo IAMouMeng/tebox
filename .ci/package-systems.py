@@ -179,6 +179,8 @@ def pack_bootable(names: list[str], host: str, qemu: Path) -> list[Path]:
                     ROOT / 'scripts' / 'env.sh': f'{bundle}/scripts/env.sh',
                     ROOT / 'scripts' / 'ensure-guest-downloads.sh':
                         f'{bundle}/scripts/ensure-guest-downloads.sh',
+                    ROOT / 'scripts' / 'ensure-runtime-imgs.sh':
+                        f'{bundle}/scripts/ensure-runtime-imgs.sh',
                     ROOT / 'scripts' / 'check-runtime-inputs.py': f'{bundle}/scripts/check-runtime-inputs.py',
                     ROOT / '.ci' / 'guest.lock.json': f'{bundle}/.ci/guest.lock.json',
                 }
@@ -189,7 +191,7 @@ def pack_bootable(names: list[str], host: str, qemu: Path) -> list[Path]:
                         require_blob(source)
                         mode = 0o755 if source.name.endswith('.sh') else None
                         add_file(tar, source, arcname, mode)
-                add_file(tar, ROOT / 'scripts' / 'run-packed.sh', f'{bundle}/run', 0o755)
+                add_file(tar, ROOT / 'run', f'{bundle}/run', 0o755)
                 add_file(tar, readme, f'{bundle}/README.txt')
         written.append(archive_path)
         print(archive_path)

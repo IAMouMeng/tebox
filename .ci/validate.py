@@ -76,7 +76,7 @@ def validate_skills_and_prompts() -> None:
         require(ROOT / '.ai/prompts' / prompt)
     for alias in (ROOT / '.agents/skills', ROOT / '.claude/skills', ROOT / '.cursor/skills'):
         if not alias.exists():
-            fail(f'missing skill alias dir {alias.relative_to(ROOT)}; run scripts/link-ai-skills.py')
+            fail(f'missing skill alias dir {alias.relative_to(ROOT)}; run .ci/link-ai-skills.py')
             continue
         for name in expected:
             link = alias / name
@@ -98,10 +98,10 @@ def validate_ci_files() -> None:
         ROOT / '.ci/package-host.py',
         ROOT / '.ci/package-systems.py',
         ROOT / '.ci/package-android.py',
-        ROOT / 'scripts/run-packed.sh',
         ROOT / '.ci/fetch-guest-inputs.py',
         ROOT / '.ci/guest.lock.json',
         ROOT / 'scripts/ensure-guest-downloads.sh',
+        ROOT / 'scripts/README.md',
         ROOT / '.ci/requirements.txt',
         ROOT / '.ci/README.md',
         ROOT / '.ai/README.md',
@@ -109,8 +109,8 @@ def validate_ci_files() -> None:
         ROOT / 'AGENTS.md',
         ROOT / 'CLAUDE.md',
         ROOT / 'GEMINI.md',
-        ROOT / 'scripts/package-skills.py',
-        ROOT / 'scripts/link-ai-skills.py',
+        ROOT / '.ci/package-skills.py',
+        ROOT / '.ci/link-ai-skills.py',
     ):
         require(path)
     workflow = ROOT / '.github/workflows/build.yml'

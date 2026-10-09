@@ -10,7 +10,7 @@ selected workspace as the root if this skill was imported elsewhere.
 
 | Target | Host requirement | Entry |
 | --- | --- | --- |
-| QEMU + libepoxy + VirGL | macOS ARM64 or Linux ARM64 | `.ci/build-host.sh` or `scripts/build-libepoxy.sh` → `build-virglrenderer.sh` → `build-qemu.sh` |
+| QEMU + libepoxy + VirGL | macOS ARM64 or Linux ARM64 | `.ci/build-host.sh` or `.ci/build-libepoxy.sh` → `build-virglrenderer.sh` → `build-qemu.sh` |
 | Android ARM64 Mesa / HALs / vendor / initramfs | Linux x86_64 for official NDK (macOS can use `darwin-x86_64` NDK tools) | `.ci/build-android.sh` or the scripts below |
 | HALs only | NDK + `scripts/env.sh` | `scripts/build-hals.sh` then vendor/initramfs pack |
 
@@ -21,7 +21,7 @@ NDK binaries natively on ARM64 without an explicit compatibility layer.
 
 1. `source scripts/env.sh` (sets `VARIANT`, `NDK`, `GSI_LIBS`, prefixes)
 2. `scripts/extract-gsi-libs.sh` when binder/NDK stubs are missing
-3. `scripts/build-libdrm-android.sh` → `scripts/build-mesa-android.sh`
+3. `.ci/build-libdrm-android.sh` → `.ci/build-mesa-android.sh`
 4. `scripts/build-hals.sh`
 5. Stop QEMU if running → `scripts/build-vendor-img.sh` → `scripts/build-initramfs.sh`
    (or just `./run`, which rebuilds stale images automatically)

@@ -16,6 +16,14 @@ src/aosp/*/images/initramfs.img
 src/aosp/*/images/system.img
 src/kernel/*/gki/Image
 
+# Local host QEMU install (rebuildable via .ci/build-qemu.sh; 293MB incl. raw
+# edk2 firmware already tracked as .fd.bz2 under qemu/pc-bios/).
+/prebuilts/host/darwin-arm64/qemu/
+
+# Mesa build output (staging copy of prebuilts/android-arm64/mesa; rebuildable
+# via .ci/build-mesa-android.sh).
+/thirdparty/mesa/prebuilt/
+
 *.log
 
 # Local secrets / editor settings (project keybox under hardware/ is tracked).
@@ -44,3 +52,6 @@ __pycache__/
 *~
 /.idea/
 /.vscode/
+
+# Claude Code runtime state.
+/.claude/scheduled_tasks.lock

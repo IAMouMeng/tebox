@@ -12,7 +12,7 @@
 
 `.github/workflows/build.yml`
 
-1. **validate** — `python .ci/validate.py` + `scripts/package-skills.py`
+1. **validate** — `python .ci/validate.py` + `python .ci/package-skills.py`
 2. **host** matrix — `macos-26` and `ubuntu-24.04-arm`  
    build QEMU, then `.ci/package-systems.py` packs each `src/aosp/<variant>`
 

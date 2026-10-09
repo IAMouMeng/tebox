@@ -13,8 +13,8 @@ Canonical skill bodies live in `.ai/skills/*/SKILL.md`. Prompts live in
 | `gki-ci` | Maintain `.gitignore`, locks, GitHub Actions, artifacts |
 
 ```bash
-python3 scripts/link-ai-skills.py
-python3 scripts/package-skills.py   # → dist/skills/*.zip
+python3 .ci/link-ai-skills.py
+python3 .ci/package-skills.py   # → dist/skills/*.zip
 ```
 
 ## Per-tool wiring
