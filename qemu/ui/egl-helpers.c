@@ -261,8 +261,12 @@ int egl_rendernode_init(const char *rendernode, DisplayGLMode mode)
     }
     if (!epoxy_has_egl_extension(qemu_egl_display,
                                  "EGL_MESA_image_dma_buf_export")) {
-        error_report("egl: EGL_MESA_image_dma_buf_export not supported");
-        goto err;
+        if (!getenv("TEBOX_EGL_ALLOW_NO_DMABUF_EXPORT") ||
+            strcmp(getenv("TEBOX_EGL_ALLOW_NO_DMABUF_EXPORT"), "1")) {
+            error_report("egl: EGL_MESA_image_dma_buf_export not supported");
+            goto err;
+        }
+        warn_report("egl: texture export disabled by explicit host configuration");
     }
     if (!epoxy_has_egl_extension(qemu_egl_display,
                                  "EGL_EXT_image_dma_buf_import_modifiers")) {
@@ -296,6 +300,11 @@ bool egl_dmabuf_export_texture(uint32_t tex_id, int *fd, EGLint *offset,
     EGLImageKHR image;
     EGLuint64KHR modifiers[DMABUF_MAX_PLANES];
     int i;
+
+    if (!epoxy_has_egl_extension(qemu_egl_display,
+                                  "EGL_MESA_image_dma_buf_export")) {
+        return false;
+    }
 
     image = eglCreateImageKHR(qemu_egl_display, eglGetCurrentContext(),
                               EGL_GL_TEXTURE_2D_KHR,

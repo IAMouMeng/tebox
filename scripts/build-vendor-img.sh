@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Pack vendor (+ optional Mesa prebuilts) into images/vendor.img.
 set -euo pipefail
+# Guest libraries must be readable independently of the launcher's host umask.
+umask 022
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VARIANT="${1:-aosp_arm64-BP4A.251205.006}"
 AOSP="$ROOT/src/aosp/$VARIANT"
@@ -84,6 +86,19 @@ if [[ -n "$MESA_PRE" ]]; then
 else
   echo "note: no Mesa prebuilts under ${MESA_PRE_CANDIDATES[*]} (props already mesa/virtio)"
 fi
+# Keep Android's stable mapper lookup and Mesa's explicit hw lookup identical.
+# Prefer the maintained HAL template over mapper copies bundled with Mesa.
+if [[ -f "$STUB/lib64/hw/mapper.stub.so" ]]; then
+  mkdir -p "$STAGE/lib64/hw"
+  install -m 0644 "$STUB/lib64/hw/mapper.stub.so" "$STAGE/lib64/hw/mapper.stub.so"
+elif [[ -f "$STUB/lib64/mapper.stub.so" ]]; then
+  mkdir -p "$STAGE/lib64/hw"
+  install -m 0644 "$STUB/lib64/mapper.stub.so" "$STAGE/lib64/hw/mapper.stub.so"
+fi
+if [[ -f "$STAGE/lib64/hw/mapper.stub.so" ]]; then
+  install -m 0644 "$STAGE/lib64/hw/mapper.stub.so" "$STAGE/lib64/mapper.stub.so"
+fi
+
 if [[ "${VENDOR_IMG_MB:-}" == "" ]]; then
   SIZE_MB=256
 fi
@@ -102,6 +117,7 @@ CMD="$(mktemp)"
     case "$f" in
       etc|etc/*|manifest.xml) context=vendor_configs_file ;;
       lib64|lib64/*) context=same_process_hal_file ;;
+      overlay|overlay/*) context=vendor_overlay_file ;;
       *) context=vendor_file ;;
     esac
     echo "ea_set /$f security.selinux u:object_r:$context:s0"

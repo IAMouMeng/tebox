@@ -63,3 +63,7 @@ Failure logs upload `out/*.log` and meson logs only.
 - Real GPU/display verification on GitHub runners
 - Uploading the whole workspace or `out/` userdata images from CI artifacts
 - Initializing or publishing a Git remote from CI
+
+## Windows x64 host CI
+
+Windows 2022/UCRT64 builds VirGL and QEMU as native x64 PE binaries. Launcher tests, dependency closure and an imageless paused TCG VM are checked. tebox-windows-x64.zip contains host binaries and scripts, without Android images. No guest HAL build or actual GPU/display acceptance. macOS/Linux jobs unchanged.

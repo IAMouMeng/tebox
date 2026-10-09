@@ -105,3 +105,81 @@ jobs:
             out/*.log
             out/**/meson-logs/meson-log.txt
           retention-days: 7
+
+  windows:
+    needs: validate
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      NATIVE_HOST_ROOT: C:/tebox-ci/host
+      SOURCE_REF: ${{ github.sha }}
+      JOBS: '4'
+      HOST_X86_VERSION: '1'
+      HOST_CFLAGS: -march=x86-64 -mtune=generic
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          lfs: false
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git make diffutils patch tar
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-python-pip
+            mingw-w64-ucrt-x86_64-python-setuptools
+            mingw-w64-ucrt-x86_64-python-wheel
+            mingw-w64-ucrt-x86_64-python-yaml
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-pixman
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-SDL2_image
+            mingw-w64-ucrt-x86_64-libslirp
+            mingw-w64-ucrt-x86_64-libepoxy
+            mingw-w64-ucrt-x86_64-mesa
+            mingw-w64-ucrt-x86_64-angleproject
+            mingw-w64-ucrt-x86_64-dtc
+            mingw-w64-ucrt-x86_64-zlib
+      - name: Test native launcher without a guest
+        run: python3 scripts/test-native-launcher.py
+      - name: Compile and verify native PE runtime
+        run: bash scripts/build-native-host.sh
+      - name: Package Windows host runtime
+        shell: pwsh
+        run: |
+          $bundle = 'C:/tebox-ci/package/tebox-windows-x64'
+          New-Item -ItemType Directory -Force "$bundle/host", "$bundle/scripts", 'dist' | Out-Null
+          Copy-Item -Recurse 'C:/tebox-ci/host/install' "$bundle/host/install"
+          Copy-Item scripts/manage-native.py, scripts/prepare-native-runtime.py, scripts/verify-native-display.ps1 "$bundle/scripts/"
+          @'
+          Windows x64 QEMU/VirGL host runtime; Android images are not included.
+          Import an offline image export with scripts/prepare-native-runtime.py.
+          Requires native Windows Python to run scripts/manage-native.py.
+          CI checks PE dependencies and a paused headless VM, not Android boot or GPU display.
+          '@ | Set-Content "$bundle/README.txt"
+          Compress-Archive -Path $bundle -DestinationPath dist/tebox-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tebox-windows-x64
+          path: dist/tebox-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: logs-windows-x64
+          path: |
+            C:/tebox-ci/host/tools/build.log
+            C:/tebox-ci/host/build/**/meson-logs/meson-log.txt
+            C:/tebox-ci/host/install/smoke-test.log
+          if-no-files-found: warn
+          retention-days: 7
