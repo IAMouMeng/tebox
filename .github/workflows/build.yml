@@ -147,6 +147,7 @@ jobs:
             mingw-w64-ucrt-x86_64-libslirp
             mingw-w64-ucrt-x86_64-libepoxy
             mingw-w64-ucrt-x86_64-mesa
+            mingw-w64-ucrt-x86_64-angleproject
             mingw-w64-ucrt-x86_64-dtc
             mingw-w64-ucrt-x86_64-zlib
       - name: Test native launcher without a guest

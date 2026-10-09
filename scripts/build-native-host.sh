@@ -144,6 +144,10 @@ for dep in glib-2.0 pixman-1 sdl2 slirp epoxy zlib; do
   pkg-config --exists "$dep" || fail "Missing UCRT64 dependency: $dep"
 done
 [[ -f /ucrt64/include/libfdt.h ]] || fail 'Missing UCRT64 dtc/libfdt headers.'
+# libepoxy loads these dynamically; Mesa's WGL package does not provide them.
+for dll in libEGL.dll libGLESv2.dll; do
+  [[ -f "/ucrt64/bin/$dll" ]] || fail "Missing $dll; install mingw-w64-ucrt-x86_64-angleproject."
+done
 # System-site-packages exposes ONLY native UCRT Python deps; build tools remain
 # isolated. Vendored wheels need no network. Never invoke system pip install.
 python3 -m venv --copies --system-site-packages "$TOOLS/venv"
