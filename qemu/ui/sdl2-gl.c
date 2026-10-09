@@ -157,6 +157,11 @@ QEMUGLContext sdl2_gl_create_context(DisplayGLCtx *dgc,
     SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
 
     SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+#ifdef CONFIG_WIN32
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
+                        epoxy_is_desktop_gl() ? SDL_GL_CONTEXT_PROFILE_CORE
+                                              : SDL_GL_CONTEXT_PROFILE_ES);
+#else
     if (scon->opts->gl == DISPLAY_GL_MODE_ON ||
         scon->opts->gl == DISPLAY_GL_MODE_CORE) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
@@ -165,6 +170,7 @@ QEMUGLContext sdl2_gl_create_context(DisplayGLCtx *dgc,
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
                             SDL_GL_CONTEXT_PROFILE_ES);
     }
+#endif
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, params->major_ver);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, params->minor_ver);
 #ifdef __APPLE__
