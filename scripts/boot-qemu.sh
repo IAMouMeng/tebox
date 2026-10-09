@@ -116,7 +116,7 @@ if [[ "$FORCE_VIRGL" == 1 ]]; then
 fi
 
 if [[ "$FORCE_VIRGL" == 1 ]]; then
-  NGFX=(-display sdl,gl=core,show-cursor=on)
+  NGFX=(-display "${QEMU_DISPLAY:-sdl,gl=core,show-cursor=on}")
 elif [[ "${GRAPHIC:-1}" == 1 ]]; then
   if [[ "$HOST_OS" == darwin ]]; then
     NGFX=(-display "${QEMU_DISPLAY:-cocoa,zoom-to-fit=on,zoom-interpolation=on,show-cursor=on,full-grab=off}")

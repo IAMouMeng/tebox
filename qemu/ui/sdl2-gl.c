@@ -31,6 +31,9 @@
 #include "ui/console.h"
 #include "ui/input.h"
 #include "ui/sdl2.h"
+#ifdef CONFIG_WIN32
+#include "sdl2-win32-present.h"
+#endif
 
 static void sdl2_set_scanout_mode(struct sdl2_console *scon, bool scanout)
 {
@@ -40,6 +43,9 @@ static void sdl2_set_scanout_mode(struct sdl2_console *scon, bool scanout)
 
     scon->scanout_mode = scanout;
     if (!scon->scanout_mode) {
+#ifdef CONFIG_WIN32
+        sdl2_gl_win32_present_destroy(scon);
+#endif
         egl_fb_destroy(&scon->guest_fb);
         if (scon->surface) {
             surface_gl_destroy_texture(scon->gls, scon->surface);
@@ -157,6 +163,11 @@ QEMUGLContext sdl2_gl_create_context(DisplayGLCtx *dgc,
     SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
 
     SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+#ifdef CONFIG_WIN32
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
+                        epoxy_is_desktop_gl() ? SDL_GL_CONTEXT_PROFILE_CORE
+                                              : SDL_GL_CONTEXT_PROFILE_ES);
+#else
     if (scon->opts->gl == DISPLAY_GL_MODE_ON ||
         scon->opts->gl == DISPLAY_GL_MODE_CORE) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
@@ -165,6 +176,7 @@ QEMUGLContext sdl2_gl_create_context(DisplayGLCtx *dgc,
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
                             SDL_GL_CONTEXT_PROFILE_ES);
     }
+#endif
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, params->major_ver);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, params->minor_ver);
 #ifdef __APPLE__
@@ -268,6 +280,11 @@ void sdl2_gl_scanout_flush(DisplayChangeListener *dcl,
     SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
 
     SDL_GetWindowSize(scon->real_window, &ww, &wh);
+#ifdef CONFIG_WIN32
+    if (sdl2_win32_present(scon)) {
+        return;
+    }
+#endif
     egl_fb_setup_default(&scon->win_fb, ww, wh, 0, 0);
     egl_fb_blit(&scon->win_fb, &scon->guest_fb, !scon->y0_top);
 

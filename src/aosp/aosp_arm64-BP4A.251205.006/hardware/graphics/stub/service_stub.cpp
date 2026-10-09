@@ -103,11 +103,11 @@ namespace {
 
 constexpr int64_t kPrimaryDisplay = 0;
 constexpr int32_t kConfigId = 0;
-constexpr int32_t kWidth = 1280;
-constexpr int32_t kHeight = 720;
+constexpr int32_t kWidth = 1080;
+constexpr int32_t kHeight = 2400;
 constexpr int32_t kVsyncPeriodNs = 16666666;  // ~60 Hz
-constexpr int32_t kDpiX = 160000;
-constexpr int32_t kDpiY = 160000;
+constexpr int32_t kDpiX = 420000;
+constexpr int32_t kDpiY = 420000;
 
 int ashmemCreate(size_t size) {
     int fd = open("/dev/ashmem", O_RDWR | O_CLOEXEC);
@@ -213,6 +213,7 @@ DisplayConfiguration primaryConfig() {
     return cfg;
 }
 
+#include "gpu_buffer.h"
 #include "kms_display.h"
 
 class StubComposerClient : public BnComposerClient {
@@ -632,6 +633,39 @@ class StubComposer : public BnComposer {
     }
 };
 
+// Preserve the operational allocator's typed GBM/VirGL RGB path. Its current
+// ELF uses GBM_BO_USE_RENDERING | GBM_BO_USE_LINEAR (0x14), exports a dma-buf,
+// and destroys the BO only after obtaining that independent fd.
+#include "rgb_storage_layout.h"
+static int gbmCreate(uint32_t width,uint32_t height,int format,bool cpuWrite,uint32_t* stride,uint32_t* size) {
+    static std::mutex mutex;std::lock_guard lock(mutex);
+    pthread_once(&qemu_gbm_once,qemuInitGbm);
+    const auto info=bufferFormat(format);
+    if(!qemu_gbm_device || !info.bytes || format==0x21)return -1;
+    const int storageWidth=teboxRgbStorageWidth(format,width,teboxRgbRowAlignment());
+    if(!storageWidth)return -1;
+    gbm_bo* bo=gbm_bo_create(qemu_gbm_device,storageWidth,height,info.fourcc,
+                           GBM_BO_USE_RENDERING | GBM_BO_USE_LINEAR);
+    if(!bo)return -1;
+    uint32_t pitch=gbm_bo_get_stride(bo);int fd=-1;
+    if(cpuWrite){
+        // Mesa's VirGL GBM export is read-only. CPU_WRITE consumers need a
+        // writable descriptor to this same typed BO, never anonymous storage.
+        drm_prime_handle prime{};prime.handle=gbm_bo_get_handle(bo).u32;
+        prime.flags=DRM_CLOEXEC|DRM_RDWR;prime.fd=-1;
+        // Export writable on the FIRST export: DMA-BUF caches its file and
+        // later exports cannot upgrade a previously read-only file's mode.
+        if(!ioctl(gbm_device_get_fd(qemu_gbm_device),DRM_IOCTL_PRIME_HANDLE_TO_FD,&prime))fd=prime.fd;
+    }else fd=gbm_bo_get_fd(bo);
+    uint64_t length=uint64_t(pitch)*height;
+    if(fd>=0 && pitch>=uint32_t(storageWidth)*info.bytes && pitch%info.bytes==0 &&
+       pitch/info.bytes<=16384 && length<=UINT32_MAX &&
+       (teboxRgbRowAlignment()!=64 || pitch==uint32_t(storageWidth)*info.bytes)){
+        *stride=pitch/info.bytes;*size=uint32_t(length);
+    }else{if(fd>=0)close(fd);fd=-1;}
+    gbm_bo_destroy(bo);return fd;
+}
+
 class StubAllocator : public BnAllocator {
   public:
     ScopedAStatus allocate(const std::vector<uint8_t>&, int32_t,
@@ -663,14 +697,21 @@ class StubAllocator : public BnAllocator {
         for (int32_t i = 0; i < count; ++i) {
             int fd = -1;
             uint32_t drm_stride = 0, drm_size = 0;
-            fd = drmDumbCreate(static_cast<uint32_t>(effective.width),
+            const bool virgl = qemuGbmUsesVirgl();
+            if (virgl) {
+                fd = gbmCreate(effective.width, effective.height, static_cast<int>(effective.format),
+                               (static_cast<int64_t>(effective.usage) & 0xf0) != 0,
+                               &drm_stride, &drm_size);
+                if (fd < 0) return ScopedAStatus::fromServiceSpecificError(1);
+                backend = "gbm-virgl";
+            } else fd = drmDumbCreate(static_cast<uint32_t>(effective.width),
                                static_cast<uint32_t>(effective.height),
                                static_cast<uint32_t>(bpp * 8), &drm_stride, &drm_size);
             if (fd >= 0) {
                 stride = static_cast<int32_t>(drm_stride);
                 size = drm_size;
                 if (effective.layerCount > 1) size *= static_cast<size_t>(effective.layerCount);
-                backend = "drm-dumb";
+                if (!virgl) backend = "drm-dumb";
             }
             if (fd < 0) {
                 fd = ashmemCreate(size);
@@ -687,6 +728,8 @@ class StubAllocator : public BnAllocator {
                       static_cast<int32_t>(effective.format),
                       static_cast<int32_t>(static_cast<int64_t>(effective.usage) & 0xffffffff),
                       static_cast<int32_t>((static_cast<int64_t>(effective.usage) >> 32) & 0xffffffff)};
+            if (virgl && teboxRgbRowAlignment() == 64 && stride > effective.width)
+                h.ints.push_back(kTeBoxPaddedRgb);
             out->buffers.push_back(std::move(h));
         }
         out->stride = stride;

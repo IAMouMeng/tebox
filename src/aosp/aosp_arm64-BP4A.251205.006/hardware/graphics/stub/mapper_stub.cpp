@@ -21,6 +21,7 @@
 #include <poll.h>
 #include <unistd.h>
 #include "buffer_format.h"
+#include "rgb_storage_layout.h"
 
 #define LOG_TAG "mapper-stub"
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -54,6 +55,7 @@ static const char kStdMetaName[] = "android.hardware.graphics.common.StandardMet
 typedef struct {
     const native_handle_t* handle;
     int32_t width, height, stride, format;
+    bool padded_rgb;
     uint64_t usage, id, size;
     void* mapped;
     int lock_count;
@@ -119,6 +121,12 @@ static int parse_handle(const native_handle_t* h, BufSlot* info) {
     info->stride = ints[2];
     info->format = ints[3];
     info->usage = ((uint64_t)(uint32_t)ints[5] << 32) | (uint32_t)ints[4];
+    info->padded_rgb = false;
+    if (h->numInts == 7) {
+        if (h->numFds != 1 || ints[6] != kTeBoxPaddedRgb ||
+            !teboxPaddedRgbValid(info->format, info->width, info->stride)) return 0;
+        info->padded_rgb = true;
+    } else if (h->numInts != 6) return 0;
     int bpp = bufferFormat(info->format).bytes;
     if (!bpp || info->width <= 0 || info->height <= 0 || info->stride < info->width) return 0;
     info->size = (uint64_t)info->stride * (uint64_t)info->height * (uint64_t)bpp;

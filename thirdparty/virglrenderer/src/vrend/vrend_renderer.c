@@ -12750,8 +12750,9 @@ static void vrend_renderer_fill_caps_v1(int gl_ver, int gles_ver, union virgl_ca
    if (has_feature(feat_ubo)) {
       glGetIntegerv(GL_MAX_VERTEX_UNIFORM_BLOCKS, &max);
       /* GL_MAX_VERTEX_UNIFORM_BLOCKS is omitting the ordinary uniform block, add it
-       * also reduce by 1 as we might generate a VirglBlock helper uniform block */
-      caps->v1.max_uniform_blocks = max + 1 - 1;
+       * also reduce by 1 as we might generate a VirglBlock helper uniform block.
+       * The protocol's constant-buffer state has only PIPE_MAX_CONSTANT_BUFFERS slots. */
+      caps->v1.max_uniform_blocks = MIN2(max + 1 - 1, PIPE_MAX_CONSTANT_BUFFERS);
    }
 
    if (has_feature(feat_depth_clamp))
