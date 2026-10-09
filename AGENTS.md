@@ -7,13 +7,15 @@ repository setup, commits, pushes and publication require an explicit request.
 ## Source and build boundaries
 
 - Tracked in git: `qemu/`, `thirdparty/`, `prebuilts/` (host + android-arm64),
-  `toolchains/`, `src/` including each variant’s GSI `images/system.img`,
+  `toolchains/`, `src/` including each variant’s runtime GSI metadata and
+  `images/` support files (the large `system.img` is downloaded on demand),
   `qemu/vendor`, `prebuilts/gsi-lib64/`, `hardware/`, KeyMint `keybox.xml`,
-  `.ci/`, `.ai/`, scripts and docs. Large binaries use Git LFS (`.gitattributes`).
+  `.ci/`, `.ai/`, scripts and docs. Kernel modules (`*.ko`) are tracked in Git;
+  `system.img` and `gki/Image` download at runtime from mirror.opencecs.com.
   Do **not** commit rebuildable `images/vendor.img` or `images/initramfs.img`
   (produced by `./run` / `build-vendor-img.sh` / `build-initramfs.sh`).
 - Ignored build products only: `out/`, `dist/`, `downloads/` (CI download cache),
-  `archives/` (legacy; unused), `src/aosp/*/images/{vendor,initramfs}.img`,
+  `archives/` (legacy; unused), `src/aosp/*/images/{system,vendor,initramfs}.img`,
   plus local `.env` / editor settings.
 - Variant-specific GSI artifacts belong under `src/aosp/<variant>/images/`, not
   under shared `prebuilts/gsi/`. Host QEMU/VirGL and guest Mesa/libdrm installs
@@ -23,7 +25,7 @@ repository setup, commits, pushes and publication require an explicit request.
 - `scripts/env.sh` owns host, SDK/NDK and prebuilt paths. Support macOS ARM64 and
   Linux ARM64 for host QEMU. Android ARM64 cross-compilation uses macOS or Linux
   x86_64 because Google's Linux NDK host tools are x86_64.
-- `.ci/guest.lock.json` pins GSI/busybox download URLs and kernel/module digests
+- `.ci/guest.lock.json` pins runtime GSI/busybox download URLs and kernel/module digests
   for CI. Prefer editing the tracked trees in-place. Do not delete nested sources
   to “save space” without asking.
 - `thirdparty/virglrenderer/`, `thirdparty/audio-deps/`,
@@ -46,7 +48,7 @@ repository setup, commits, pushes and publication require an explicit request.
   on that path can overwrite GPU-rendered content.
 - Use the software KeyMint in `hardware/keymint/soft`; the old KeyMint stub cannot
   provide the crypto operations Android needs to finish booting.
-- Default validation uses `SNAPSHOT=1` and read-only `system.img`. Keep
+- Default validation uses `SNAPSHOT=1` and a read-only runtime `system.img`. Keep
   `out/test-<variant>/userdata.img`. Stop a VM before replacing its input images.
 
 ## Validation and reporting

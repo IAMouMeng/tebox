@@ -91,4 +91,5 @@ fi
 export VARIANT="$pick"
 export QEMU="${QEMU:-$ROOT/qemu}"
 echo "==> lunch $VARIANT"
+bash "$ROOT/scripts/ensure-guest-downloads.sh" "$VARIANT"
 exec bash "$ROOT/scripts/boot-qemu.sh" "$VARIANT"

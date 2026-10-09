@@ -1,6 +1,6 @@
 # Build products and download caches only.
 # prebuilts/ is tracked (host QEMU/VirGL + android-arm64 Mesa/libdrm).
-# Variant GSI system.img stays under src/aosp/<variant>/images/;
+# Variant GSI system.img is downloaded at runtime into src/aosp/<variant>/images/;
 # vendor.img / initramfs.img are rebuilt by ./run and are not committed.
 /out/
 /dist/
@@ -13,6 +13,8 @@
 # Rebuildable guest images (inputs: qemu/vendor, qemu/busybox, qemu/init, Mesa).
 src/aosp/*/images/vendor.img
 src/aosp/*/images/initramfs.img
+src/aosp/*/images/system.img
+src/kernel/*/gki/Image
 
 *.log
 

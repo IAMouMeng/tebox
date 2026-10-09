@@ -26,13 +26,14 @@ def validate_guest_lock() -> None:
     if not lock_path.is_file():
         return
     lock = json.loads(lock_path.read_text())
-    for key in ('variant', 'gsi', 'busybox', 'kernel_id', 'kernel_files',
+    for key in ('variant', 'system', 'kernel', 'busybox', 'kernel_id', 'kernel_files',
                 'kernel_commit', 'modules_commit', 'ndk', 'build_tools'):
         if key not in lock:
             fail(f'guest.lock.json missing {key}')
-    gsi = lock.get('gsi', {})
+    system = lock.get('system', {})
+    kernel = lock.get('kernel', {})
     busybox = lock.get('busybox', {})
-    for label, blob in (('gsi', gsi), ('busybox', busybox)):
+    for label, blob in (('system', system), ('kernel', kernel), ('busybox', busybox)):
         if not isinstance(blob, dict) or 'url' not in blob or 'sha256' not in blob:
             fail(f'guest.lock.json {label} needs url + sha256')
             continue
@@ -100,6 +101,7 @@ def validate_ci_files() -> None:
         ROOT / 'scripts/run-packed.sh',
         ROOT / '.ci/fetch-guest-inputs.py',
         ROOT / '.ci/guest.lock.json',
+        ROOT / 'scripts/ensure-guest-downloads.sh',
         ROOT / '.ci/requirements.txt',
         ROOT / '.ci/README.md',
         ROOT / '.ai/README.md',
@@ -145,20 +147,20 @@ def validate_gitignore() -> None:
                    '**/keybox.xml', '*.keystore',
                    '/qemu/', '/thirdparty/mesa/src/',
                    '/src/aosp/*/system/*.img',
-                   '/src/aosp/*/images/system.img',
-                   '/src/kernel/*/gki/'):
+                   ):
         if any(line.strip() == banned for line in text.splitlines()):
             fail(f'.gitignore must not ignore tracked path: {banned}')
-    # Rebuildable; must stay ignored (not uploaded).
-    for needed in ('src/aosp/*/images/vendor.img',
-                   'src/aosp/*/images/initramfs.img'):
+    # Rebuildable/runtime; must stay ignored (not uploaded).
+    for needed in ('src/aosp/*/images/system.img',
+                   'src/aosp/*/images/vendor.img',
+                   'src/aosp/*/images/initramfs.img',
+                   'src/kernel/*/gki/Image'):
         if needed not in text:
             fail(f'.gitignore missing rebuildable-image ignore: {needed}')
     guest = ROOT / '.ci/guest.lock.json'
     if guest.is_file():
         variant = json.loads(guest.read_text()).get('variant', '')
         require(ROOT / f'src/aosp/{variant}/images/README.md', 'variant images/README.md')
-        require(ROOT / f'src/aosp/{variant}/images/system.img', 'variant images/system.img')
         require(ROOT / f'src/aosp/{variant}/prebuilts/gsi-lib64', 'variant prebuilts/gsi-lib64')
         require(ROOT / f'src/aosp/{variant}/hardware', 'variant hardware/')
 
