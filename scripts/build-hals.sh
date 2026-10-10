@@ -10,6 +10,7 @@ bash "$ROOT/scripts/extract-gsi-libs.sh" "$VARIANT"
 for name in graphics health audio power sensors wifi radio bluetooth fingerprint nfc gnss; do
   bash "$HAL/$name/stub/build-stub.sh"
 done
+bash "$HAL/camera/stub/build-stub.sh"
 bash "$HAL/codec2/soft/build.sh"
 bash "$HAL/wifi/supplicant-stub/build-stub.sh"
 bash "$HAL/wifi/wificond-stub/build-stub.sh"
@@ -23,6 +24,7 @@ install -m 0644 "$ROOT/out/graphics-stub/lib64/hw/mapper.stub.so" "$STUB/lib64/m
 for name in audio power sensors wifi radio bluetooth fingerprint nfc gnss; do
   bash "$HAL/$name/stub/install.sh"
 done
+bash "$HAL/camera/stub/install.sh"
 bash "$HAL/keymint/soft/install.sh"
 bash "$HAL/codec2/soft/install.sh"
 

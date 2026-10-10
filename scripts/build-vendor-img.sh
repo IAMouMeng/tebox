@@ -165,6 +165,9 @@ CMD="$(mktemp)"
   if [[ -f bin/hw/android.hardware.gnss-service ]]; then
     echo "ea_set /bin/hw/android.hardware.gnss-service security.selinux u:object_r:hal_keymint_system_exec:s0"
   fi
+  if [[ -f lib64/hw/camera.default.so ]]; then
+    echo "ea_set /lib64/hw/camera.default.so security.selinux u:object_r:hal_keymint_system_exec:s0"
+  fi
   if [[ -f bin/hw/android.hardware.media.c2-service ]]; then
     echo "ea_set /bin/hw/android.hardware.media.c2-service security.selinux u:object_r:hal_keymint_system_exec:s0"
   fi
