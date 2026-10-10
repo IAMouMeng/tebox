@@ -63,6 +63,7 @@ compile_one() {
     -DLOG_TAG='"health-stub"' \
     -DBINDER_STABILITY_SUPPORT \
     -I"$GEN/include" \
+    -I"$ANDROID_HEADERS" \
     -I"$GSI_LIBS/include" \
     -Wno-unused-parameter \
     -Wno-deprecated-declarations
