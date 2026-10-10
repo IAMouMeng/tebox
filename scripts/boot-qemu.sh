@@ -15,6 +15,12 @@ SYSTEM="$AOSP/images/system.img"
 VENDOR="$AOSP/images/vendor.img"
 INITRD="$AOSP/images/initramfs.img"
 WORKDIR="$ROOT/out/test-$VARIANT"
+# The service client gives every Android instance its own userdata, QMP and
+# debug sockets.  Keep the legacy per-variant directory when no instance was
+# requested from the command line.
+if [[ -n "${TEBOX_INSTANCE_DIR:-}" ]]; then
+  WORKDIR="${TEBOX_INSTANCE_DIR%/}"
+fi
 python3 "$ROOT/scripts/check-runtime-inputs.py" "$KERNEL" "$SYSTEM" "$VENDOR" "$INITRD"
 mkdir -p "$WORKDIR"
 
@@ -32,10 +38,12 @@ resolve_qemu() {
     fi
     return 0
   fi
+  # Prefer the tree-built QEMU so local UI patches (e.g. TEBOX_WINDOW_CONTROLS
+  # side toolbar in ui/sdl2.c) take effect. Fall back to prebuilts when absent.
   local candidates=(
+    "$ROOT/out/qemu-build/qemu-system-aarch64"
     "$HOST_PRE/qemu/bin/qemu-system-aarch64"
     "$HOST_PRE/qemu/qemu"
-    "$ROOT/out/qemu-build/qemu-system-aarch64"
     "$ROOT/prebuilts/host/$HOST_ID/qemu/bin/qemu-system-aarch64"
   )
   local c
@@ -149,6 +157,14 @@ fi
 # PCI slot 6 matches the guest's sysfs GPU labels.
 NGFX+=(-device "$GPU_DEV,addr=0x6,xres=${XRES:-1080},yres=${YRES:-2400}"
   -device virtio-keyboard-pci -device virtio-tablet-pci,touchscreen=on)
+
+# Host cast: QEMU tebox-cast-hook → Unix socket → tebox-cast (see src/service/cast/).
+if [[ "${TEBOX_CAST:-0}" == 1 ]]; then
+  export TEBOX_CAST=1
+  export TEBOX_CAST_SOCK="${TEBOX_CAST_SOCK:-$WORKDIR/cast.sock}"
+  export TEBOX_CAST_FPS="${TEBOX_CAST_FPS:-30}"
+  echo "cast:    TEBOX_CAST=1 sock=$TEBOX_CAST_SOCK fps=$TEBOX_CAST_FPS"
+fi
 
 echo "variant: $VARIANT"
 echo "kernel:  $KERNEL  ($KID)"

@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 case "$(uname -s)" in
   Darwin)
-    brew install meson ninja pkgconf glib pixman sdl2 sdl2_image libslirp \
+    brew install meson ninja pkgconf glib pixman sdl2 sdl2_image sdl2_ttf libslirp \
       libpng jpeg-turbo zstd mesa e2fsprogs libusb
     ;;
   Linux)
@@ -14,7 +14,7 @@ case "$(uname -s)" in
     ${SUDO[@]+"${SUDO[@]}"} apt-get install -y --no-install-recommends \
       build-essential clang git ca-certificates curl xz-utils unzip zip \
       python3 python3-venv python3-pip ninja-build pkg-config \
-      libglib2.0-dev libpixman-1-dev libsdl2-dev libsdl2-image-dev \
+      libglib2.0-dev libpixman-1-dev libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev \
       libslirp-dev libepoxy-dev libegl1-mesa-dev libgles2-mesa-dev \
       libgl1-mesa-dev libgbm-dev libdrm-dev libx11-dev libx11-xcb-dev \
       libxext-dev libxfixes-dev libxrandr-dev libxi-dev \

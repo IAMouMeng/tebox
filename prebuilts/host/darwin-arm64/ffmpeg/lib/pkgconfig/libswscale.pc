@@ -1,0 +1,14 @@
+prefix=/Users/myt/Desktop/work/GKI/out/cast-ffmpeg
+exec_prefix=${prefix}
+libdir=/Users/myt/Desktop/work/GKI/out/cast-ffmpeg/lib
+includedir=/Users/myt/Desktop/work/GKI/out/cast-ffmpeg/include
+
+Name: libswscale
+Description: FFmpeg image rescaling library
+Version: 9.5.103
+Requires: 
+Requires.private: libavutil >= 60.26.103
+Conflicts:
+Libs: -L${libdir}  -lswscale 
+Libs.private: -lm
+Cflags: -I${includedir}

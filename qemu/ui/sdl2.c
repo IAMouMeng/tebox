@@ -73,7 +73,9 @@ static struct sdl2_console *get_scon_from_window(uint32_t window_id)
 {
     int i;
     for (i = 0; i < sdl2_num_outputs; i++) {
-        if (sdl2_console[i].real_window == SDL_GetWindowFromID(window_id)) {
+        SDL_Window *window = SDL_GetWindowFromID(window_id);
+        if (sdl2_console[i].real_window == window ||
+            sdl2_console[i].toolbar_window == window) {
             return &sdl2_console[i];
         }
     }
@@ -113,6 +115,7 @@ void sdl2_window_create(struct sdl2_console *scon)
 #ifdef CONFIG_OPENGL
     if (scon->opengl) {
         flags |= SDL_WINDOW_OPENGL;
+        flags |= SDL_WINDOW_ALLOW_HIGHDPI;
 #ifdef __APPLE__
         if (scon->opts->gl != DISPLAY_GL_MODE_ES) {
             /* macOS needs an explicit core context for desktop GL shaders. */
@@ -154,6 +157,30 @@ void sdl2_window_create(struct sdl2_console *scon)
     }
 
     sdl_update_caption(scon);
+
+    /* Keep controls in a small native SDL surface beside the QEMU display.
+     * Must stay on the software renderer: an accelerated/Metal toolbar
+     * steals the shared GL context from VirGL on macOS and breaks shaders
+     * ("version '150' is not supported") until the guest window dies. */
+    if (getenv("TEBOX_WINDOW_CONTROLS")) {
+        int x, y;
+        SDL_GetWindowPosition(scon->real_window, &x, &y);
+        scon->toolbar_window = SDL_CreateWindow("tebox controls",
+                                                x + width + 8, y, 104, height,
+                                                SDL_WINDOW_BORDERLESS |
+                                                SDL_WINDOW_ALWAYS_ON_TOP);
+        if (scon->toolbar_window) {
+            SDL_SetHintWithPriority(SDL_HINT_RENDER_DRIVER, "software",
+                                    SDL_HINT_OVERRIDE);
+            scon->toolbar_renderer = SDL_CreateRenderer(scon->toolbar_window,
+                                                        -1, SDL_RENDERER_SOFTWARE);
+#ifdef CONFIG_OPENGL
+            if (scon->opengl && scon->winctx) {
+                SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+            }
+#endif
+        }
+    }
 }
 
 void sdl2_window_destroy(struct sdl2_console *scon)
@@ -173,6 +200,14 @@ void sdl2_window_destroy(struct sdl2_console *scon)
         SDL_DestroyRenderer(scon->real_renderer);
         scon->real_renderer = NULL;
     }
+    if (scon->toolbar_renderer) {
+        SDL_DestroyRenderer(scon->toolbar_renderer);
+        scon->toolbar_renderer = NULL;
+    }
+    if (scon->toolbar_window) {
+        SDL_DestroyWindow(scon->toolbar_window);
+        scon->toolbar_window = NULL;
+    }
     SDL_DestroyWindow(scon->real_window);
     scon->real_window = NULL;
 }
@@ -186,6 +221,63 @@ void sdl2_window_resize(struct sdl2_console *scon)
 
     sdl2_default_window_size(scon, &width, &height);
     SDL_SetWindowSize(scon->real_window, width, height);
+    if (scon->toolbar_window) {
+        int x, y;
+        SDL_GetWindowPosition(scon->real_window, &x, &y);
+        SDL_SetWindowPosition(scon->toolbar_window, x + width + 8, y);
+        SDL_SetWindowSize(scon->toolbar_window, 104, height);
+    }
+}
+
+static void sdl2_toolbar_draw(struct sdl2_console *scon)
+{
+    SDL_Renderer *r = scon->toolbar_renderer;
+    int w, h;
+    if (!r || !scon->toolbar_window) return;
+    SDL_GetRendererOutputSize(r, &w, &h);
+    SDL_SetRenderDrawColor(r, 19, 27, 40, 255);
+    SDL_RenderClear(r);
+    SDL_SetRenderDrawColor(r, 36, 91, 167, 255);
+    SDL_Rect header = { 0, 0, w, 16 };
+    SDL_RenderFillRect(r, &header);
+    for (int i = 0; i < 5; i++) {
+        SDL_Rect button = { 12, 24 + i * 78, w - 24, 56 };
+        SDL_SetRenderDrawColor(r, i == 4 ? 126 : 53, i == 4 ? 55 : 102,
+                               i == 4 ? 62 : 181, 255);
+        SDL_RenderFillRect(r, &button);
+        SDL_SetRenderDrawColor(r, 235, 242, 255, 255);
+        if (i < 2) {
+            int cx = w / 2, cy = button.y + button.h / 2;
+            SDL_RenderDrawLine(r, cx - 12, cy, cx + 12, cy);
+            if (i == 0) SDL_RenderDrawLine(r, cx, cy - 12, cx, cy + 12);
+            else SDL_RenderDrawLine(r, cx, cy + 12, cx, cy - 12);
+        } else if (i == 2) {
+            SDL_RenderDrawLine(r, 30, button.y + 28, 68, button.y + 28);
+            SDL_RenderDrawLine(r, 30, button.y + 28, 42, button.y + 16);
+            SDL_RenderDrawLine(r, 30, button.y + 28, 42, button.y + 40);
+        } else if (i == 3) {
+            SDL_RenderDrawLine(r, 30, button.y + 38, 52, button.y + 16);
+            SDL_RenderDrawLine(r, 52, button.y + 16, 74, button.y + 38);
+            SDL_RenderDrawLine(r, 38, button.y + 38, 66, button.y + 38);
+        } else {
+            int cx = w / 2, cy = button.y + 28;
+            SDL_RenderDrawLine(r, cx - 10, cy - 10, cx - 14, cy);
+            SDL_RenderDrawLine(r, cx - 14, cy, cx - 10, cy + 10);
+            SDL_RenderDrawLine(r, cx - 10, cy + 10, cx, cy + 14);
+            SDL_RenderDrawLine(r, cx, cy + 14, cx + 10, cy + 10);
+            SDL_RenderDrawLine(r, cx + 10, cy + 10, cx + 14, cy);
+            SDL_RenderDrawLine(r, cx + 14, cy, cx + 10, cy - 10);
+            SDL_RenderDrawLine(r, cx + 10, cy - 10, cx, cy - 14);
+            SDL_RenderDrawLine(r, cx, cy - 14, cx - 10, cy - 10);
+            SDL_RenderDrawLine(r, cx, button.y + 8, cx, cy);
+        }
+    }
+    SDL_RenderPresent(r);
+#ifdef CONFIG_OPENGL
+    if (scon->opengl && scon->winctx && scon->real_window) {
+        SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+    }
+#endif
 }
 
 static void sdl2_redraw(struct sdl2_console *scon)
@@ -232,6 +324,15 @@ static void sdl_update_caption(struct sdl2_console *scon)
     } else {
         snprintf(win_title, sizeof(win_title), "QEMU%s", status);
         snprintf(icon_title, sizeof(icon_title), "QEMU");
+    }
+
+    /* The service client supplies a per-instance name so several Android
+     * windows remain distinguishable in the host window switcher. */
+    {
+        const char *instance_name = getenv("QEMU_NAME");
+        if (instance_name && instance_name[0]) {
+            snprintf(win_title, sizeof(win_title), "%s%s", instance_name, status);
+        }
     }
 
     if (scon->real_window) {
@@ -530,6 +631,10 @@ static void handle_mousemotion(SDL_Event *ev)
         return;
     }
 
+    if (SDL_GetWindowFromID(ev->motion.windowID) == scon->toolbar_window) {
+        return;
+    }
+
     SDL_GetWindowSize(scon->real_window, &scr_w, &scr_h);
     if (qemu_input_is_absolute(scon->dcl.con) || absolute_enabled) {
         max_x = scr_w - 1;
@@ -564,6 +669,23 @@ static void handle_mousebutton(SDL_Event *ev)
     int scr_w, scr_h, x, y;
 
     if (!scon || !qemu_console_is_graphic(scon->dcl.con)) {
+        return;
+    }
+
+    if ((SDL_Window *)SDL_GetWindowFromID(ev->button.windowID) ==
+        scon->toolbar_window && ev->type == SDL_MOUSEBUTTONUP &&
+        ev->button.button == SDL_BUTTON_LEFT) {
+        unsigned int linux_key = 0;
+        if (ev->button.y < 100) linux_key = 115;       /* volume up */
+        else if (ev->button.y < 180) linux_key = 114;  /* volume down */
+        else if (ev->button.y < 260) linux_key = 158;  /* back */
+        else if (ev->button.y < 340) linux_key = 102;  /* home */
+        else if (ev->button.y < 420) linux_key = 116;  /* power */
+        if (linux_key) {
+            qemu_input_event_send_key_linux(scon->dcl.con, linux_key, true);
+            qemu_input_event_send_key_linux(scon->dcl.con, linux_key, false);
+            qemu_input_event_sync();
+        }
         return;
     }
 
@@ -746,13 +868,29 @@ void sdl2_poll_events(struct sdl2_console *scon)
         if (scon->idle_counter < SDL2_MAX_IDLE_COUNT) {
             scon->idle_counter++;
             if (scon->idle_counter >= SDL2_MAX_IDLE_COUNT) {
-                scon->dcl.update_interval = GUI_REFRESH_INTERVAL_DEFAULT;
+                const char *cast = getenv("TEBOX_CAST");
+                const char *fps_env = getenv("TEBOX_CAST_FPS");
+                int fps = fps_env && fps_env[0] ? atoi(fps_env) : 60;
+
+                /* Keep ~60Hz GUI tick while host cast is active. */
+                if (cast && cast[0] == '1' && !cast[1]) {
+                    if (fps < 1) {
+                        fps = 1;
+                    }
+                    if (fps > 60) {
+                        fps = 60;
+                    }
+                    scon->dcl.update_interval = MAX(10, 1000 / fps);
+                } else {
+                    scon->dcl.update_interval = GUI_REFRESH_INTERVAL_DEFAULT;
+                }
             }
         }
     } else {
         scon->idle_counter = 0;
         scon->dcl.update_interval = SDL2_REFRESH_INTERVAL_BUSY;
     }
+    sdl2_toolbar_draw(scon);
 }
 
 static void sdl_mouse_warp(DisplayChangeListener *dcl,

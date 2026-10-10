@@ -31,6 +31,7 @@
 #include "ui/console.h"
 #include "ui/input.h"
 #include "ui/sdl2.h"
+#include "tebox-cast-hook.h"
 #ifdef CONFIG_WIN32
 #include "sdl2-win32-present.h"
 #endif
@@ -60,7 +61,10 @@ static void sdl2_gl_render_surface(struct sdl2_console *scon)
 
     SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
 
-    SDL_GetWindowSize(scon->real_window, &ww, &wh);
+    /* On Retina/HiDPI hosts the logical SDL size is half the drawable size.
+     * Using the drawable size keeps the VirGL texture and Android glyphs
+     * sharp without changing the guest's 1080x2400 mode. */
+    SDL_GL_GetDrawableSize(scon->real_window, &ww, &wh);
     surface_gl_setup_viewport(scon->gls, scon->surface, ww, wh);
 
     surface_gl_render_texture(scon->gls, scon->surface);
@@ -126,7 +130,22 @@ void sdl2_gl_refresh(DisplayChangeListener *dcl)
         scon->updates = 0;
         sdl2_gl_render_surface(scon);
     }
+    /*
+     * Guest scanout_flush may be << target cast FPS when the UI is idle.
+     * Drive capture from the display refresh timer so live cast stays smooth.
+     */
+    if (scon->scanout_mode && scon->guest_fb.framebuffer && scon->real_window) {
+        SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+        tebox_cast_on_scanout(scon);
+    }
     sdl2_poll_events(scon);
+    if (tebox_cast_enabled()) {
+        uint64_t ms = tebox_cast_refresh_interval_ms();
+
+        if (ms) {
+            scon->dcl.update_interval = ms;
+        }
+    }
 }
 
 void sdl2_gl_redraw(struct sdl2_console *scon)
@@ -279,12 +298,13 @@ void sdl2_gl_scanout_flush(DisplayChangeListener *dcl,
 
     SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
 
-    SDL_GetWindowSize(scon->real_window, &ww, &wh);
+    SDL_GL_GetDrawableSize(scon->real_window, &ww, &wh);
 #ifdef CONFIG_WIN32
     if (sdl2_win32_present(scon)) {
         return;
     }
 #endif
+    /* Cast capture is driven from sdl2_gl_refresh (timer), not only flush. */
     egl_fb_setup_default(&scon->win_fb, ww, wh, 0, 0);
     egl_fb_blit(&scon->win_fb, &scon->guest_fb, !scon->y0_top);
 

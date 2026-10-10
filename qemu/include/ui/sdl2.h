@@ -33,6 +33,8 @@ struct sdl2_console {
     DisplayOptions *opts;
     SDL_Texture *texture;
     SDL_Window *real_window;
+    SDL_Window *toolbar_window;
+    SDL_Renderer *toolbar_renderer;
     SDL_Renderer *real_renderer;
     int idx;
     int last_vm_running; /* per console for caption reasons */
