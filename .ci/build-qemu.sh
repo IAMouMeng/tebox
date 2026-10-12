@@ -22,16 +22,24 @@ fi
   exit 1
 }
 
-export PKG_CONFIG_PATH="$EPOXY_PREFIX/lib/pkgconfig:$VIRGL_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+RUTABAGA="${RUTABAGA:-1}"
+if [[ "$RUTABAGA" == 1 ]]; then
+  [[ -f "$RUTABAGA_PREFIX/lib/pkgconfig/rutabaga_gfx_ffi.pc" ]] || {
+    echo "missing rutabaga at $RUTABAGA_PREFIX (run scripts/build-rutabaga.sh first, or RUTABAGA=0 to skip)" >&2
+    exit 1
+  }
+fi
+export PKG_CONFIG_PATH="$EPOXY_PREFIX/lib/pkgconfig:$VIRGL_PREFIX/lib/pkgconfig:$RUTABAGA_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+
 if [[ "$HOST_OS" == darwin ]]; then
   MESA_HOST="$(brew --prefix mesa)"
   export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$MESA_HOST/lib/pkgconfig"
   # Prefer our epoxy headers over Homebrew's (no egl.h). Do not put Mesa's
   # lib on DYLD_LIBRARY_PATH — it shadows Apple's private libGL.
   export CPATH="$EPOXY_PREFIX/include:$MESA_HOST/include:${CPATH:-}"
-  export DYLD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+  export DYLD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib:$RUTABAGA_PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 else
-  export LD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export LD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib:$RUTABAGA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 # virglrenderer exposes the video flag under its unstable API guard.  Keep
 # QEMU's declaration in sync when the optional host video backend is enabled.
@@ -79,6 +87,13 @@ if [[ "$NEED_RECONF" == 1 ]]; then
     --disable-docs
     --enable-plugins
   )
+
+  if [[ "$RUTABAGA" == 1 ]]; then
+    CONFIG_ARGS+=(--enable-rutabaga-gfx)
+  else
+    CONFIG_ARGS+=(--disable-rutabaga-gfx)
+  fi
+  
   if [[ "$HOST_OS" == darwin ]]; then
     # macOS wants a non-PIE binary. On Linux aarch64, -fno-pie plus the
     # default PIE link fails on __stack_chk_guard (qemu-keymap and others).
@@ -101,6 +116,15 @@ else
   echo "WARN: virtio-gpu-gl still missing — check CONFIG_OPENGL in config-host.h" >&2
   grep -nE 'CONFIG_OPENGL|CONFIG_VIRGL' "$BUILD/config-host.h" || true
   exit 1
+fi
+
+if [[ "$RUTABAGA" == 1 ]]; then
+  if "$BUILD/qemu-system-aarch64" -device help 2>/dev/null | grep -q 'virtio-gpu-rutabaga'; then
+    echo "OK: virtio-gpu-rutabaga available"
+  else
+    echo "WARN: virtio-gpu-rutabaga still missing — check rutabaga_gfx_ffi in meson log" >&2
+    exit 1
+  fi
 fi
 
 if [[ "${QEMU_INSTALL:-0}" == 1 ]]; then
