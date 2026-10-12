@@ -85,7 +85,7 @@ if [[ "$NEED_RECONF" == 1 ]]; then
     # vhost-user is Linux-only; leave it enabled there so vhost.c can link.
     CONFIG_ARGS+=(--enable-hvf --disable-pie --disable-vhost-user)
   else
-    CONFIG_ARGS+=(--enable-vhost-user)
+    CONFIG_ARGS+=(--enable-kvm --enable-vhost-user)
   fi
   if [[ "${QEMU_INSTALL:-0}" == 1 ]]; then
     CONFIG_ARGS+=(--prefix="$QEMU_PREFIX")
