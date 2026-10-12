@@ -604,6 +604,16 @@ bool makeOutputBlock(const std::vector<uint8_t>& data, std::vector<BaseBlock>* b
     return true;
 }
 
+bool avcHasIdr(const std::vector<uint8_t>& annexB) {
+    for (size_t i = 0; i + 3 < annexB.size(); ++i) {
+        if (annexB[i] == 0 && annexB[i + 1] == 0 && annexB[i + 2] == 1) {
+            if ((annexB[i + 3] & 0x1f) == 5) return true;
+            i += 2;
+        }
+    }
+    return false;
+}
+
 std::vector<uint8_t> extractAvcCsd(const std::vector<uint8_t>& annexB) {
     std::vector<size_t> starts;
     for (size_t i = 0; i + 4 <= annexB.size();) {
@@ -739,27 +749,34 @@ void MesaAvcComponent::processWork(PendingWork* pending) {
         return;
     }
 
+    // Encoders are pipelined: see submitEncode()/finishEncode().
+    work->result.status = Status::CANNOT_DO;
+}
+
+bool MesaAvcComponent::submitEncode(PendingWork* pending, mesa_video::EncodeTicket* ticket) {
+    Work* work = &pending->work;
+    work->workletsProcessed = 0;
+    work->result.status = Status::OK;
+    if (work->worklets.empty()) work->worklets.emplace_back();
+    auto& wl = work->worklets[0];
+    wl.output = FrameData{};
+    wl.output.ordinal = work->input.ordinal;
     // Hardware mode is GPU-only: import the surface dmabuf into VirGL video
     // and encode on the host. Never fall back to mapper CPU readback.
-    std::vector<uint8_t> bs;
-    int64_t pts = 0;
-    bool outEos = false;
     int rc = -ENOSYS;
     bool submitted = false;
     for (const BaseBlock& bb : pending->baseBlocks) {
         if (bb.getTag() != BaseBlock::nativeBlock) continue;
         NativeGraphicInfo info;
         if (!getNativeGraphicInfo(bb.get<BaseBlock::nativeBlock>(), &info)) continue;
-        const bool keyframe = mSession.frameCount() == 0;
-        rc = mSession.encodeGraphic(info.fd, info.width, info.height, info.stride,
-                                    info.format, framePtsUs(work->input), keyframe,
-                                    &bs, &pts, &outEos);
+        const bool keyframe = mSession.submittedCount() == 0;
+        rc = mSession.submitGraphic(info.fd, info.width, info.height, info.stride, info.format,
+                                    framePtsUs(work->input), keyframe, ticket);
         submitted = true;
         static std::atomic<int> encodeDiagnostics{0};
         if (encodeDiagnostics.fetch_add(1) < 8) {
-            ALOGI("gpu encode fd=%d %ux%u stride=%u fmt=%u key=%d rc=%d bytes=%zu",
-                  info.fd, info.width, info.height, info.stride, info.format,
-                  keyframe ? 1 : 0, rc, bs.size());
+            ALOGI("gpu encode submit fd=%d %ux%u stride=%u fmt=%u key=%d rc=%d", info.fd,
+                  info.width, info.height, info.stride, info.format, keyframe ? 1 : 0, rc);
         }
         break;
     }
@@ -770,8 +787,21 @@ void MesaAvcComponent::processWork(PendingWork* pending) {
                   work->input.buffers.size(), pending->baseBlocks.size());
         }
         work->result.status = Status::CORRUPTED;
-        return;
+        return false;
     }
+    if (rc < 0) {
+        finishEncode(pending, rc, {}, 0, 0);
+        return false;
+    }
+    return true;
+}
+
+void MesaAvcComponent::finishEncode(PendingWork* pending, int rc,
+                                    const std::vector<uint8_t>& bs, int64_t pts,
+                                    uint64_t index) {
+    Work* work = &pending->work;
+    auto& wl = work->worklets[0];
+    const bool eos = (work->input.flags & FrameData::END_OF_STREAM) != 0;
     if (rc == -ENOSYS) {
         work->result.status = Status::CANNOT_DO;
         return;
@@ -783,11 +813,23 @@ void MesaAvcComponent::processWork(PendingWork* pending) {
     if (rc > 0 && !makeOutputBlock(bs, &pending->baseBlocks, &wl.output)) {
         ALOGE("%s: makeOutputBlock failed for %zu bytes", mName.c_str(), bs.size());
         work->result.status = Status::CORRUPTED;
+    } else if (rc > 0 && !wl.output.buffers.empty()) {
+        // C2StreamPictureTypeInfo::output: MediaCodec derives
+        // BUFFER_FLAG_SYNCFRAME from it; MPEG4Writer drops samples until one.
+        constexpr uint32_t kPictureTypeIndex = 0xD2001810u;
+        constexpr uint32_t kSyncFrame = 1u << 0, kIFrame = 1u << 1, kPFrame = 1u << 2;
+        const uint32_t type = avcHasIdr(bs) ? (kSyncFrame | kIFrame) : kPFrame;
+        const uint32_t size = 12;
+        auto& info = wl.output.buffers.back().info.params;
+        info.resize(16, 0);
+        memcpy(info.data(), &size, sizeof(size));
+        memcpy(info.data() + 4, &kPictureTypeIndex, sizeof(kPictureTypeIndex));
+        memcpy(info.data() + 8, &type, sizeof(type));
     }
     wl.output.flags = eos ? FrameData::END_OF_STREAM : 0;
     // First IDR carries SPS/PPS. Publish coded.init-data and mark CODEC_CONFIG
     // so scrcpy / MediaCodec treat the first packet as config, not a slice.
-    if (rc > 0 && mSession.frameCount() == 1) {
+    if (rc > 0 && index == 0) {
         std::vector<uint8_t> csd = extractAvcCsd(bs);
         if (!csd.empty()) {
             constexpr uint32_t kInitDataIndex = 0xD2010809u;
@@ -806,48 +848,117 @@ void MesaAvcComponent::processWork(PendingWork* pending) {
     work->workletsProcessed = 1;
 }
 
+void MesaAvcComponent::markDropped(PendingWork* stale) {
+    if (stale->work.worklets.empty()) stale->work.worklets.emplace_back();
+    stale->work.workletsProcessed = 1;
+    stale->work.result.status = Status::OK;
+    auto& output = stale->work.worklets[0].output;
+    output = FrameData{};
+    output.ordinal = stale->work.input.ordinal;
+    output.flags = FrameData::DROP_FRAME;
+}
+
+void MesaAvcComponent::emitWork(PendingWork* pending) {
+    if (!mListener) return;
+    WorkBundle bundle;
+    bundle.works.push_back(std::move(pending->work));
+    bundle.baseBlocks = std::move(pending->baseBlocks);
+    mListener->onWorkDone(bundle);
+}
+
 void MesaAvcComponent::workerLoop() {
+    const bool encoder = mKind == MesaCodecKind::kEncoder;
     while (true) {
         PendingWork pending;
         std::vector<PendingWork> dropped;
         bool havePending = false;
         {
-        std::unique_lock<std::mutex> lock(mLock);
+            std::unique_lock<std::mutex> lock(mLock);
             mCv.wait(lock, [&] {
                 return mReleased.load() || !mPending.empty() || !mDropped.empty() ||
                        (!mRunning.load() && mPending.empty() && mDropped.empty());
             });
-            if (mReleased || (!mRunning && mPending.empty() && mDropped.empty())) return;
+            if (mReleased || (!mRunning && mPending.empty() && mDropped.empty())) break;
             dropped.swap(mDropped);
             if (!mPending.empty()) {
                 pending = std::move(mPending.front());
                 mPending.erase(mPending.begin());
                 havePending = true;
             }
-        }
-        for (PendingWork& stale : dropped) {
-            if (stale.work.worklets.empty()) stale.work.worklets.emplace_back();
-            stale.work.workletsProcessed = 1;
-            stale.work.result.status = Status::OK;
-            auto& output = stale.work.worklets[0].output;
-            output = FrameData{};
-            output.ordinal = stale.work.input.ordinal;
-            output.flags = FrameData::DROP_FRAME;
-            if (mListener) {
-                WorkBundle bundle;
-                bundle.works.push_back(std::move(stale.work));
-                bundle.baseBlocks = std::move(stale.baseBlocks);
-                mListener->onWorkDone(bundle);
+            if (encoder) {
+                // Superseded frames complete through the collector so every
+                // work finishes in input order.
+                for (PendingWork& stale : dropped) {
+                    InFlight entry;
+                    entry.kind = InFlight::Kind::kDropped;
+                    entry.pending = std::move(stale);
+                    mInFlight.push_back(std::move(entry));
+                }
+                if (!dropped.empty()) mInFlightCv.notify_all();
+                dropped.clear();
             }
         }
-        if (!havePending) continue;
-        processWork(&pending);
-        if (mListener) {
-            WorkBundle bundle;
-            bundle.works.push_back(std::move(pending.work));
-            bundle.baseBlocks = std::move(pending.baseBlocks);
-            mListener->onWorkDone(bundle);
+        for (PendingWork& stale : dropped) {
+            markDropped(&stale);
+            emitWork(&stale);
         }
+        if (!havePending) continue;
+        if (!encoder) {
+            processWork(&pending);
+            emitWork(&pending);
+            continue;
+        }
+        {
+            // Bound the pipeline: at most kMaxInFlight frames on the host.
+            std::unique_lock<std::mutex> lock(mLock);
+            mInFlightCv.wait(lock, [&] {
+                return mReleased.load() || !mRunning.load() ||
+                       mEncodedInFlight < mesa_video::Session::kMaxInFlight;
+            });
+            if (mReleased || !mRunning) break;
+        }
+        InFlight entry;
+        const bool ok = submitEncode(&pending, &entry.ticket);
+        entry.kind = ok ? InFlight::Kind::kEncoded : InFlight::Kind::kDone;
+        entry.pending = std::move(pending);
+        {
+            std::lock_guard<std::mutex> lock(mLock);
+            if (ok) ++mEncodedInFlight;
+            mInFlight.push_back(std::move(entry));
+        }
+        mInFlightCv.notify_all();
+    }
+    {
+        std::lock_guard<std::mutex> lock(mLock);
+        mWorkerDone = true;
+    }
+    mInFlightCv.notify_all();
+}
+
+void MesaAvcComponent::collectorLoop() {
+    while (true) {
+        InFlight entry;
+        {
+            std::unique_lock<std::mutex> lock(mLock);
+            mInFlightCv.wait(lock, [&] { return !mInFlight.empty() || mWorkerDone; });
+            if (mInFlight.empty()) return;  // worker finished and queue drained
+            entry = std::move(mInFlight.front());
+            mInFlight.pop_front();
+        }
+        if (entry.kind == InFlight::Kind::kEncoded) {
+            std::vector<uint8_t> bs;
+            const int rc = mSession.collect(&entry.ticket, &bs);
+            finishEncode(&entry.pending, rc, bs, entry.ticket.ptsUs, entry.ticket.index);
+            {
+                std::lock_guard<std::mutex> lock(mLock);
+                --mEncodedInFlight;
+            }
+            mInFlightCv.notify_all();
+        } else if (entry.kind == InFlight::Kind::kDropped) {
+            markDropped(&entry.pending);
+        }
+        // After stop()/release() the framework no longer expects these.
+        if (mRunning && !mReleased) emitWork(&entry.pending);
     }
 }
 
@@ -867,8 +978,15 @@ ScopedAStatus MesaAvcComponent::start() {
     }
     mRunning = true;
     mStarted = true;
+    {
+        std::lock_guard<std::mutex> lock(mLock);
+        mWorkerDone = false;
+    }
     if (!mWorker.joinable()) {
         mWorker = std::thread([this] { workerLoop(); });
+    }
+    if (mKind == MesaCodecKind::kEncoder && !mCollector.joinable()) {
+        mCollector = std::thread([this] { collectorLoop(); });
     }
     ALOGI("%s started %ux%u", mName.c_str(), mCfg->width(), mCfg->height());
     return ScopedAStatus::ok();
@@ -882,7 +1000,9 @@ ScopedAStatus MesaAvcComponent::stop() {
         mDropped.clear();
     }
     mCv.notify_all();
+    mInFlightCv.notify_all();
     if (mWorker.joinable()) mWorker.join();
+    if (mCollector.joinable()) mCollector.join();  // drains in-flight encodes
     mSession.close();
     mStarted = false;
     return ScopedAStatus::ok();
@@ -903,7 +1023,9 @@ ScopedAStatus MesaAvcComponent::release() {
         mDropped.clear();
     }
     mCv.notify_all();
+    mInFlightCv.notify_all();
     if (mWorker.joinable()) mWorker.join();
+    if (mCollector.joinable()) mCollector.join();
     mSession.close();
     return ScopedAStatus::ok();
 }
@@ -967,7 +1089,9 @@ ScopedAStatus MesaAvcComponent::queue(const WorkBundle& workBundle) {
 }
 
 ScopedAStatus MesaAvcComponent::flush(WorkBundle* out) {
-    std::lock_guard<std::mutex> lock(mLock);
+    std::unique_lock<std::mutex> lock(mLock);
+    // Let submitted encodes complete through onWorkDone before returning.
+    mInFlightCv.wait(lock, [&] { return mInFlight.empty() || mWorkerDone; });
     out->works.clear();
     out->baseBlocks.clear();
     for (PendingWork& pending : mPending) {

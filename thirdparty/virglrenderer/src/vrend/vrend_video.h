@@ -35,6 +35,8 @@
 #ifndef VREND_VIDEO_H
 #define VREND_VIDEO_H
 
+#include <stdbool.h>
+#include <stdint.h>
 #include <virgl_hw.h>
 
 #define VREND_VIDEO_BUFFER_PLANE_NUM  3
@@ -91,5 +93,12 @@ int vrend_video_encode_bitstream(struct vrend_video_context *ctx,
 int vrend_video_end_frame(struct vrend_video_context *ctx,
                           uint32_t cdc_handle,
                           uint32_t tgt_handle);
+
+/* V4L2 backend only: encode jobs finish asynchronously and write the coded
+ * data, then the feedback, straight into guest memory; the guest polls the
+ * feedback status.  Block until no pending job writes res (host readback). */
+struct vrend_resource;
+void vrend_video_wait_resource(const struct vrend_resource *res);
+
 
 #endif /* VREND_VIDEO_H */

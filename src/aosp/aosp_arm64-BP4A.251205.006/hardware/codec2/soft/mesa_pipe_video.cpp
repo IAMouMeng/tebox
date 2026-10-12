@@ -283,6 +283,19 @@ bool Session::createCodec() {
         }
         mBitstream = pipe_buffer_create(mScreen, PIPE_BIND_CUSTOM, PIPE_USAGE_STAGING,
                                         static_cast<unsigned>(mWidth * mHeight * 2));
+        bool ringOk = mBitstream != nullptr;
+        mBitstreams[0] = mBitstream;
+        for (unsigned i = 1; ringOk && i < kBitstreams; ++i) {
+            mBitstreams[i] = pipe_buffer_create(mScreen, PIPE_BIND_CUSTOM, PIPE_USAGE_STAGING,
+                                                static_cast<unsigned>(mWidth * mHeight * 2));
+            ringOk = mBitstreams[i] != nullptr;
+        }
+        if (!ringOk) {
+            for (unsigned i = 1; i < kBitstreams; ++i)
+                pipe_resource_reference(&mBitstreams[i], nullptr);
+            mBitstreams[0] = nullptr;
+            pipe_resource_reference(&mBitstream, nullptr);
+        }
         if (!mBitstream) {
             mSource->destroy(mSource);
             mSource = nullptr;
@@ -319,6 +332,7 @@ bool Session::open(Entrypoint ep, Profile profile, uint32_t width, uint32_t heig
     mOpen = true;
     mGotCsd = false;
     mFrameIndex = 0;
+    mSubmitted = 0;
     ALOGI("session open %s %ux%u pipe=%d",
           ep == Entrypoint::kEncode ? "enc" : "dec", width, height,
           mPipeOk ? 1 : 0);
@@ -334,6 +348,10 @@ void Session::close() {
         mSource->destroy(mSource);
         mSource = nullptr;
     }
+    for (unsigned i = 1; i < kBitstreams; ++i)
+        pipe_resource_reference(&mBitstreams[i], nullptr);
+    mBitstreams[0] = nullptr;
+    mNextBitstream = 0;
     if (mBitstream) {
         pipe_resource_reference(&mBitstream, nullptr);
     }
@@ -359,6 +377,7 @@ void Session::close() {
 
 void Session::flush() {
     mFrameIndex = 0;
+    mSubmitted = 0;
 }
 
 int Session::decode(const uint8_t* bitstream, size_t size, int64_t ptsUs,
@@ -469,7 +488,7 @@ int Session::encode(const uint8_t* nv12, size_t nv12Size, int64_t ptsUs, bool ke
     desc.intra_idr_period = 1;
     desc.ip_period = 1;
     desc.gop_size = 1;
-    desc.picture_type = (keyframe || mFrameIndex == 0)
+    desc.picture_type = (keyframe || mSubmitted == 0)
                                 ? PIPE_H2645_ENC_PICTURE_TYPE_IDR
                                 : PIPE_H2645_ENC_PICTURE_TYPE_P;
     desc.slice.slice_type = desc.picture_type == PIPE_H2645_ENC_PICTURE_TYPE_P
@@ -489,16 +508,27 @@ int Session::encode(const uint8_t* nv12, size_t nv12Size, int64_t ptsUs, bool ke
     desc.slices_descriptors[0].slice_type = static_cast<pipe_h264_slice_type>(desc.slice.slice_type);
 
     void* feedback = nullptr;
+    pipe_resource* bitstream = mBitstream;
+    if (mTicketOut && mBitstreams[0]) bitstream = mBitstreams[mNextBitstream++ % kBitstreams];
     mCodec->begin_frame(mCodec, mSource, &desc.base);
-    mCodec->encode_bitstream(mCodec, mSource, mBitstream, &feedback);
+    mCodec->encode_bitstream(mCodec, mSource, bitstream, &feedback);
     const int endRc = mCodec->end_frame(mCodec, mSource, &desc.base);
     if (endRc != 0) {
         ALOGW("encode end_frame failed rc=%d frame=%u", endRc, mFrameIndex);
         return -EIO;
     }
+    if (mTicketOut) {
+        // Pipelined: hand back a fence instead of waiting for the host.
+        mContext->flush(mContext, &mTicketOut->fence, 0);
+        mTicketOut->feedback = feedback;
+        mTicketOut->bitstream = bitstream;
+        mTicketOut->ptsUs = ptsUs;
+        mTicketOut->index = mSubmitted++;
+        return 0;
+    }
+    ++mSubmitted;
     if (mCodec->flush) mCodec->flush(mCodec);
-    unsigned size = 0;
-    if (mCodec->get_feedback && feedback) mCodec->get_feedback(mCodec, feedback, &size, nullptr);
+    const unsigned size = pollFeedback(feedback, nullptr);
     if (size == 0 || size > mBitstream->width0) {
         ALOGW("encode feedback invalid size=%u capacity=%u feedback=%p frame=%u", size,
               mBitstream->width0, feedback, mFrameIndex);
@@ -572,6 +602,60 @@ int Session::encodeGraphic(int fd, uint32_t width, uint32_t height, uint32_t str
     mSource->destroy(mSource);
     mSource = previousSource;
     return rc;
+}
+
+// The host encoder completes asynchronously and writes the coded data, then
+// the feedback, into guest memory; poll the feedback once the submission's
+// fence has signalled.  get_feedback() reports 0 bytes until then.
+unsigned Session::pollFeedback(void* feedback, std::unique_lock<std::mutex>* lock) {
+    constexpr int kTimeoutUs = 500000;
+    unsigned size = 0;
+    for (int waited = 0; mCodec && mCodec->get_feedback && feedback; waited += 200) {
+        mCodec->get_feedback(mCodec, feedback, &size, nullptr);
+        if (size || waited >= kTimeoutUs) break;
+        if (lock) lock->unlock();
+        usleep(200);
+        if (lock) lock->lock();
+    }
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    return size;
+}
+
+int Session::submitGraphic(int fd, uint32_t width, uint32_t height, uint32_t stride,
+                           uint32_t format, int64_t ptsUs, bool keyframe, EncodeTicket* ticket) {
+    if (!ticket) return -EINVAL;
+    std::lock_guard<std::mutex> lock(mPipeLock);
+    *ticket = EncodeTicket{};
+    mTicketOut = ticket;
+    std::vector<uint8_t> unused;
+    // The host reads the imported surface while processing the encode
+    // command, so encodeGraphic() may release it right after submission.
+    const int rc = encodeGraphic(fd, width, height, stride, format, ptsUs, keyframe, &unused,
+                                 nullptr, nullptr);
+    mTicketOut = nullptr;
+    if (rc < 0 && ticket->fence) mScreen->fence_reference(mScreen, &ticket->fence, nullptr);
+    return rc;
+}
+
+int Session::collect(EncodeTicket* ticket, std::vector<uint8_t>* outBs) {
+    if (!ticket || !outBs || !ticket->bitstream) return -EINVAL;
+    outBs->clear();
+    // Wait outside the lock so the submit thread can queue the next frame.
+    if (ticket->fence && mScreen)
+        mScreen->fence_finish(mScreen, nullptr, ticket->fence, ~0ull);
+    std::unique_lock<std::mutex> lock(mPipeLock);
+    if (ticket->fence) mScreen->fence_reference(mScreen, &ticket->fence, nullptr);
+    if (!mCodec || !mContext) return -ENODEV;
+    const unsigned size = pollFeedback(ticket->feedback, &lock);
+    if (size == 0 || size > ticket->bitstream->width0) {
+        ALOGW("encode feedback invalid size=%u capacity=%u frame=%llu", size,
+              ticket->bitstream->width0, static_cast<unsigned long long>(ticket->index));
+        return -EIO;
+    }
+    ++mFrameIndex;
+    outBs->resize(size);
+    pipe_buffer_read(mContext, ticket->bitstream, 0, size, outBs->data());
+    return static_cast<int>(size);
 }
 
 int Session::drain(std::vector<uint8_t>* out, int64_t* outPtsUs, bool* outEos) {
