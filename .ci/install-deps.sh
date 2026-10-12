@@ -11,6 +11,7 @@ case "$(uname -s)" in
     [[ "$(id -u)" == 0 ]] || SUDO=(sudo)
     # ${SUDO[@]+...} also supports macOS Bash 3's empty-array nounset behavior.
     ${SUDO[@]+"${SUDO[@]}"} apt-get update
+    ${SUDO[@]+"${SUDO[@]}"} curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
     ${SUDO[@]+"${SUDO[@]}"} apt-get install -y --no-install-recommends \
       build-essential clang git ca-certificates curl xz-utils unzip zip \
       python3 python3-venv python3-pip ninja-build pkg-config \
@@ -19,7 +20,8 @@ case "$(uname -s)" in
       libgl1-mesa-dev libgbm-dev libdrm-dev libx11-dev libx11-xcb-dev \
       libxext-dev libxfixes-dev libxrandr-dev libxi-dev \
       zlib1g-dev libpng-dev libjpeg-dev libzstd-dev libusb-1.0-0-dev \
-      flex bison e2fsprogs cpio rsync patchelf file ripgrep busybox-static
+      flex bison e2fsprogs cpio rsync patchelf file ripgrep busybox-static \
+      libvulkan-dev libvulkan1 vulkan-tools mesa-vulkan-drivers pkg-config
     ;;
   *) echo 'Only macOS and Linux are supported' >&2; exit 1 ;;
 esac

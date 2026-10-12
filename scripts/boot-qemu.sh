@@ -62,10 +62,9 @@ QEMU_BIN="$(resolve_qemu)"
 
 # Mesa's libGL must not shadow Apple's private libGL on macOS.
 if [[ "$HOST_OS" == darwin ]]; then
-  export DYLD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+  export DYLD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib:$RUTABAGA_PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 else
-  export LD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-fi
+  export LD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib:$RUTABAGA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 [[ -f "$KERNEL" ]] || { echo "missing $KERNEL (fetch kernel for $KID)" >&2; exit 1; }
 [[ -f "$SYSTEM" ]] || { echo "missing $SYSTEM" >&2; exit 1; }
@@ -153,6 +152,18 @@ if [[ "$FORCE_VIRGL" == 1 ]]; then
   }
   GPU_DEV=virtio-gpu-gl-pci
 fi
+
+FORCE_RUTABAGA="${FORCE_RUTABAGA:-0}"
+if [[ "$FORCE_RUTABAGA" == 1 ]]; then
+  DEVICES="$("$QEMU_BIN" -device help)"
+  [[ "$DEVICES" == *virtio-gpu-rutabaga-pci* ]] || {
+    echo "QEMU has no virtio-gpu-rutabaga-pci; build the project QEMU or use FORCE_RUTABAGA=0 for diagnostics" >&2
+    exit 1
+  }
+  GPU_DEV="virtio-gpu-rutabaga,gfxstream-vulkan=on,x-gfxstream-composer=on,hostmem=256M";
+
+fi
+
 
 if [[ "$FORCE_VIRGL" == 1 ]]; then
   NGFX=(-display "${QEMU_DISPLAY:-sdl,gl=core,show-cursor=on}")
