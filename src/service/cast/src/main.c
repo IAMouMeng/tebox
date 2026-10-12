@@ -349,11 +349,29 @@ int main(int argc, char **argv)
 
     fprintf(stderr, "cast: running soft=%d encoder=%s\n", soft,
             cast_encoder_name(app.enc));
+    struct cast_frame last;
+
+    memset(&last, 0, sizeof(last));
     while (g_run) {
         struct cast_frame fr;
         int got;
+        bool had_client = cast_transport_ready(app.tx);
 
-        cast_transport_try_accept(app.tx);
+        /* A new viewer cannot decode until the next IDR (SPS/PPS + key).
+         * Re-encode the last frame at once: a static screen sends nothing. */
+        if (cast_transport_try_accept(app.tx) == 1 && !had_client) {
+            cast_encoder_force_idr(app.enc);
+            if (last.data) {
+                struct cast_packet *pkts = NULL;
+                int n = 0;
+
+                if (cast_encoder_push(app.enc, last.format, last.data,
+                                      (int)last.width, (int)last.height,
+                                      (int)last.stride, 0, &pkts, &n) == 0) {
+                    emit_packets(&app, pkts, n);
+                }
+            }
+        }
         cast_control_poll(app.ctrl);
         got = cast_capture_poll_frame(cap, &fr);
         if (got < 0) {
@@ -369,14 +387,16 @@ int main(int argc, char **argv)
             struct cast_packet *pkts = NULL;
             int n = 0;
 
-            if (cast_encoder_push_bgra(app.enc, fr.data, (int)fr.width,
-                                       (int)fr.height, (int)fr.stride,
-                                       fr.pts_us, &pkts, &n) == 0) {
+            if (cast_encoder_push(app.enc, fr.format, fr.data, (int)fr.width,
+                                  (int)fr.height, (int)fr.stride,
+                                  fr.pts_us, &pkts, &n) == 0) {
                 emit_packets(&app, pkts, n);
             }
         }
-        cast_frame_free(&fr);
+        cast_frame_free(&last);
+        last = fr;
     }
+    cast_frame_free(&last);
     rc = 0;
     fprintf(stderr, "cast: stop frames_in=%llu packets_out=%llu\n",
             (unsigned long long)app.frames_in,

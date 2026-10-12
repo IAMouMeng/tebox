@@ -12,6 +12,7 @@ extern "C" {
 #define CAST_RAW_VERSION 1u
 
 #define CAST_FMT_BGRA8888 0u
+#define CAST_FMT_RGBA8888 1u /* GLES readback (egl-headless) */
 
 enum cast_codec {
     CAST_CODEC_H264 = 0,

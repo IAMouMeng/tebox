@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package tebox.v1;
+
+option go_package = "tebox-client/api/v1;teboxv1";
+
+service AndroidService {
+  rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse);
+  rpc CreateInstance(CreateInstanceRequest) returns (Instance);
+  rpc DeleteInstance(InstanceRequest) returns (Empty);
+  rpc StartInstance(InstanceRequest) returns (Empty);
+  rpc StopInstance(InstanceRequest) returns (Empty);
+  rpc ResetInstance(ResetInstanceRequest) returns (Empty);
+  rpc ConfigureInstance(ConfigureInstanceRequest) returns (Empty);
+  rpc SendKey(KeyRequest) returns (Empty);
+  rpc PowerDown(InstanceRequest) returns (Empty);
+}
+
+message Empty {}
+message ListInstancesRequest {}
+message CreateInstanceRequest {}
+
+message InstanceRequest {
+  string id = 1;
+}
+
+message ResetInstanceRequest {
+  string id = 1;
+  bool wipe_data = 2;
+}
+
+message ConfigureInstanceRequest { string id = 1; DeviceProfile profile = 2; }
+message KeyRequest { string id = 1; string key = 2; }
+
+message ListInstancesResponse {
+  repeated Instance instances = 1;
+}
+
+message Instance {
+  string id = 1;
+  string name = 2;
+  string variant = 3;
+  string dir = 4;
+  int32 adb_port = 5;
+  int32 pid = 6;
+  bool running = 7;
+  DeviceProfile profile = 8;
+  int32 cast_port = 9;
+}
+
+message DeviceProfile {
+  double latitude = 1;
+  double longitude = 2;
+  string country = 3;
+  string operator_numeric = 4;
+  string operator_name = 5;
+  string cell_id = 6;
+  string phone_number = 7;
+  bool root = 8;
+}

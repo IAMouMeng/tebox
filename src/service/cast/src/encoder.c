@@ -1,4 +1,5 @@
 #include "cast/encoder.h"
+#include "v4l2enc.h"
 
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
@@ -17,10 +18,16 @@ struct cast_encoder {
     AVPacket *pkt;
     struct SwsContext *sws;
     int src_w, src_h, src_stride;
+    uint32_t src_format;
     int enc_w, enc_h;
     int64_t next_pts;
     bool force_idr;
     char encoder_name[64];
+    /* Direct V4L2 encoder (Linux), used while it accepts the input. */
+    struct cast_v4l2 *v4l2;
+    int v4l2_w, v4l2_h;
+    uint32_t v4l2_format;
+    bool v4l2_failed;
 };
 
 static void scale_dims(int src_w, int src_h, int max_w, int max_h,
@@ -67,6 +74,8 @@ static const char *pick_encoder(enum cast_codec codec, bool prefer_hw,
     }
 #else
     if (prefer_hw) {
+        /* V4L2 M2M encoders are driven directly (v4l2enc.c): FFmpeg's
+         * h264_v4l2m2m crashes on CIX Sky1 mvx. */
         if (codec == CAST_CODEC_H264) {
             return "h264_vaapi";
         }
@@ -271,6 +280,7 @@ void cast_encoder_destroy(struct cast_encoder *enc)
     if (!enc) {
         return;
     }
+    cast_v4l2_close(enc->v4l2);
     close_codec(enc);
     free(enc);
 }
@@ -304,6 +314,9 @@ int cast_encoder_reconfigure(struct cast_encoder *enc,
         return -1;
     }
     close_codec(enc);
+    cast_v4l2_close(enc->v4l2);
+    enc->v4l2 = NULL;
+    enc->v4l2_failed = false;
     enc->cfg = *cfg;
     if (enc->cfg.fps <= 0) {
         enc->cfg.fps = 30;
@@ -387,6 +400,77 @@ int cast_encoder_push_bgra(struct cast_encoder *enc,
                            int stride, uint64_t pts_us,
                            struct cast_packet **out, int *out_count)
 {
+    return cast_encoder_push(enc, CAST_FMT_BGRA8888, bgra, width, height,
+                             stride, pts_us, out, out_count);
+}
+
+/* 1 = not handled here (use FFmpeg), 0 = encoded, <0 = error. */
+static int push_v4l2(struct cast_encoder *enc, uint32_t format,
+                     const uint8_t *pixels, int width, int height, int stride,
+                     uint64_t pts_us, struct cast_packet **out, int *out_count)
+{
+    const uint8_t *data;
+    size_t size;
+    bool key;
+    uint8_t *copy;
+
+    if (enc->v4l2_failed || !enc->cfg.prefer_hw ||
+        enc->cfg.codec != CAST_CODEC_H264 ||
+        (enc->cfg.force_encoder && enc->cfg.force_encoder[0]) ||
+        (enc->cfg.max_width > 0 && width > enc->cfg.max_width) ||
+        (enc->cfg.max_height > 0 && height > enc->cfg.max_height) ||
+        (width & 1) || (height & 1)) {
+        return 1; /* FFmpeg scales and handles other codecs */
+    }
+    if (!enc->v4l2 || enc->v4l2_w != width || enc->v4l2_h != height ||
+        enc->v4l2_format != format) {
+        int fps = enc->cfg.fps > 0 ? enc->cfg.fps : 30;
+        int gop_sec = enc->cfg.gop_sec > 0 ? enc->cfg.gop_sec : 2;
+
+        cast_v4l2_close(enc->v4l2);
+        enc->v4l2 = cast_v4l2_open(width, height, format == CAST_FMT_RGBA8888,
+                                   fps, enc->cfg.bitrate > 0 ? enc->cfg.bitrate
+                                                             : 4000000,
+                                   fps * gop_sec);
+        if (!enc->v4l2) {
+            enc->v4l2_failed = true;
+            return 1;
+        }
+        enc->v4l2_w = width;
+        enc->v4l2_h = height;
+        enc->v4l2_format = format;
+        enc->force_idr = true;
+        snprintf(enc->encoder_name, sizeof(enc->encoder_name), "v4l2:%s",
+                 cast_v4l2_device(enc->v4l2));
+    }
+    if (cast_v4l2_encode(enc->v4l2, pixels, stride, enc->force_idr, &data,
+                         &size, &key) < 0) {
+        return -1;
+    }
+    enc->force_idr = false;
+    copy = malloc(size);
+    *out = calloc(1, sizeof(**out));
+    if (!copy || !*out) {
+        free(copy);
+        free(*out);
+        *out = NULL;
+        return -1;
+    }
+    memcpy(copy, data, size);
+    (*out)->codec = CAST_CODEC_H264;
+    (*out)->flags = key ? CAST_FLAG_KEY : 0;
+    (*out)->pts_us = pts_us;
+    (*out)->data = copy;
+    (*out)->size = size;
+    *out_count = 1;
+    return 0;
+}
+
+int cast_encoder_push(struct cast_encoder *enc, uint32_t format,
+                      const uint8_t *bgra, int width, int height,
+                      int stride, uint64_t pts_us,
+                      struct cast_packet **out, int *out_count)
+{
     const uint8_t *src_slices[4] = {bgra, NULL, NULL, NULL};
     int src_stride[4] = {stride, 0, 0, 0};
     int tw, th;
@@ -396,6 +480,11 @@ int cast_encoder_push_bgra(struct cast_encoder *enc,
     *out_count = 0;
     if (!enc || !bgra || width <= 0 || height <= 0) {
         return -1;
+    }
+    ret = push_v4l2(enc, format, bgra, width, height, stride, pts_us, out,
+                    out_count);
+    if (ret <= 0) {
+        return ret;
     }
 
     scale_dims(width, height, enc->cfg.max_width, enc->cfg.max_height,
@@ -421,11 +510,14 @@ int cast_encoder_push_bgra(struct cast_encoder *enc,
     }
 
     if (!enc->sws || enc->src_w != width || enc->src_h != height ||
-        enc->src_stride != stride) {
+        enc->src_stride != stride || enc->src_format != format) {
         if (enc->sws) {
             sws_freeContext(enc->sws);
         }
-        enc->sws = sws_getContext(width, height, AV_PIX_FMT_BGRA,
+        enc->src_format = format;
+        enc->sws = sws_getContext(width, height,
+                                  format == CAST_FMT_RGBA8888 ? AV_PIX_FMT_RGBA
+                                                              : AV_PIX_FMT_BGRA,
                                   enc->enc_w, enc->enc_h, enc->ctx->pix_fmt,
                                   SWS_BILINEAR, NULL, NULL, NULL);
         enc->src_w = width;
@@ -442,11 +534,15 @@ int cast_encoder_push_bgra(struct cast_encoder *enc,
     sws_scale(enc->sws, src_slices, src_stride, 0, height,
               enc->frame->data, enc->frame->linesize);
 
+    /* Frames may arrive faster than cfg.fps; encoders reject repeated pts. */
     if (pts_us) {
-        enc->frame->pts = (int64_t)(pts_us * (uint64_t)enc->cfg.fps / 1000000ull);
+        int64_t pts = (int64_t)(pts_us * (uint64_t)enc->cfg.fps / 1000000ull);
+
+        enc->frame->pts = pts >= enc->next_pts ? pts : enc->next_pts;
     } else {
-        enc->frame->pts = enc->next_pts++;
+        enc->frame->pts = enc->next_pts;
     }
+    enc->next_pts = enc->frame->pts + 1;
     if (enc->force_idr) {
         enc->frame->pict_type = AV_PICTURE_TYPE_I;
         enc->frame->flags |= AV_FRAME_FLAG_KEY;

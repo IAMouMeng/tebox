@@ -44,3 +44,7 @@ func SendKey(socketPath, key string) error {
 func PowerDown(socketPath string) error {
 	return qmpCommand(socketPath, "system_powerdown", "")
 }
+
+func SystemReset(socketPath string) error {
+	return qmpCommand(socketPath, "system_reset", "")
+}

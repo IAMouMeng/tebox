@@ -5,7 +5,6 @@
  */
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
-#include "ui/sdl2.h"
 #include "tebox-cast-hook.h"
 
 #ifdef CONFIG_OPENGL
@@ -22,12 +21,14 @@
 #define TEBOX_CAST_MAGIC   0x54434652u
 #define TEBOX_CAST_VERSION 1u
 #define TEBOX_CAST_BGRA    0u
+#define TEBOX_CAST_RGBA    1u
 
 typedef struct TeboxCastFrame {
     uint8_t *pixels;
     size_t nbytes;
     int width;
     int height;
+    uint32_t format;
     uint64_t pts_us;
 } TeboxCastFrame;
 
@@ -261,7 +262,8 @@ static bool tebox_ensure_scale_fbo(int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA,
+    /* GL_RGBA/GL_RGBA is valid on both desktop GL and GLES. */
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA,
                  GL_UNSIGNED_BYTE, NULL);
 
     glGenFramebuffers(1, &tebox_cast.fbo);
@@ -288,7 +290,7 @@ static bool tebox_ensure_scale_fbo(int w, int h)
 }
 
 static void tebox_queue_frame(uint8_t *pixels, size_t nbytes,
-                              int w, int h, uint64_t pts)
+                              int w, int h, uint32_t format, uint64_t pts)
 {
     g_mutex_lock(&tebox_cast.lock);
     if (tebox_cast.busy || tebox_cast.has_pending) {
@@ -307,6 +309,7 @@ static void tebox_queue_frame(uint8_t *pixels, size_t nbytes,
     tebox_cast.pending.nbytes = nbytes;
     tebox_cast.pending.width = w;
     tebox_cast.pending.height = h;
+    tebox_cast.pending.format = format;
     tebox_cast.pending.pts_us = pts;
     tebox_cast.has_pending = true;
     g_cond_signal(&tebox_cast.cond);
@@ -358,7 +361,7 @@ static gpointer tebox_sender_thread(gpointer opaque)
         tebox_w32be(pkt + 8, (uint32_t)fr.width);
         tebox_w32be(pkt + 12, (uint32_t)fr.height);
         tebox_w32be(pkt + 16, (uint32_t)fr.width * 4);
-        tebox_w32be(pkt + 20, TEBOX_CAST_BGRA);
+        tebox_w32be(pkt + 20, fr.format);
         tebox_w64be(pkt + 24, fr.pts_us);
         tebox_w32be(pkt + 32, (uint32_t)fr.nbytes);
         memcpy(pkt + 36, fr.pixels, fr.nbytes);
@@ -399,9 +402,11 @@ static void tebox_cast_ensure_sender(void)
     }
 }
 
-void tebox_cast_on_scanout(struct sdl2_console *scon)
+void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
+                        bool y0_top)
 {
-    int src_w, src_h, out_w, out_h;
+    int out_w, out_h;
+    uint32_t format;
     size_t nbytes;
     GLint draw_fb, read_fb, read_buffer, pack_buffer, alignment;
     GLint row_length, skip_rows, skip_pixels;
@@ -416,13 +421,7 @@ void tebox_cast_on_scanout(struct sdl2_console *scon)
     if (!tebox_cast_enabled()) {
         return;
     }
-    if (!scon || !scon->scanout_mode || !scon->guest_fb.framebuffer) {
-        return;
-    }
-
-    src_w = scon->guest_fb.width;
-    src_h = scon->guest_fb.height;
-    if (src_w <= 0 || src_h <= 0) {
+    if (!framebuffer || src_w <= 0 || src_h <= 0) {
         return;
     }
 
@@ -469,9 +468,9 @@ void tebox_cast_on_scanout(struct sdl2_console *scon)
     glGetIntegerv(GL_PACK_SKIP_PIXELS, &skip_pixels);
 
     /* Match SDL window: flip blit when guest y0 is not top. */
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, scon->guest_fb.framebuffer);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, tebox_cast.fbo);
-    if (!scon->y0_top) {
+    if (!y0_top) {
         glBlitFramebuffer(0, 0, src_w, src_h,
                           0, out_h, out_w, 0,
                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
@@ -489,8 +488,11 @@ void tebox_cast_on_scanout(struct sdl2_console *scon)
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
     glPixelStorei(GL_PACK_SKIP_ROWS, 0);
     glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-    glReadPixels(0, 0, out_w, out_h, GL_BGRA, GL_UNSIGNED_BYTE,
-                 tebox_cast.readback);
+    /* GLES (egl-headless on Mali) only guarantees GL_RGBA readback. */
+    format = epoxy_is_desktop_gl() ? TEBOX_CAST_BGRA : TEBOX_CAST_RGBA;
+    glReadPixels(0, 0, out_w, out_h,
+                 format == TEBOX_CAST_BGRA ? GL_BGRA : GL_RGBA,
+                 GL_UNSIGNED_BYTE, tebox_cast.readback);
 
     glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer);
     glPixelStorei(GL_PACK_ALIGNMENT, alignment);
@@ -516,13 +518,12 @@ void tebox_cast_on_scanout(struct sdl2_console *scon)
         return;
     }
     memcpy(copy, tebox_cast.readback, nbytes);
-    tebox_queue_frame(copy, nbytes, out_w, out_h, now);
+    tebox_queue_frame(copy, nbytes, out_w, out_h, format, now);
     tebox_cast.last_us = now;
 }
 
-void tebox_cast_shutdown(struct sdl2_console *scon)
+void tebox_cast_shutdown(void)
 {
-    (void)scon;
     if (tebox_cast.sender) {
         g_mutex_lock(&tebox_cast.lock);
         tebox_cast.stop = true;
@@ -564,14 +565,13 @@ uint64_t tebox_cast_refresh_interval_ms(void)
     return 0;
 }
 
-void tebox_cast_on_scanout(struct sdl2_console *scon)
+void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
+                        bool y0_top)
 {
-    (void)scon;
 }
 
-void tebox_cast_shutdown(struct sdl2_console *scon)
+void tebox_cast_shutdown(void)
 {
-    (void)scon;
 }
 
 #endif

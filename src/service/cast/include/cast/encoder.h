@@ -43,6 +43,12 @@ int cast_encoder_push_bgra(struct cast_encoder *enc,
                            int stride, uint64_t pts_us,
                            struct cast_packet **out, int *out_count);
 
+/* Same, for a CAST_FMT_* top-down input. */
+int cast_encoder_push(struct cast_encoder *enc, uint32_t format,
+                      const uint8_t *pixels, int width, int height,
+                      int stride, uint64_t pts_us,
+                      struct cast_packet **out, int *out_count);
+
 void cast_encoder_free_packets(struct cast_packet *pkts, int count);
 
 int cast_encoder_force_idr(struct cast_encoder *enc);

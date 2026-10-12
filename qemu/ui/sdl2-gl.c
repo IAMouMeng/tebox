@@ -136,7 +136,8 @@ void sdl2_gl_refresh(DisplayChangeListener *dcl)
      */
     if (scon->scanout_mode && scon->guest_fb.framebuffer && scon->real_window) {
         SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
-        tebox_cast_on_scanout(scon);
+        tebox_cast_capture(scon->guest_fb.framebuffer, scon->guest_fb.width,
+                           scon->guest_fb.height, scon->y0_top);
     }
     sdl2_poll_events(scon);
     if (tebox_cast_enabled()) {

@@ -244,6 +244,51 @@ func (m *Manager) Stop(id string) error {
 	return nil
 }
 
+// Reset reboots a running guest through QMP. With wipeData, it recreates the
+// instance userdata image on the next boot, which provides a factory reset.
+func (m *Manager) Reset(id string, wipeData bool) error {
+	if wipeData {
+		m.mu.Lock()
+		cmd := m.procs[id]
+		m.mu.Unlock()
+		if cmd != nil && cmd.Process != nil {
+			if err := m.Stop(id); err != nil {
+				return err
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				m.mu.Lock()
+				stopped := m.procs[id] == nil
+				m.mu.Unlock()
+				if stopped {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			m.mu.Lock()
+			stillRunning := m.procs[id] != nil
+			m.mu.Unlock()
+			if stillRunning {
+				return fmt.Errorf("instance %s did not stop before factory reset", id)
+			}
+		}
+		item, err := m.readMetadata(filepath.Join(m.instancesDir(), id))
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(filepath.Join(item.Dir, "userdata.img")); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove userdata: %w", err)
+		}
+		return m.Start(id)
+	}
+
+	path, err := m.QMPPath(id)
+	if err != nil {
+		return err
+	}
+	return SystemReset(path)
+}
+
 // Configure applies instance-specific guest identity/location values over ADB.
 // It deliberately leaves system.img and the kernel untouched.
 func (m *Manager) Configure(id string, profile DeviceProfile) error {

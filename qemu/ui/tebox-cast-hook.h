@@ -5,10 +5,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-struct sdl2_console;
-
-void tebox_cast_on_scanout(struct sdl2_console *scon);
-void tebox_cast_shutdown(struct sdl2_console *scon);
+/* Capture the guest scanout framebuffer (current GL context) for cast.
+ * Shared by the SDL and egl-headless displays. */
+void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
+                        bool y0_top);
+void tebox_cast_shutdown(void);
 
 /* True when TEBOX_CAST=1. */
 bool tebox_cast_enabled(void);

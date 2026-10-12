@@ -145,7 +145,8 @@ static int parse_header(struct cast_capture *cap)
 
     if (cap->hdr.magic != CAST_RAW_MAGIC ||
         cap->hdr.version != CAST_RAW_VERSION ||
-        cap->hdr.format != CAST_FMT_BGRA8888 ||
+        (cap->hdr.format != CAST_FMT_BGRA8888 &&
+         cap->hdr.format != CAST_FMT_RGBA8888) ||
         cap->hdr.width == 0 || cap->hdr.height == 0 ||
         cap->hdr.nbytes == 0 ||
         cap->hdr.nbytes > 64u * 1024u * 1024u) {
