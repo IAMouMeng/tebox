@@ -157,6 +157,8 @@ video_sources = [
 ]
 if with_host_darwin
    video_sources += ['vrend/vrend_video_vt.c']
+elif video_backend == 'v4l2'
+   video_sources += ['vrend/vrend_video_v4l2.c']
 else
    video_sources += ['vrend/virgl_video.c', 'vrend/vrend_video.c']
 endif
@@ -235,9 +237,9 @@ endif
 
 if with_video
   virgl_sources += video_sources
-  if not with_host_darwin
+  if video_backend == 'vaapi'
      virgl_depends += [libva_dep, libvadrm_dep]
-  else
+  elif with_host_darwin
      virgl_depends += [videotoolbox_dep]
   endif
 endif

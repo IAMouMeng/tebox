@@ -15,6 +15,12 @@ SYSTEM="$AOSP/images/system.img"
 VENDOR="$AOSP/images/vendor.img"
 INITRD="$AOSP/images/initramfs.img"
 WORKDIR="$ROOT/out/test-$VARIANT"
+# The service client gives every Android instance its own userdata, QMP and
+# debug sockets.  Keep the legacy per-variant directory when no instance was
+# requested from the command line.
+if [[ -n "${TEBOX_INSTANCE_DIR:-}" ]]; then
+  WORKDIR="${TEBOX_INSTANCE_DIR%/}"
+fi
 python3 "$ROOT/scripts/check-runtime-inputs.py" "$KERNEL" "$SYSTEM" "$VENDOR" "$INITRD"
 mkdir -p "$WORKDIR"
 
@@ -32,10 +38,12 @@ resolve_qemu() {
     fi
     return 0
   fi
+  # Prefer the tree-built QEMU so local UI patches (ui/sdl2.c, cast hook)
+  # take effect. Fall back to prebuilts when absent.
   local candidates=(
+    "$ROOT/out/qemu-build/qemu-system-aarch64"
     "$HOST_PRE/qemu/bin/qemu-system-aarch64"
     "$HOST_PRE/qemu/qemu"
-    "$ROOT/out/qemu-build/qemu-system-aarch64"
     "$ROOT/prebuilts/host/$HOST_ID/qemu/bin/qemu-system-aarch64"
   )
   local c
@@ -65,7 +73,8 @@ fi
 [[ -f "$INITRD" ]] || { echo "missing $INITRD" >&2; exit 1; }
 
 if [[ ! -f "$WORKDIR/userdata.img" ]]; then
-  dd if=/dev/zero of="$WORKDIR/userdata.img" bs=1048576 count="${USERDATA_MB:-1024}" status=none
+  # Sparse: host space grows with guest data, not with the configured size.
+  dd if=/dev/zero of="$WORKDIR/userdata.img" bs=1048576 count=0 seek="${USERDATA_MB:-1024}" status=none
   "$E2/mke2fs" -t ext4 -F -L userdata "$WORKDIR/userdata.img"
 fi
 
@@ -109,9 +118,16 @@ if [[ "${QEMU_ADB:-1}" == 1 ]]; then
     echo "ADB_PORT must be an integer in 1..65535" >&2
     exit 1
   }
+  # ADB_BIND=0.0.0.0 exposes adb to the LAN (headless remote hosts).
+  ADB_BIND="${ADB_BIND:-127.0.0.1}"
   APPEND+=(androidboot.qemu_adb=1)
-  NETDEV+=",hostfwd=tcp:127.0.0.1:$ADB_PORT-:5555"
-  echo "adb:     127.0.0.1:$ADB_PORT (guest TCP 5555)"
+  NETDEV+=",hostfwd=tcp:$ADB_BIND:$ADB_PORT-:5555"
+  echo "adb:     $ADB_BIND:$ADB_PORT (guest TCP 5555)"
+fi
+# Extra host-specific kernel/androidboot tokens, e.g. the CIX Mali launcher.
+if [[ -n "${QEMU_EXTRA_APPEND:-}" ]]; then
+  # shellcheck disable=SC2206
+  APPEND+=($QEMU_EXTRA_APPEND)
 fi
 
 if [[ "${QEMU_DEBUG:-0}" == 1 ]]; then
@@ -122,6 +138,9 @@ if [[ "${QEMU_DEBUG:-0}" == 1 ]]; then
 fi
 [[ "${SNAPSHOT:-0}" == 1 ]] && EXTRA+=(-snapshot)
 [[ -n "${QMP_SOCKET:-}" ]] && EXTRA+=(-qmp "unix:$QMP_SOCKET,server=on,wait=off")
+# A second monitor for streamed cast input, so a long-lived control client
+# never holds the lifecycle QMP socket (QEMU serves one client per monitor).
+[[ -n "${QMP_INPUT_SOCKET:-}" ]] && EXTRA+=(-qmp "unix:$QMP_INPUT_SOCKET,server=on,wait=off")
 
 GPU_DEV=virtio-gpu-pci
 # A normal ./run uses the verified GPU path; headless runs can use software KMS.
@@ -149,6 +168,15 @@ fi
 # PCI slot 6 matches the guest's sysfs GPU labels.
 NGFX+=(-device "$GPU_DEV,addr=0x6,xres=${XRES:-1080},yres=${YRES:-2400}"
   -device virtio-keyboard-pci -device virtio-tablet-pci,touchscreen=on)
+
+# Host cast: QEMU tebox-cast-hook → Unix socket → tebox-cast (see src/service/cast/).
+if [[ "${TEBOX_CAST:-0}" == 1 ]]; then
+  export TEBOX_CAST=1
+  export TEBOX_CAST_SOCK="${TEBOX_CAST_SOCK:-$WORKDIR/cast.sock}"
+  export TEBOX_CAST_FPS="${TEBOX_CAST_FPS:-60}"
+  export TEBOX_CAST_MAX_W="${TEBOX_CAST_MAX_W:-720}" TEBOX_CAST_MAX_H="${TEBOX_CAST_MAX_H:-1600}"
+  echo "cast:    TEBOX_CAST=1 sock=$TEBOX_CAST_SOCK fps=$TEBOX_CAST_FPS max=${TEBOX_CAST_MAX_W}x$TEBOX_CAST_MAX_H"
+fi
 
 echo "variant: $VARIANT"
 echo "kernel:  $KERNEL  ($KID)"

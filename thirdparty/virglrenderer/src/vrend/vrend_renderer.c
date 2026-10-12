@@ -10529,6 +10529,11 @@ static int vrend_renderer_transfer_internal(struct vrend_context *ctx,
       return EINVAL;
 
    assert(check_transfer_iovec(res, info));
+#ifdef ENABLE_VIDEO_V4L2
+   /* Coded/feedback buffers are written by the asynchronous encode worker. */
+   if (transfer_mode == VIRGL_TRANSFER_FROM_HOST)
+      vrend_video_wait_resource(res);
+#endif
    if (info->iovec && info->iovec_cnt) {
       iov = info->iovec;
       num_iovs = info->iovec_cnt;

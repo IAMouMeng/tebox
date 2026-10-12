@@ -11,6 +11,7 @@ struct pipe_screen;
 struct pipe_video_buffer;
 struct pipe_video_codec;
 struct pipe_resource;
+struct pipe_fence_handle;
 
 // Gallium/VirGL video helper for the vendor Codec2 store.
 // Caps are read from virtio-gpu VirGL capset2. A pipe_screen is opened via
@@ -50,6 +51,15 @@ bool forceVideoEnabled();
 // driver can actually create a pipe_video_codec for the selected entrypoint.
 bool backendAvailable(Entrypoint ep);
 
+// An encode submitted with Session::submitGraphic() and not yet collected.
+struct EncodeTicket {
+    void* feedback = nullptr;
+    pipe_resource* bitstream = nullptr;
+    pipe_fence_handle* fence = nullptr;
+    int64_t ptsUs = 0;
+    uint64_t index = 0;  // submission order, 0 = first frame of the session
+};
+
 class Session {
 public:
     Session() = default;
@@ -83,6 +93,14 @@ public:
                       uint32_t format, int64_t ptsUs, bool keyframe,
                       std::vector<uint8_t>* outBs, int64_t* outPtsUs, bool* outEos);
     uint64_t frameCount() const { return mFrameIndex; }
+    // Pipelined encode: submitGraphic() queues the frame and returns at once;
+    // collect() (callable from another thread) waits for it and returns the
+    // coded size.  At most kMaxInFlight tickets may be outstanding.
+    static constexpr unsigned kMaxInFlight = 3;
+    int submitGraphic(int fd, uint32_t width, uint32_t height, uint32_t stride,
+                      uint32_t format, int64_t ptsUs, bool keyframe, EncodeTicket* ticket);
+    int collect(EncodeTicket* ticket, std::vector<uint8_t>* outBs);
+    uint64_t submittedCount() const { return mSubmitted; }
 
     // Signal end-of-stream / drain. May emit a final frame into out*.
     int drain(std::vector<uint8_t>* out, int64_t* outPtsUs, bool* outEos);
@@ -91,6 +109,7 @@ public:
 
 private:
     bool ensurePipe();
+    unsigned pollFeedback(void* feedback, std::unique_lock<std::mutex>* lock);
     bool createCodec();
 
     bool mOpen = false;
@@ -108,6 +127,13 @@ private:
     pipe_video_buffer* mTarget = nullptr;
     pipe_video_buffer* mSource = nullptr;
     pipe_resource* mBitstream = nullptr;
+    // Ring of coded-data buffers for pipelined encodes (mBitstream is [0]).
+    static constexpr unsigned kBitstreams = kMaxInFlight + 1;
+    pipe_resource* mBitstreams[kBitstreams] = {};
+    unsigned mNextBitstream = 0;
+    EncodeTicket* mTicketOut = nullptr;  // set while submitGraphic() runs encode()
+    std::mutex mPipeLock;                // pipe_context/codec are single-threaded
+    uint64_t mSubmitted = 0;
     using CreateExternalBufferFn = pipe_video_buffer* (*)(
             pipe_context*, pipe_resource*, int, unsigned, unsigned);
     CreateExternalBufferFn mCreateExternalBuffer = nullptr;

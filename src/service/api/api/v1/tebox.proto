@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package tebox.v1;
+
+option go_package = "tebox-client/api/v1;teboxv1";
+
+service AndroidService {
+  rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse);
+  rpc CreateInstance(CreateInstanceRequest) returns (Instance);
+  rpc DeleteInstance(InstanceRequest) returns (Empty);
+  rpc StartInstance(InstanceRequest) returns (Empty);
+  rpc StopInstance(InstanceRequest) returns (Empty);
+  rpc ResetInstance(ResetInstanceRequest) returns (Empty);
+  rpc ConfigureInstance(ConfigureInstanceRequest) returns (Empty);
+  rpc SendKey(KeyRequest) returns (Empty);
+  rpc PowerDown(InstanceRequest) returns (Empty);
+  // Guest input (touch / keys). StreamInput keeps one stream open for
+  // continuous gestures; Instance.control_port offers the same over plain TCP.
+  rpc SendInput(InputRequest) returns (Empty);
+  rpc StreamInput(stream InputRequest) returns (Empty);
+  // Guest clipboard changes, streamed until the client cancels or the
+  // instance stops. Set the guest clipboard with InputRequest.clipboard.
+  rpc WatchClipboard(InstanceRequest) returns (stream ClipboardEvent);
+}
+
+message Empty {}
+message ListInstancesRequest {}
+// Zero fields take the defaults: 4 cores, 4096 MB memory, 8192 MB disk.
+message CreateInstanceRequest {
+  string name = 1;
+  int32 cpu_cores = 2;   // 1..host cores
+  int32 memory_mb = 3;   // 1024..65536
+  int32 disk_mb = 4;     // userdata size, 1024..1048576
+}
+
+message InstanceRequest {
+  string id = 1;
+}
+
+message ResetInstanceRequest {
+  string id = 1;
+  bool wipe_data = 2;
+}
+
+message ConfigureInstanceRequest { string id = 1; DeviceProfile profile = 2; }
+message KeyRequest { string id = 1; string key = 2; }
+
+message ListInstancesResponse {
+  repeated Instance instances = 1;
+}
+
+message Instance {
+  string id = 1;
+  string name = 2;
+  string variant = 3;
+  string dir = 4;
+  int32 adb_port = 5;
+  int32 pid = 6;
+  bool running = 7;
+  DeviceProfile profile = 8;
+  int32 cast_port = 9;
+  // Input port while running, TCP and UDP on the same number: JSON lines such
+  // as {"type":"touch","action":"down","x":0.5,"y":0.25} (see README).
+  int32 control_port = 10;
+  int32 cpu_cores = 11;
+  int32 memory_mb = 12;
+  int32 disk_mb = 13;       // userdata size
+  int32 disk_used_mb = 14;  // host space userdata.img occupies
+  InstanceState state = 15;
+}
+
+enum InstanceState {
+  INSTANCE_STATE_UNSPECIFIED = 0;
+  INSTANCE_STATE_STOPPED = 1;
+  INSTANCE_STATE_STARTING = 2;  // QEMU running, Android still booting
+  INSTANCE_STATE_RUNNING = 3;   // sys.boot_completed=1
+  INSTANCE_STATE_STOPPING = 4;
+}
+
+message DeviceProfile {
+  double latitude = 1;
+  double longitude = 2;
+  string country = 3;
+  string operator_numeric = 4;
+  string operator_name = 5;
+  string cell_id = 6;
+  string phone_number = 7;
+  bool root = 8;
+}
+
+enum TouchAction {
+  TOUCH_ACTION_UNSPECIFIED = 0;
+  TOUCH_ACTION_DOWN = 1;
+  TOUCH_ACTION_MOVE = 2;
+  TOUCH_ACTION_UP = 3;
+}
+
+// x and y are normalised to the screen: 0..1 from the top-left corner.
+message TouchEvent {
+  TouchAction action = 1;
+  float x = 2;
+  float y = 3;
+}
+
+// Navigation key: home, back, menu, power, volume_up, volume_down, mute, or a
+// QEMU qcode. Pressed and released through the virtio keyboard.
+message KeyEvent { string key = 1; }
+
+// Text typed into the focused field. ASCII is typed as key events; other
+// text (CJK, emoji) is pasted through the guest clipboard.
+message TextEvent { string text = 1; }
+
+enum KeyAction {
+  KEY_ACTION_PRESS = 0; // down then up
+  KEY_ACTION_DOWN = 1;
+  KEY_ACTION_UP = 2;
+}
+
+// Android KeyEvent (android.view.KeyEvent KEYCODE_* / META_* values), e.g.
+// keycode 67 = DEL, 66 = ENTER, 29 + meta 0x3000 = Ctrl+A.
+message AndroidKeyEvent {
+  int32 keycode = 1;
+  KeyAction action = 2;
+  int32 meta = 3;
+}
+
+// Sets the guest clipboard; with paste it is also pasted into the focused field.
+message ClipboardEvent {
+  string text = 1;
+  bool paste = 2;
+}
+
+message InputRequest {
+  string id = 1;
+  oneof event {
+    TouchEvent touch = 2;
+    KeyEvent key = 3;
+    TextEvent text = 4;
+    AndroidKeyEvent keycode = 5;
+    ClipboardEvent clipboard = 6;
+  }
+}

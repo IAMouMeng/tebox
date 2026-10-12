@@ -29,6 +29,7 @@ for a in sh ls cat echo grep mount umount mkdir mknod insmod lsmod mdev ln sleep
 done
 cp -f "$K/vendor_modules/"*.ko "$STAGE/modules/"
 cp -a "$STUB" "$STAGE/vendor"
+chmod 0755 "$STAGE/vendor/bin/enable-camera-launcher.sh" 2>/dev/null || true
 INIT_DIR="$AOSP/qemu/init"
 if [[ -d "$INIT_DIR" ]]; then
   # Guest path cannot be /init — that is the busybox PID 1 script.
@@ -38,6 +39,7 @@ if [[ -d "$INIT_DIR" ]]; then
   cp -f "$INIT_DIR/android.hardware.security.keymint-service.rc" "$STAGE/overlays/" 2>/dev/null || true
   cp -f "$INIT_DIR/keystore2.rc" "$STAGE/overlays/" 2>/dev/null || true
   cp -f "$INIT_DIR/surfaceflinger.rc" "$STAGE/overlays/" 2>/dev/null || true
+  cp -f "$INIT_DIR/virtual_camera.hal.rc" "$STAGE/overlays/" 2>/dev/null || true
   cp -f "$INIT_DIR/vndkcorevariant.libraries.txt" "$STAGE/overlays/" 2>/dev/null || true
   # Soft wificond (fixed fake SSIDs) — replaces system binary, no kernel wifi.
   if [[ -x "$INIT_DIR/wificond" ]]; then
@@ -145,6 +147,12 @@ fi
 if [ -f /overlays/surfaceflinger.rc ]; then
   mount -o bind /overlays/surfaceflinger.rc /newroot/system/etc/init/surfaceflinger.rc && \
     echo "[init] bound surfaceflinger.rc (console + Mesa DRI path)"
+fi
+if [ -f /overlays/virtual_camera.hal.rc ]; then
+  touch /newroot/system/etc/init/virtual_camera.hal.rc 2>/dev/null || true
+  mount -o bind /overlays/virtual_camera.hal.rc \
+    /newroot/system/etc/init/virtual_camera.hal.rc && \
+    echo "[init] masked GSI virtual camera service"
 fi
 if [ -f /overlays/vndkcorevariant.libraries.txt ]; then
   touch /newroot/system/etc/vndkcorevariant.libraries.txt 2>/dev/null || true

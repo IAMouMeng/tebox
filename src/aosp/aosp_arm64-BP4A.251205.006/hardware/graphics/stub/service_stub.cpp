@@ -688,6 +688,8 @@ class StubAllocator : public BnAllocator {
         int32_t stride = effective.width;  // pixels (logical)
         size_t size = static_cast<size_t>(stride) * static_cast<size_t>(effective.height) *
                       static_cast<size_t>(bpp);
+        if (static_cast<int>(effective.format) == 35)
+            size = size * 3 / 2;
         if (effective.layerCount > 1) size *= static_cast<size_t>(effective.layerCount);
 
         out->stride = stride;
@@ -697,16 +699,18 @@ class StubAllocator : public BnAllocator {
         for (int32_t i = 0; i < count; ++i) {
             int fd = -1;
             uint32_t drm_stride = 0, drm_size = 0;
-            const bool virgl = qemuGbmUsesVirgl();
+            const bool virgl = qemuGbmUsesVirgl() && static_cast<int>(effective.format) != 35;
             if (virgl) {
                 fd = gbmCreate(effective.width, effective.height, static_cast<int>(effective.format),
                                (static_cast<int64_t>(effective.usage) & 0xf0) != 0,
                                &drm_stride, &drm_size);
                 if (fd < 0) return ScopedAStatus::fromServiceSpecificError(1);
                 backend = "gbm-virgl";
-            } else fd = drmDumbCreate(static_cast<uint32_t>(effective.width),
-                               static_cast<uint32_t>(effective.height),
-                               static_cast<uint32_t>(bpp * 8), &drm_stride, &drm_size);
+            } else if (static_cast<int>(effective.format) != 35) {
+                fd = drmDumbCreate(static_cast<uint32_t>(effective.width),
+                                   static_cast<uint32_t>(effective.height),
+                                   static_cast<uint32_t>(bpp * 8), &drm_stride, &drm_size);
+            }
             if (fd >= 0) {
                 stride = static_cast<int32_t>(drm_stride);
                 size = drm_size;
