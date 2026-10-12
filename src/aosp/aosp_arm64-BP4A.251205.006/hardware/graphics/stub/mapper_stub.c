@@ -114,7 +114,11 @@ static int parse_handle(const native_handle_t* h, BufSlot* info) {
     info->format = ints[3];
     info->usage = ((uint64_t)(uint32_t)ints[5] << 32) | (uint32_t)ints[4];
     if (info->width <= 0 || info->height <= 0 || info->stride < info->width) return 0;
-    info->size = (uint64_t)info->stride * (uint64_t)info->height * 4u;
+    // YUV_420_888 is backed by a tightly packed Y + interleaved UV buffer.
+    // Other formats use the packed RGBA-sized mapper storage used by this
+    // bring-up implementation.
+    info->size = (uint64_t)info->stride * (uint64_t)info->height *
+                 (info->format == 35 ? 3u : 4u) / (info->format == 35 ? 2u : 1u);
     info->cpu_mappable = 0;
     struct stat st;
     if (fstat(h->data[0], &st) != 0) {

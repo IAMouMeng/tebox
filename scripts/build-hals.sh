@@ -11,6 +11,7 @@ for name in graphics health audio power sensors wifi radio bluetooth fingerprint
   bash "$HAL/$name/stub/build-stub.sh"
 done
 bash "$HAL/camera/stub/build-stub.sh"
+bash "$HAL/camera/aidl-provider/build.sh"
 bash "$HAL/codec2/soft/build.sh"
 bash "$HAL/wifi/supplicant-stub/build-stub.sh"
 bash "$HAL/wifi/wificond-stub/build-stub.sh"
@@ -25,6 +26,7 @@ for name in audio power sensors wifi radio bluetooth fingerprint nfc gnss; do
   bash "$HAL/$name/stub/install.sh"
 done
 bash "$HAL/camera/stub/install.sh"
+bash "$HAL/camera/aidl-provider/install.sh"
 bash "$HAL/keymint/soft/install.sh"
 bash "$HAL/codec2/soft/install.sh"
 

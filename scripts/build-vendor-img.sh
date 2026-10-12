@@ -78,7 +78,7 @@ if [[ -n "$MESA_PRE" ]]; then
   }
   SYSTEM_IMG="$AOSP/images/system.img"
   [[ -f "$SYSTEM_IMG" ]] || { echo "missing $SYSTEM_IMG" >&2; exit 1; }
-  for lib in libcutils.so libhardware.so libbase.so libc++.so libz.so; do
+  for lib in libcutils.so libhardware.so libbase.so libutils.so libc++.so libz.so; do
     "$E2/debugfs" -R "dump /system/lib64/$lib $STAGE/lib64/$lib" "$SYSTEM_IMG" >/dev/null 2>&1
     [[ -s "$STAGE/lib64/$lib" ]] || { echo "failed to extract $lib from GSI" >&2; exit 1; }
   done
@@ -164,6 +164,9 @@ CMD="$(mktemp)"
   fi
   if [[ -f bin/hw/android.hardware.gnss-service ]]; then
     echo "ea_set /bin/hw/android.hardware.gnss-service security.selinux u:object_r:hal_keymint_system_exec:s0"
+  fi
+  if [[ -f bin/hw/android.hardware.camera.provider-service ]]; then
+    echo "ea_set /bin/hw/android.hardware.camera.provider-service security.selinux u:object_r:hal_keymint_system_exec:s0"
   fi
   if [[ -f lib64/hw/camera.default.so ]]; then
     echo "ea_set /lib64/hw/camera.default.so security.selinux u:object_r:same_process_hal_file:s0"
