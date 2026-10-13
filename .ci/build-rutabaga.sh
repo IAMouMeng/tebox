@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build rutabaga QEMU
 set -euo pipefail
-source "$(dirname "$0")/env.sh"
+source "$(dirname "$0")/../scripts/env.sh"
 
 RUTABAGA_REPO="${RUTABAGA_REPO:-https://github.com/magma-gpu/rutabaga_gfx.git}"
 RUTABAGA_REF="${RUTABAGA_REF:-main}"

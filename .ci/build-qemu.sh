@@ -22,7 +22,7 @@ fi
   exit 1
 }
 
-RUTABAGA="${RUTABAGA:-0}"
+RUTABAGA="${RUTABAGA:-1}"
 if [[ "$RUTABAGA" == 1 ]]; then
   [[ -f "$RUTABAGA_PREFIX/lib/pkgconfig/rutabaga_gfx_ffi.pc" ]] || {
     echo "missing rutabaga at $RUTABAGA_PREFIX (run scripts/build-rutabaga.sh first, or RUTABAGA=0 to skip)" >&2

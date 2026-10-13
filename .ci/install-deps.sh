@@ -11,7 +11,8 @@ case "$(uname -s)" in
     [[ "$(id -u)" == 0 ]] || SUDO=(sudo)
     # ${SUDO[@]+...} also supports macOS Bash 3's empty-array nounset behavior.
     ${SUDO[@]+"${SUDO[@]}"} apt-get update
-    ${SUDO[@]+"${SUDO[@]}"} curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ${SUDO[@]+"${SUDO[@]}"} curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    cargo install bindgen-cli | sh -s -- -y
     ${SUDO[@]+"${SUDO[@]}"} apt-get install -y --no-install-recommends \
       build-essential clang git ca-certificates curl xz-utils unzip zip \
       python3 python3-venv python3-pip ninja-build pkg-config \
