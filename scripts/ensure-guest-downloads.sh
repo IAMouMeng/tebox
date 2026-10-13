@@ -76,10 +76,22 @@ download_if_needed() {
 }
 
 if [[ "$VARIANT" != "$LOCK_VARIANT" ]]; then
-  echo "no pinned runtime downloads configured for $VARIANT" >&2
-  echo "update .ci/guest.lock.json or place custom files under src/aosp/$VARIANT/images/" >&2
-  exit 1
+  # Other variants (e.g. a third-party GSI on its own branch) pin their GSI
+  # in their own directory: images/system.url plus the system.img line of
+  # images/sha256sum.txt. Without a pin they bring their own system.img.
+  # The kernel is still the pinned one for KERNEL.
+  if [[ -f "$AOSP/images/system.url" ]]; then
+    SYSTEM_URL="$(tr -d '[:space:]' < "$AOSP/images/system.url")"
+    SYSTEM_SHA256="$(awk '$2 == "system.img" {print $1}' "$AOSP/images/sha256sum.txt" 2>/dev/null || true)"
+    download_if_needed "$SYSTEM" "$SYSTEM_URL" "$SYSTEM_SHA256" "system.img for $VARIANT"
+  elif [[ ! -s "$SYSTEM" ]] || ! python3 "$ROOT/scripts/check-runtime-inputs.py" "$SYSTEM" >/dev/null 2>&1; then
+    echo "no pinned runtime downloads configured for $VARIANT" >&2
+    echo "add src/aosp/$VARIANT/images/system.url and sha256sum.txt, or place system.img there" >&2
+    exit 1
+  else
+    echo "system.img for $VARIANT ready (unpinned)"
+  fi
+else
+  download_if_needed "$SYSTEM" "$SYSTEM_URL" "$SYSTEM_SHA256" "system.img for $VARIANT"
 fi
-
-download_if_needed "$SYSTEM" "$SYSTEM_URL" "$SYSTEM_SHA256" "system.img for $VARIANT"
 download_if_needed "$KERNEL_IMAGE" "$KERNEL_URL" "$KERNEL_SHA256" "GKI Image for $KID"

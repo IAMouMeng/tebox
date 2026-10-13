@@ -3070,18 +3070,29 @@ static void vrend_framebuffer_texture_2d(struct vrend_resource *res,
    } else if (attachment == GL_COLOR_ATTACHMENT0){
       glFramebufferTexture2DMultisampleEXT(target, attachment, textarget,
                                            texture, level, samples);
-   } else if (attachment == GL_STENCIL_ATTACHMENT || attachment == GL_DEPTH_ATTACHMENT) {
+   } else if (attachment == GL_STENCIL_ATTACHMENT || attachment == GL_DEPTH_ATTACHMENT ||
+              attachment == GL_DEPTH_STENCIL_ATTACHMENT) {
+      /* Every attachment needs the colour buffer's sample count: a
+       * single-sampled depth/stencil next to an implicitly multisampled colour
+       * buffer is GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE on GLES (Mali), which
+       * dropped Skia's MSAA mask atlas (translucent UI rendered empty). */
       GLenum internalformat =
-              attachment == GL_STENCIL_ATTACHMENT ?  GL_STENCIL_INDEX8 : GL_DEPTH_COMPONENT16;
+              attachment == GL_STENCIL_ATTACHMENT ? GL_STENCIL_INDEX8 :
+              attachment == GL_DEPTH_ATTACHMENT ? GL_DEPTH_COMPONENT16 :
+              res->base.format == PIPE_FORMAT_Z32_FLOAT_S8X24_UINT ? GL_DEPTH32F_STENCIL8 :
+              GL_DEPTH24_STENCIL8;
 
-      glGenRenderbuffers(1, &res->rbo_id);
-      glBindRenderbuffer(GL_RENDERBUFFER, res->rbo_id);
-      glRenderbufferStorageMultisampleEXT(GL_RENDERBUFFER, samples,
-                                          internalformat, res->base.width0,
-                                          res->base.height0);
+      /* The framebuffer is re-emitted often: allocate the storage once. */
+      if (!res->rbo_id) {
+         glGenRenderbuffers(1, &res->rbo_id);
+         glBindRenderbuffer(GL_RENDERBUFFER, res->rbo_id);
+         glRenderbufferStorageMultisampleEXT(GL_RENDERBUFFER, samples,
+                                             internalformat, res->base.width0,
+                                             res->base.height0);
+         glBindRenderbuffer(GL_RENDERBUFFER, 0);
+      }
       glFramebufferRenderbuffer(GL_FRAMEBUFFER, attachment,
                                 GL_RENDERBUFFER, res->rbo_id);
-      glBindRenderbuffer(GL_RENDERBUFFER, 0);
    } else {
       /* unsupported attachment for EXT_multisampled_render_to_texture, fallback to non-msaa */
       report_gles_warn(vrend_state.current_ctx, GLES_WARN_IMPLICIT_MSAA_SURFACE);
@@ -3212,9 +3223,21 @@ static void vrend_hw_set_zsurf_texture(struct vrend_context *ctx)
       if (!surf->texture)
          return;
 
+      /* Skia pairs an implicitly multisampled colour surface
+       * (EXT_multisampled_render_to_texture) with a depth/stencil that is
+       * single-sampled or a real multisample texture. GLES (Mali) rejects both
+       * mixes as GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE, so the depth/stencil
+       * then becomes an implicit-MSAA renderbuffer with the colour's samples. */
+      uint32_t samples = surf->nr_samples;
+      struct vrend_surface *color = ctx->sub->nr_cbufs ? ctx->sub->surf[0] : NULL;
+      if (!samples && color && color->nr_samples > 1 &&
+          color->texture && color->texture->base.nr_samples <= 1 &&
+          (surf->texture->base.nr_samples <= 1 ||
+           surf->texture->base.nr_samples == color->nr_samples))
+         samples = color->nr_samples;
       vrend_fb_bind_texture_id(surf->texture, surf->gl_id, 0, surf->level,
                                surf->first_layer != surf->last_layer ? -1 :
-                               (GLint)surf->first_layer, surf->nr_samples);
+                               (GLint)surf->first_layer, samples);
    }
 }
 
@@ -3331,10 +3354,11 @@ void vrend_set_framebuffer_state(struct vrend_context *ctx,
    } else
       zsurf = NULL;
 
-   if (sub_ctx->zsurf != zsurf) {
+   /* Bound after the colour surfaces: its sample count can follow surf[0]. */
+   bool zsurf_dirty = sub_ctx->zsurf != zsurf;
+   if (zsurf_dirty)
       vrend_surface_reference(&sub_ctx->zsurf, zsurf);
-      vrend_hw_set_zsurf_texture(ctx);
-   }
+   struct vrend_surface *old_color0 = sub_ctx->nr_cbufs ? sub_ctx->surf[0] : NULL;
 
    old_num = sub_ctx->nr_cbufs;
    sub_ctx->nr_cbufs = nr_cbufs;
@@ -3361,6 +3385,10 @@ void vrend_set_framebuffer_state(struct vrend_context *ctx,
          vrend_hw_set_color_surface(sub_ctx, i);
       }
    }
+
+   if (zsurf_dirty ||
+       (sub_ctx->zsurf && old_color0 != (sub_ctx->nr_cbufs ? sub_ctx->surf[0] : NULL)))
+      vrend_hw_set_zsurf_texture(ctx);
 
    /* find a buffer to set fb_height from */
    if (sub_ctx->nr_cbufs == 0 && !sub_ctx->zsurf) {
@@ -4992,6 +5020,60 @@ static void vrend_clear_finish(struct vrend_sub_context *sub_ctx,
       glDisable(GL_SCISSOR_TEST);
 }
 
+/* GLES drivers (Mali) reject framebuffer attachments that desktop GL accepts.
+ * Clearing or drawing into an incomplete framebuffer raises
+ * GL_INVALID_FRAMEBUFFER_OPERATION, which would put the whole guest context
+ * (e.g. SurfaceFlinger) in error, so such commands are skipped instead. */
+static bool vrend_fb_incomplete(struct vrend_context *ctx, const char *what)
+{
+   struct vrend_sub_context *sub_ctx = ctx->sub;
+   static unsigned warned;
+
+   if (!vrend_state.use_gles)
+      return false;
+   GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+   if (status == GL_FRAMEBUFFER_COMPLETE)
+      return false;
+   if (warned < 16) {
+      warned++;
+      virgl_error("ctx %d \"%s\": skip %s on incomplete framebuffer 0x%x\n",
+                 ctx->ctx_id, ctx->debug_name, what, status);
+      for (uint32_t i = 0; i < sub_ctx->nr_cbufs; i++) {
+         struct vrend_surface *s = sub_ctx->surf[i];
+         if (!s)
+            continue;
+         virgl_error("  cbuf%u %s on %s %ux%u target 0x%x samples %u egl %d\n", i,
+                    util_format_name(s->format),
+                    util_format_name(s->texture->base.format),
+                    s->texture->base.width0, s->texture->base.height0,
+                    s->texture->target, s->nr_samples,
+                    s->texture->egl_image != NULL);
+      }
+      if (sub_ctx->zsurf)
+         virgl_error("  zsurf %s samples %u\n", util_format_name(sub_ctx->zsurf->format),
+                     sub_ctx->zsurf->nr_samples);
+      /* What GL actually has attached (0x8D6C: TEXTURE_SAMPLES_EXT). */
+      static const GLenum att[] = { GL_COLOR_ATTACHMENT0, GL_DEPTH_ATTACHMENT, GL_STENCIL_ATTACHMENT };
+      for (unsigned a = 0; a < 3; a++) {
+         GLint type = 0, name = 0, samples = -1;
+         glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, att[a],
+                                               GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
+         glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, att[a],
+                                               GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &name);
+         if (type == GL_RENDERBUFFER) {
+            glBindRenderbuffer(GL_RENDERBUFFER, name);
+            glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_SAMPLES, &samples);
+            glBindRenderbuffer(GL_RENDERBUFFER, 0);
+         } else if (type == GL_TEXTURE && has_feature(feat_implicit_msaa)) {
+            glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, att[a], 0x8D6C, &samples);
+         }
+         virgl_error("  gl att 0x%x type 0x%x name %d samples %d\n", att[a], type, name, samples);
+      }
+      while (glGetError() != GL_NO_ERROR) {}
+   }
+   return true;
+}
+
 void vrend_clear(struct vrend_context *ctx, unsigned buffers,
                  const union pipe_color_union *color, double depth,
                  unsigned stencil) {
@@ -5021,6 +5103,11 @@ void vrend_clear(struct vrend_context *ctx, unsigned buffers,
 
    vrend_clear_prepare(sub_ctx, sub_ctx->nr_cbufs ? sub_ctx->surf[0] : NULL,
                        buffers, colorf, depth, stencil);
+
+   if (vrend_fb_incomplete(ctx, "clear")) {
+      vrend_clear_finish(sub_ctx, buffers);
+      return;
+   }
 
    if (buffers & PIPE_CLEAR_COLOR) {
       uint32_t mask = 0;
@@ -6392,6 +6479,9 @@ int vrend_draw_vbo(struct vrend_context *ctx,
 
    if (ctx->ctx_switch_pending)
       vrend_finish_context_switch(ctx);
+
+   if (vrend_fb_incomplete(ctx, "draw"))
+      return 0;
 
    vrend_update_frontface_state(sub_ctx);
    if (ctx->sub->stencil_state_dirty)

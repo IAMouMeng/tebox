@@ -46,6 +46,12 @@ if [[ -d "$INIT_DIR" ]]; then
     cp -f "$INIT_DIR/wificond" "$STAGE/overlays/wificond"
     chmod 0755 "$STAGE/overlays/wificond"
   fi
+  # system-overlay/<path> replaces /<path> of the GSI by a bind mount, so
+  # system.img stays untouched. The guest busybox has no find: ship a list.
+  if [[ -d "$INIT_DIR/system-overlay" ]]; then
+    cp -a "$INIT_DIR/system-overlay" "$STAGE/system-overlay"
+    (cd "$INIT_DIR/system-overlay" && find . -type f | sed 's|^\./||' | sort) > "$STAGE/system-overlay.list"
+  fi
 fi
 
 cat > "$STAGE/init" <<'INIT'
@@ -132,8 +138,21 @@ if [ -f /overlays/init.rc ]; then
 fi
 if [ -f /overlays/init.ranchu.rc ]; then
   touch /newroot/init.ranchu.rc 2>/dev/null || true
-  mount -o bind /overlays/init.ranchu.rc /newroot/init.ranchu.rc && \
-    echo "[init] bound clean init.ranchu.rc"
+  target=/newroot/init.ranchu.rc
+  if [ ! -e "$target" ]; then
+    # GSIs without /init.ranchu.rc (read-only root, e.g. ColorOS): the vendor
+    # carries a marked placeholder that init.rc imports as init.${ro.hardware}.rc.
+    # Only the busybox applets in bin/ exist here (no head/sed).
+    target=
+    for f in /newroot/vendor/etc/init/hw/init.*.rc; do
+      grep -q "^# Placeholder: the initramfs binds" "$f" 2>/dev/null && { target=$f; break; }
+    done
+  fi
+  if [ -n "$target" ] && mount -o bind /overlays/init.ranchu.rc "$target"; then
+    echo "[init] bound clean init.ranchu.rc on ${target#/newroot}"
+  else
+    echo "[init] WARNING: no place to bind init.ranchu.rc"
+  fi
 fi
 if [ -f /overlays/android.hardware.security.keymint-service.rc ]; then
   mount -o bind /overlays/android.hardware.security.keymint-service.rc \
@@ -164,6 +183,15 @@ if [ -x /overlays/wificond ]; then
   touch /newroot/system/bin/wificond 2>/dev/null || true
   mount -o bind /overlays/wificond /newroot/system/bin/wificond && \
     echo "[init] bound soft wificond"
+fi
+if [ -f /system-overlay.list ]; then
+  while read -r f; do
+    if [ -e "/newroot/$f" ] && mount -o bind "/system-overlay/$f" "/newroot/$f"; then
+      echo "[init] overlay /$f"
+    else
+      echo "[init] WARNING: cannot overlay /$f"
+    fi
+  done < /system-overlay.list
 fi
 
 # GSI ships ro.adb.secure=1 (RSA dialog). For loopback TCP ADB, force insecure

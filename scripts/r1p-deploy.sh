@@ -4,11 +4,15 @@
 # container runs tebox-api (gRPC 50051, cast 9901, UDP input 9903).
 #
 # Usage: scripts/r1p-deploy.sh [build|push|images|start|stop|status|logs|all|bin]
-#   bin: rebuild only tebox-api and tebox-cast, upload them to $R1P_DIR/bin
+#   bin: rebuild only tebox-api, tebox-cast and VirGL, upload them to $R1P_DIR/bin
 #        (mounted over the image's copies) and restart the container. Needs
 #        the tebox-r1p-builder image that `build` tags; no image transfer.
 # Env:   R1P_HOST (user@10.10.2.142)  R1P_DIR (/mmc/tebox)  R1P_NAME (tebox-1)
 #        R1P_ADB_PORT (5555)  R1P_SUDO_ASKPASS (~/.askpass on the remote)
+#        R1P_GRPC_PORT (50051) R1P_CAST_PORT (9901) R1P_INPUT_PORT (9903):
+#        give a second container (another VARIANT/R1P_NAME/R1P_DIR/R1P_IMAGE)
+#        its own ports, since containers share the host network
+#        R1P_ENV ("A=1 B=2"): extra container environment (e.g. VREND_DEBUG)
 #        R1P_DRIVERS (cix-8180, under thirdparty/host-drivers)  VARIANT  MEM SMP USERDATA_MB
 #        R1P_APT_MIRROR (replaces http://deb.debian.org in the image build;
 #        default http://mirrors.ustc.edu.cn, empty for upstream)
@@ -20,6 +24,9 @@ R1P_HOST="${R1P_HOST:-user@10.10.2.142}"
 R1P_DIR="${R1P_DIR:-/mmc/tebox}"
 R1P_NAME="${R1P_NAME:-tebox-1}"
 R1P_ADB_PORT="${R1P_ADB_PORT:-5555}"
+R1P_GRPC_PORT="${R1P_GRPC_PORT:-50051}"
+R1P_CAST_PORT="${R1P_CAST_PORT:-9901}"
+R1P_INPUT_PORT="${R1P_INPUT_PORT:-9903}"
 R1P_IMAGE="${R1P_IMAGE:-tebox-r1p:latest}"
 R1P_DRIVERS="${R1P_DRIVERS:-cix-8180}"
 R1P_BUILDER="${R1P_BUILDER:-tebox-r1p-builder}"
@@ -66,16 +73,28 @@ bin() {
   docker run --rm --platform linux/arm64 \
     -v "$ROOT/src/service/cast:/src/src/service/cast:ro" -v "$BIN/service:/src/out/service" \
     -w /src "$R1P_BUILDER" make -C src/service/cast CAST_SYSTEM_FFMPEG=1
+  # VirGL (and its libepoxy, once) build incrementally under out/r1p-bin too.
+  mkdir -p "$BIN/host" "$BIN/build"
+  docker run --rm --platform linux/arm64 \
+    -v "$ROOT/.ci:/src/.ci:ro" -v "$ROOT/scripts/env.sh:/src/scripts/env.sh:ro" \
+    -v "$ROOT/thirdparty/libepoxy:/src/thirdparty/libepoxy:ro" \
+    -v "$ROOT/thirdparty/virglrenderer:/src/thirdparty/virglrenderer:ro" \
+    -v "$BIN/host:/src/prebuilts/host/linux-arm64" -v "$BIN/build:/src/out" \
+    -w /src "$R1P_BUILDER" sh -c '
+      [ -f prebuilts/host/linux-arm64/libepoxy/lib/pkgconfig/epoxy.pc ] || bash .ci/build-libepoxy.sh
+      VIRGL_VIDEO=1 VIRGL_VIDEO_BACKEND=v4l2 bash .ci/build-virglrenderer.sh' >/dev/null
+  cp -L "$BIN/host/virglrenderer/lib/libvirglrenderer.so.1" "$BIN/libvirglrenderer.so.1"
   remote "sudo -A mkdir -p $R1P_DIR/bin"
   local f name
-  for f in "$BIN/tebox-api" "$BIN/service/tebox-cast"; do
+  for f in "$BIN/tebox-api" "$BIN/service/tebox-cast" "$BIN/libvirglrenderer.so.1"; do
     name="$(basename "$f")"
     gzip -1 -c "$f" | remote "gunzip | sudo -A tee $R1P_DIR/bin/$name.part >/dev/null \
       && sudo -A chmod 755 $R1P_DIR/bin/$name.part && sudo -A mv $R1P_DIR/bin/$name.part $R1P_DIR/bin/$name"
   done
-  # Restarting reboots the guests: tebox-api owns the QEMU processes.
-  remote "sudo -A docker restart $R1P_NAME" >/dev/null
-  echo "updated tebox-api and tebox-cast on ${R1P_HOST#*@}; container $R1P_NAME restarted"
+  # Recreating reboots the guests (tebox-api owns the QEMU processes) and
+  # picks up the VirGL mount below.
+  start >/dev/null
+  echo "updated tebox-api, tebox-cast and VirGL on ${R1P_HOST#*@}; container $R1P_NAME restarted"
 }
 
 push() {
@@ -106,6 +125,11 @@ images() {
 
 start() {
   stop >/dev/null 2>&1 || true
+  # A VirGL uploaded by `bin` replaces the image's library (docker resolves
+  # the .so.1 symlink inside the image to the real file).
+  local virgl=
+  remote "test -f $R1P_DIR/bin/libvirglrenderer.so.1" && \
+    virgl="-v $R1P_DIR/bin/libvirglrenderer.so.1:/opt/tebox/prebuilts/host/linux-arm64/virglrenderer/lib/libvirglrenderer.so.1:ro"
   # Host networking lets QEMU's user-mode hostfwd publish adb on the LAN.
   remote "sudo -A docker run -d --name $R1P_NAME --restart unless-stopped --network host \
     --device /dev/kvm --device /dev/mali0 --device /dev/dri \
@@ -113,13 +137,17 @@ start() {
     --device /dev/video1 \
     -e ADB_PORT=$R1P_ADB_PORT -e MEM=${MEM:-4096} -e SMP=${SMP:-4} \
     -e USERDATA_MB=${USERDATA_MB:-8192} -e R1P_INSTANCE=$R1P_NAME \
+    -e TEBOX_GRPC_ADDR=0.0.0.0:$R1P_GRPC_PORT -e TEBOX_CAST_ADDR=0.0.0.0:$R1P_CAST_PORT \
+    -e TEBOX_INPUT_UDP_ADDR=0.0.0.0:$R1P_INPUT_PORT \
+    $(for kv in ${R1P_ENV:-}; do printf -- '-e %q ' "$kv"; done) \
     -v $R1P_DIR/images:/opt/tebox/src/aosp/$VARIANT/images:ro \
     -v $R1P_DIR/kernel:/opt/tebox/src/kernel/$KID/gki:ro \
     -v $R1P_DIR/$R1P_NAME:/data \
     -v $R1P_DIR/bin:/opt/tebox/override:ro \
+    $virgl \
     $R1P_IMAGE"
   echo "adb connect ${R1P_HOST#*@}:$R1P_ADB_PORT"
-  echo "gRPC ${R1P_HOST#*@}:50051  cast ${R1P_HOST#*@}:9901  input udp ${R1P_HOST#*@}:9903  instance $R1P_NAME"
+  echo "gRPC ${R1P_HOST#*@}:$R1P_GRPC_PORT  cast ${R1P_HOST#*@}:$R1P_CAST_PORT  input udp ${R1P_HOST#*@}:$R1P_INPUT_PORT  instance $R1P_NAME"
 }
 
 stop() { remote "sudo -A docker rm -f $R1P_NAME"; }
