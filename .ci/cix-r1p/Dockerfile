@@ -3,7 +3,13 @@
 # tebox-api with host cast (tebox-cast) and UDP input.
 # Built by scripts/r1p-deploy.sh from a staged context; only the final
 # stage (binaries + launcher scripts, no sources) is shipped to the host.
-FROM debian:trixie AS build
+# deps: the compilers and -dev packages only. r1p-deploy.sh tags it as
+# tebox-r1p-builder so `r1p-deploy.sh bin` can rebuild tebox-cast in seconds.
+FROM debian:trixie AS deps
+ARG APT_MIRROR
+RUN echo 'Acquire::Retries "8";' > /etc/apt/apt.conf.d/80-retries \
+ && if [ -n "$APT_MIRROR" ]; then \
+      sed -i "s|http://deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential git ca-certificates python3 python3-venv python3-pip \
       ninja-build pkg-config flex bison \
@@ -15,7 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY .ci/requirements.txt /tmp/requirements.txt
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install -q -r /tmp/requirements.txt
 ENV PATH=/opt/venv/bin:$PATH
-# Only what the QEMU/VirGL build reads, so tebox-cast or launcher changes do
+
+FROM deps AS build
+# R1P renders through VirGL on Mali GLES; gfxstream/rutabaga (Vulkan) is
+# not built here. Only what the QEMU/VirGL build reads, so tebox-cast or launcher changes do
 # not rebuild QEMU.
 COPY .ci /src/.ci
 COPY scripts/env.sh /src/scripts/env.sh
@@ -24,7 +33,7 @@ COPY qemu /src/qemu
 WORKDIR /src
 RUN bash .ci/build-libepoxy.sh \
  && VIRGL_VIDEO=1 VIRGL_VIDEO_BACKEND=v4l2 bash .ci/build-virglrenderer.sh \
- && VIRGL_VIDEO=1 QEMU_INSTALL=1 bash .ci/build-qemu.sh
+ && RUTABAGA=0 VIRGL_VIDEO=1 QEMU_INSTALL=1 bash .ci/build-qemu.sh
 # Host cast encoder: direct V4L2 (mvxenc), Debian's FFmpeg as fallback.
 COPY src/service/cast /src/src/service/cast
 RUN make -C src/service/cast CAST_SYSTEM_FFMPEG=1
@@ -38,15 +47,20 @@ RUN set -e; P=/src/prebuilts/host/linux-arm64; mkdir -p /out/lib; \
       | xargs -r cp -L -t /out/lib/
 
 FROM debian:trixie
+ARG APT_MIRROR
+RUN echo 'Acquire::Retries "8";' > /etc/apt/apt.conf.d/80-retries \
+ && if [ -n "$APT_MIRROR" ]; then \
+      sed -i "s|http://deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-minimal e2fsprogs procps iproute2 adb \
       libdrm2 libwayland-client0 libwayland-server0 \
     && rm -rf /var/lib/apt/lists/*
-COPY cix-debs/ /tmp/cix/
+# Every package from thirdparty/host-drivers/<platform> (r1p-deploy.sh).
+COPY host-drivers/ /tmp/drivers/
 # Only /opt is needed: the debs also carry ./lib (would break usrmerge),
 # udev/systemd units and firmware that belong to the host, not the container.
-RUN for d in /tmp/cix/cix-gpu-umd_*.deb /tmp/cix/cix-libglvnd_*.deb; do dpkg -x "$d" /tmp/cix/root; done \
- && cp -a /tmp/cix/root/opt/. /opt/ && rm -rf /tmp/cix
+RUN for d in /tmp/drivers/*.deb; do dpkg -x "$d" /tmp/drivers/root; done \
+ && cp -a /tmp/drivers/root/opt/. /opt/ && rm -rf /tmp/drivers
 ARG VARIANT
 ARG KERNEL_ID
 ENV TEBOX=/opt/tebox VARIANT=${VARIANT} KERNEL_ID=${KERNEL_ID}

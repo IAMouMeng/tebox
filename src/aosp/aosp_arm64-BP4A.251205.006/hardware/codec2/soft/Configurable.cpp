@@ -3,6 +3,8 @@
 #include "C2Params.h"
 
 #include <aidl/android/hardware/media/c2/Status.h>
+#include <algorithm>
+#include <cstring>
 
 using aidl::android::hardware::media::c2::FieldSupportedValuesQuery;
 using aidl::android::hardware::media::c2::FieldSupportedValuesQueryResult;
@@ -50,6 +52,22 @@ ScopedAStatus Configurable::config(const Params& inParams, bool /*mayBlock*/,
         setSize(pic.width, pic.height);
     }
     result->params = inParams;  // echo
+    // Codec2 configures C2StoreDmaBufUsageInfo on the store and reads the heap
+    // name back; fill it in place (the client sized the flexible name).
+    auto& blob = result->params.params;
+    for (size_t at = 0; at + 8 <= blob.size();) {
+        uint32_t size = 0, index = 0;
+        memcpy(&size, blob.data() + at, 4);
+        memcpy(&index, blob.data() + at + 4, 4);
+        if (size < 8 || at + size > blob.size()) break;
+        if (c2param::coreIndex(index) == c2param::kParamIndexStoreDmaBufUsage && size > 24) {
+            static const char kHeap[] = "system";
+            const size_t room = size - 24;
+            memset(blob.data() + at + 24, 0, room);
+            memcpy(blob.data() + at + 24, kHeap, std::min(room - 1, sizeof(kHeap) - 1));
+        }
+        at += (size + 7u) & ~7u;
+    }
     result->failures.clear();
     result->status.status = Status::OK;
     return ScopedAStatus::ok();
@@ -77,6 +95,8 @@ ScopedAStatus Configurable::query(const std::vector<int32_t>& indices, bool /*ma
             blob = c2param::makeU32(uidx, 2);  // C2Component::KIND_ENCODER
         } else if (core == c2param::kParamIndexDomain) {
             blob = c2param::makeU32(uidx, 1);  // C2Component::DOMAIN_VIDEO
+        } else if (core == c2param::kParamIndexStoreDmaBufUsage) {
+            blob = c2param::makeDmaBufUsage(uidx, "system");
         } else if (core == c2param::kParamIndexMediaType) {
             // Codec2's encoder input is raw video and its output is AVC.
             blob = c2param::makeString(uidx,

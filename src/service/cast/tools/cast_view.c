@@ -5,32 +5,58 @@
  * endpoint (each event carries "id" and "seq"). Guest clipboard changes come
  * back as datagrams on the same socket. Without --id it reads a bare
  * tebox-cast port (view only). Video reconnects if the API restarts.
+ *
+ * AAC records interleaved with the video are played through SDL audio.
+ * With --mic / --camera the viewer also sends microphone PCM and camera
+ * JPEGs upstream on the same TCP connection, in the same record framing.
  */
 #include <SDL.h>
 #include <libavcodec/avcodec.h>
+#include <libavdevice/avdevice.h>
+#include <libavformat/avformat.h>
+#include <libswscale/swscale.h>
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
-/* tebox-cast encoded stream (src/service/cast/include/cast/protocol.h):
- * [u32 be length][u8 codec][u8 flags][u64 be pts_us][payload]. */
-#define CAST_ENC_HDR_SIZE 10u
-#define CAST_CODEC_H264   0
+/* tebox-cast encoded stream: [u32 be length][u8 codec][u8 flags]
+ * [u64 be pts_us][payload], both directions. */
+#include "cast/protocol.h"
+
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0 /* macOS: SO_NOSIGPIPE is set in dial() */
+#endif
+
+/* Playback queue cap: 250 ms of s16 stereo at 48 kHz. */
+#define AUDIO_MAX_QUEUED (CAST_AUDIO_RATE * 2 * 2 / 4)
+/* Microphone chunks: 10 ms minimum, 20 ms maximum of s16 mono. */
+#define MIC_MIN_BYTES (CAST_AUDIO_RATE * 2 / 100)
+#define MIC_MAX_BYTES (CAST_AUDIO_RATE * 2 / 50)
+#define CAMERA_MAX_W 1280
+#define CAMERA_MAX_H 720
+#define CAMERA_FRAME_US (1000000 / 30)
 
 struct viewer {
     const char *host;
     int port;
     const char *id;
-    int video_fd;
+    int video_fd;         /* replaced/closed only under send_lock */
+    SDL_mutex *send_lock; /* serialises upstream records (mic + camera) */
+    bool up_stalled;      /* under send_lock: last record was dropped */
+    bool audio;           /* play AAC records */
+    SDL_AudioDeviceID mic_dev;
+    const char *camera;
     int ctrl_fd;          /* connected UDP socket to the input endpoint */
     uint64_t seq;
     SDL_mutex *lock;
@@ -135,6 +161,234 @@ static uint32_t r32be(const uint8_t *p)
            ((uint32_t)p[2] << 8) | (uint32_t)p[3];
 }
 
+static void w32be(uint8_t *p, uint32_t x)
+{
+    p[0] = (uint8_t)(x >> 24);
+    p[1] = (uint8_t)(x >> 16);
+    p[2] = (uint8_t)(x >> 8);
+    p[3] = (uint8_t)x;
+}
+
+static uint64_t now_us(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
+}
+
+/* The video thread owns reconnects; uploaders read video_fd under the same
+ * lock, so they never write to a closed (or reused) descriptor. */
+static void set_video_fd(struct viewer *v, int fd)
+{
+    SDL_LockMutex(v->send_lock);
+    if (v->video_fd >= 0) {
+        close(v->video_fd);
+    }
+    v->video_fd = fd;
+    SDL_UnlockMutex(v->send_lock);
+}
+
+/* Non-blocking send of p[0..n) until done or the deadline passes. A server
+ * that does not read the uplink must not stall the caller forever. */
+static int send_until(int fd, const uint8_t *p, size_t n, uint32_t deadline,
+                      bool *started)
+{
+    size_t off = 0;
+
+    while (off < n) {
+        ssize_t w = send(fd, p + off, n - off, MSG_DONTWAIT | MSG_NOSIGNAL);
+
+        if (w > 0) {
+            off += (size_t)w;
+            *started = true;
+            continue;
+        }
+        if (w < 0 && errno == EINTR) {
+            continue;
+        }
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+            !SDL_TICKS_PASSED(SDL_GetTicks(), deadline)) {
+            struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+
+            (void)poll(&pfd, 1, 10);
+            continue;
+        }
+        return -1;
+    }
+    return 0;
+}
+
+/* One upstream record, written whole under send_lock (mic and camera run in
+ * different threads). A record that cannot start within 500 ms is dropped;
+ * one that stops half way would desync the stream, so the socket is shut
+ * down and the video thread reconnects. */
+static void send_record(struct viewer *v, uint8_t codec, const void *payload,
+                        size_t n)
+{
+    uint8_t hdr[4 + CAST_ENC_HDR_SIZE];
+    uint64_t pts = now_us();
+    uint32_t deadline = SDL_GetTicks() + 500;
+    bool started = false;
+    int i;
+
+    if (n + CAST_ENC_HDR_SIZE > CAST_UPLINK_MAX) {
+        return;
+    }
+    w32be(hdr, (uint32_t)(n + CAST_ENC_HDR_SIZE));
+    hdr[4] = codec;
+    hdr[5] = 0;
+    for (i = 0; i < 8; i++) {
+        hdr[6 + i] = (uint8_t)(pts >> (56 - 8 * i));
+    }
+    SDL_LockMutex(v->send_lock);
+    if (v->video_fd >= 0) {
+        if (send_until(v->video_fd, hdr, sizeof(hdr), deadline, &started) < 0 ||
+            send_until(v->video_fd, payload, n, deadline, &started) < 0) {
+            if (started) {
+                fprintf(stderr, "cast-view: uplink write failed, reconnecting\n");
+                shutdown(v->video_fd, SHUT_RDWR);
+            } else if (!v->up_stalled) {
+                fprintf(stderr, "cast-view: uplink stalled, dropping records\n");
+            }
+            v->up_stalled = true;
+        } else {
+            v->up_stalled = false;
+        }
+    }
+    SDL_UnlockMutex(v->send_lock);
+}
+
+/* AAC playback state, owned by the video thread. */
+struct audio_out {
+    AVCodecContext *dec;
+    AVPacket *pkt;
+    AVFrame *frame;
+    SDL_AudioDeviceID dev;
+    bool failed;          /* logged once; audio stays off */
+    bool bad_format;
+    int16_t *pcm;
+    size_t pcm_cap;       /* in stereo sample frames */
+};
+
+/* Lazily opened on the first AAC record. */
+static bool audio_open(struct audio_out *a)
+{
+    const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_AAC);
+    SDL_AudioSpec want = {0};
+
+    if (a->dev) {
+        return true;
+    }
+    if (a->failed) {
+        return false;
+    }
+    a->failed = true;
+    a->dec = codec ? avcodec_alloc_context3(codec) : NULL;
+    a->pkt = av_packet_alloc();
+    a->frame = av_frame_alloc();
+    if (!a->dec || !a->pkt || !a->frame || avcodec_open2(a->dec, codec, NULL) < 0) {
+        fprintf(stderr, "cast-view: no AAC decoder, audio off\n");
+        return false;
+    }
+    want.freq = CAST_AUDIO_RATE;
+    want.format = AUDIO_S16SYS;
+    want.channels = 2;
+    want.samples = 512;
+    a->dev = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
+    if (!a->dev) {
+        fprintf(stderr, "cast-view: audio device: %s, audio off\n",
+                SDL_GetError());
+        return false;
+    }
+    SDL_PauseAudioDevice(a->dev, 0);
+    a->failed = false;
+    fprintf(stderr, "cast-view: audio on\n");
+    return true;
+}
+
+static void audio_close(struct audio_out *a)
+{
+    if (a->dev) {
+        SDL_CloseAudioDevice(a->dev);
+    }
+    avcodec_free_context(&a->dec);
+    av_packet_free(&a->pkt);
+    av_frame_free(&a->frame);
+    free(a->pcm);
+}
+
+/* Decoded frame (planar or packed, float or s16, any channel count) to
+ * interleaved s16 stereo in a->pcm; returns sample frames. */
+static size_t audio_to_s16(struct audio_out *a, const AVFrame *f)
+{
+    enum AVSampleFormat fmt = f->format;
+    enum AVSampleFormat packed = av_get_packed_sample_fmt(fmt);
+    bool planar = av_sample_fmt_is_planar(fmt);
+    int ch = f->ch_layout.nb_channels;
+    size_t n = (size_t)f->nb_samples;
+
+    if (ch < 1 || (packed != AV_SAMPLE_FMT_FLT && packed != AV_SAMPLE_FMT_S16)) {
+        if (!a->bad_format) {
+            fprintf(stderr, "cast-view: unsupported audio format %s/%d ch\n",
+                    av_get_sample_fmt_name(fmt), ch);
+            a->bad_format = true;
+        }
+        return 0;
+    }
+    if (n > a->pcm_cap) {
+        int16_t *np = realloc(a->pcm, n * 2 * sizeof(int16_t));
+
+        if (!np) {
+            return 0;
+        }
+        a->pcm = np;
+        a->pcm_cap = n;
+    }
+    for (size_t i = 0; i < n; i++) {
+        for (int c = 0; c < 2; c++) {
+            int src = c < ch ? c : 0; /* mono: duplicate; >2: first two */
+            const uint8_t *plane = f->extended_data[planar ? src : 0];
+            size_t idx = planar ? i : i * (size_t)ch + (size_t)src;
+
+            if (packed == AV_SAMPLE_FMT_FLT) {
+                float x = ((const float *)plane)[idx];
+
+                x = x > 1.f ? 1.f : x < -1.f ? -1.f : x;
+                a->pcm[i * 2 + c] = (int16_t)(x * 32767.f);
+            } else {
+                a->pcm[i * 2 + c] = ((const int16_t *)plane)[idx];
+            }
+        }
+    }
+    return n;
+}
+
+/* One ADTS frame. Latency beats continuity: a backlog over 250 ms (stalled
+ * device, burst after reconnect) is dropped before queuing more. */
+static void play_aac(struct audio_out *a, uint8_t *data, int size)
+{
+    if (!audio_open(a)) {
+        return;
+    }
+    a->pkt->data = data;
+    a->pkt->size = size;
+    if (avcodec_send_packet(a->dec, a->pkt) < 0) {
+        return;
+    }
+    while (avcodec_receive_frame(a->dec, a->frame) == 0) {
+        size_t n = audio_to_s16(a, a->frame);
+
+        if (n) {
+            if (SDL_GetQueuedAudioSize(a->dev) > AUDIO_MAX_QUEUED) {
+                SDL_ClearQueuedAudio(a->dev);
+            }
+            SDL_QueueAudio(a->dev, a->pcm, (Uint32)(n * 2 * sizeof(int16_t)));
+        }
+        av_frame_unref(a->frame);
+    }
+}
+
 /* Network + decode thread; hands the newest picture to the UI thread. */
 static int video_thread(void *opaque)
 {
@@ -143,6 +397,7 @@ static int video_thread(void *opaque)
     AVCodecContext *ctx = codec ? avcodec_alloc_context3(codec) : NULL;
     AVPacket *pkt = av_packet_alloc();
     AVFrame *frame = av_frame_alloc();
+    struct audio_out audio = {0};
     uint8_t *body = NULL;
     size_t cap = 0;
 
@@ -162,19 +417,23 @@ static int video_thread(void *opaque)
         if (v->video_fd < 0 || read_full(v->video_fd, lenbuf, 4) <= 0) {
             /* API or cast restarted: keep the last picture and reconnect. */
             if (v->video_fd >= 0) {
-                close(v->video_fd);
+                set_video_fd(v, -1);
                 fprintf(stderr, "cast-view: video lost, reconnecting\n");
             }
             SDL_Delay(1000);
-            v->video_fd = dial_handshake(v->host, v->port, "TEBOX-CAST/1", v->id);
+            /* Uploads resume on the new socket once it is published. */
+            set_video_fd(v, dial_handshake(v->host, v->port, "TEBOX-CAST/1",
+                                           v->id));
             avcodec_flush_buffers(ctx);
+            if (audio.dec) {
+                avcodec_flush_buffers(audio.dec);
+            }
             continue;
         }
         length = r32be(lenbuf);
         if (length < CAST_ENC_HDR_SIZE || length > 32u * 1024u * 1024u) {
             fprintf(stderr, "cast-view: bad length %u\n", length);
-            close(v->video_fd);
-            v->video_fd = -1;
+            set_video_fd(v, -1);
             continue;
         }
         if (length + AV_INPUT_BUFFER_PADDING_SIZE > cap) {
@@ -187,14 +446,20 @@ static int video_thread(void *opaque)
             cap = length + AV_INPUT_BUFFER_PADDING_SIZE;
         }
         if (read_full(v->video_fd, body, length) <= 0) {
-            close(v->video_fd);
-            v->video_fd = -1;
+            set_video_fd(v, -1);
+            continue;
+        }
+        memset(body + length, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+        if (body[0] == CAST_CODEC_AAC) {
+            if (v->audio) {
+                play_aac(&audio, body + CAST_ENC_HDR_SIZE,
+                         (int)(length - CAST_ENC_HDR_SIZE));
+            }
             continue;
         }
         if (body[0] != CAST_CODEC_H264) {
             continue;
         }
-        memset(body + length, 0, AV_INPUT_BUFFER_PADDING_SIZE);
         pkt->data = body + CAST_ENC_HDR_SIZE;
         pkt->size = (int)(length - CAST_ENC_HDR_SIZE);
         if (avcodec_send_packet(ctx, pkt) < 0) {
@@ -215,6 +480,7 @@ static int video_thread(void *opaque)
     }
 out:
     free(body);
+    audio_close(&audio);
     av_frame_free(&frame);
     av_packet_free(&pkt);
     avcodec_free_context(&ctx);
@@ -223,6 +489,334 @@ out:
         SDL_Event ev = { .type = SDL_QUIT };
         SDL_PushEvent(&ev);
     }
+    return 0;
+}
+
+/* Microphone uplink: drains the SDL capture queue in 10-20 ms records. */
+static int mic_thread(void *opaque)
+{
+    struct viewer *v = opaque;
+    uint8_t buf[MIC_MAX_BYTES];
+
+    while (!v->quit) {
+        Uint32 avail = SDL_GetQueuedAudioSize(v->mic_dev);
+        Uint32 n;
+
+        if (avail > MIC_MAX_BYTES * 10) {
+            /* Over 200 ms behind (uplink stalled): drop, stay live. */
+            SDL_ClearQueuedAudio(v->mic_dev);
+            continue;
+        }
+        if (avail < MIC_MIN_BYTES) {
+            SDL_Delay(5);
+            continue;
+        }
+        n = SDL_DequeueAudio(v->mic_dev, buf,
+                             avail < sizeof(buf) ? avail & ~1u : sizeof(buf));
+        if (n) {
+            send_record(v, CAST_CODEC_PCM_S16LE, buf, n);
+        }
+    }
+    return 0;
+}
+
+/* Camera uplink state, owned by the camera thread. */
+struct camera {
+    struct viewer *v;
+    bool live;            /* avfoundation device: no pacing, no looping */
+    AVCodecContext *enc;  /* mjpeg, recreated when the output size changes */
+    struct SwsContext *sws;
+    int sws_full;         /* source range the sws context was set up for */
+    AVFrame *scaled;
+    AVPacket *jpeg;
+    AVPacket *last;       /* last JPEG sent, repeated for still images */
+    AVRational tb;
+    int64_t first_ts;     /* first timestamp of this pass (files) */
+    uint64_t pass_start;
+    uint64_t next_send;   /* 30 fps send grid */
+    int64_t encoded;
+};
+
+static int camera_interrupt(void *opaque)
+{
+    return ((struct viewer *)opaque)->quit;
+}
+
+/* avfoundation:N opens macOS camera N (1280x720@30 if offered, else what
+ * the device picks); anything else is a media file. */
+static AVFormatContext *camera_open(struct viewer *v, const char *src, bool live)
+{
+    AVFormatContext *fmt = NULL;
+    int attempt;
+
+    if (!live) {
+        fmt = avformat_alloc_context();
+        if (!fmt) {
+            return NULL;
+        }
+        fmt->interrupt_callback.callback = camera_interrupt;
+        fmt->interrupt_callback.opaque = v;
+        if (avformat_open_input(&fmt, src, NULL, NULL) < 0) {
+            return NULL;
+        }
+        return fmt;
+    }
+    for (attempt = 0; attempt < 3; attempt++) {
+        const AVInputFormat *in = av_find_input_format("avfoundation");
+        AVDictionary *opts = NULL;
+
+        if (!in) {
+            fprintf(stderr, "cast-view: FFmpeg has no avfoundation device\n");
+            return NULL;
+        }
+        /* 0: 1280x720@30, 1: device size @30, 2: device defaults. */
+        if (attempt < 2) {
+            av_dict_set(&opts, "framerate", "30", 0);
+            av_dict_set(&opts, "pixel_format", "nv12", 0);
+        }
+        if (attempt < 1) {
+            av_dict_set(&opts, "video_size", "1280x720", 0);
+        }
+        fmt = avformat_alloc_context();
+        if (!fmt) {
+            av_dict_free(&opts);
+            return NULL;
+        }
+        fmt->interrupt_callback.callback = camera_interrupt;
+        fmt->interrupt_callback.opaque = v;
+        if (avformat_open_input(&fmt, src + strlen("avfoundation:"), in,
+                                &opts) == 0) {
+            av_dict_free(&opts);
+            return fmt;
+        }
+        av_dict_free(&opts);
+    }
+    return NULL;
+}
+
+/* (Re)create the mjpeg encoder and the scaled frame for an output size. */
+static int camera_setup_encoder(struct camera *c, int w, int h)
+{
+    const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_MJPEG);
+
+    avcodec_free_context(&c->enc);
+    av_frame_unref(c->scaled);
+    c->enc = codec ? avcodec_alloc_context3(codec) : NULL;
+    if (!c->enc) {
+        return -1;
+    }
+    c->enc->width = w;
+    c->enc->height = h;
+    /* yuv420p + full range is what yuvj420p meant, without the deprecation. */
+    c->enc->pix_fmt = AV_PIX_FMT_YUV420P;
+    c->enc->color_range = AVCOL_RANGE_JPEG;
+    c->enc->time_base = (AVRational){ 1, 30 };
+    c->enc->flags |= AV_CODEC_FLAG_QSCALE;
+    c->enc->global_quality = FF_QP2LAMBDA * 5;
+    if (avcodec_open2(c->enc, codec, NULL) < 0) {
+        avcodec_free_context(&c->enc);
+        return -1;
+    }
+    c->scaled->format = AV_PIX_FMT_YUV420P;
+    c->scaled->color_range = AVCOL_RANGE_JPEG;
+    c->scaled->width = w;
+    c->scaled->height = h;
+    return av_frame_get_buffer(c->scaled, 0);
+}
+
+/* yuvj* sources become their yuv* twin + full range for swscale. */
+static enum AVPixelFormat camera_src_format(enum AVPixelFormat f, int *full)
+{
+    switch (f) {
+    case AV_PIX_FMT_YUVJ420P: *full = 1; return AV_PIX_FMT_YUV420P;
+    case AV_PIX_FMT_YUVJ422P: *full = 1; return AV_PIX_FMT_YUV422P;
+    case AV_PIX_FMT_YUVJ444P: *full = 1; return AV_PIX_FMT_YUV444P;
+    case AV_PIX_FMT_YUVJ440P: *full = 1; return AV_PIX_FMT_YUV440P;
+    case AV_PIX_FMT_YUVJ411P: *full = 1; return AV_PIX_FMT_YUV411P;
+    default: return f;
+    }
+}
+
+/* Pace (files), rate-limit to 30 fps, scale to fit 1280x720, encode, send. */
+static void camera_frame(struct camera *c, AVFrame *f)
+{
+    int64_t ts = f->best_effort_timestamp;
+    int w = f->width, h = f->height, full = f->color_range == AVCOL_RANGE_JPEG;
+    enum AVPixelFormat sfmt = camera_src_format(f->format, &full);
+    struct SwsContext *sws;
+    uint64_t now;
+
+    if (!c->live && ts != AV_NOPTS_VALUE) {
+        int64_t due;
+
+        if (c->first_ts == AV_NOPTS_VALUE) {
+            c->first_ts = ts;
+        }
+        due = (int64_t)c->pass_start +
+              av_rescale_q(ts - c->first_ts, c->tb, AV_TIME_BASE_Q);
+        while (!c->v->quit && (int64_t)now_us() < due) {
+            int64_t ms = (due - (int64_t)now_us()) / 1000;
+
+            SDL_Delay(ms > 10 ? 10 : ms > 0 ? (Uint32)ms : 1);
+        }
+    }
+    /* A fixed 30 fps grid with 5 ms slack: a 30 fps source with jitter is
+     * not halved, a faster one is thinned to 30. */
+    now = now_us();
+    if (c->next_send && now + 5000 < c->next_send) {
+        return;
+    }
+    c->next_send = c->next_send && now < c->next_send + CAMERA_FRAME_US
+                       ? c->next_send + CAMERA_FRAME_US
+                       : now + CAMERA_FRAME_US;
+    if (w > CAMERA_MAX_W || h > CAMERA_MAX_H) {
+        if ((int64_t)w * CAMERA_MAX_H > (int64_t)h * CAMERA_MAX_W) {
+            h = (int)((int64_t)h * CAMERA_MAX_W / w);
+            w = CAMERA_MAX_W;
+        } else {
+            w = (int)((int64_t)w * CAMERA_MAX_H / h);
+            h = CAMERA_MAX_H;
+        }
+    }
+    w &= ~1;
+    h &= ~1;
+    if (w < 2 || h < 2) {
+        return;
+    }
+    if ((!c->enc || c->enc->width != w || c->enc->height != h) &&
+        camera_setup_encoder(c, w, h) < 0) {
+        fprintf(stderr, "cast-view: mjpeg encoder setup failed\n");
+        return;
+    }
+    sws = sws_getCachedContext(c->sws, f->width, f->height, sfmt, w, h,
+                               AV_PIX_FMT_YUV420P, SWS_BILINEAR,
+                               NULL, NULL, NULL);
+    if (!sws || av_frame_make_writable(c->scaled) < 0) {
+        c->sws = sws;
+        return;
+    }
+    if (sws != c->sws || full != c->sws_full) {
+        /* Output is full-range (JPEG); input range comes from the frame. */
+        sws_setColorspaceDetails(sws, sws_getCoefficients(SWS_CS_DEFAULT), full,
+                                 sws_getCoefficients(SWS_CS_DEFAULT), 1,
+                                 0, 1 << 16, 1 << 16);
+        c->sws_full = full;
+    }
+    c->sws = sws;
+    sws_scale(c->sws, (const uint8_t *const *)f->data, f->linesize, 0,
+              f->height, c->scaled->data, c->scaled->linesize);
+    c->scaled->pts = c->encoded++;
+    c->scaled->quality = c->enc->global_quality;
+    if (avcodec_send_frame(c->enc, c->scaled) < 0) {
+        return;
+    }
+    while (avcodec_receive_packet(c->enc, c->jpeg) == 0) {
+        send_record(c->v, CAST_CODEC_MJPEG, c->jpeg->data,
+                    (size_t)c->jpeg->size);
+        av_packet_unref(c->last);
+        av_packet_move_ref(c->last, c->jpeg);
+    }
+}
+
+/* Camera uplink thread: one source, decoded and re-encoded as JPEG records.
+ * Files loop forever; a single-frame source (still image) is resent at
+ * 30 fps. Open failure ends only this thread. */
+static int camera_thread(void *opaque)
+{
+    struct viewer *v = opaque;
+    struct camera c = { .v = v };
+    AVPacket *pkt = av_packet_alloc();
+    AVFrame *frame = av_frame_alloc();
+
+    c.live = !strncmp(v->camera, "avfoundation:", strlen("avfoundation:"));
+    c.scaled = av_frame_alloc();
+    c.jpeg = av_packet_alloc();
+    c.last = av_packet_alloc();
+    while (!v->quit && pkt && frame && c.scaled && c.jpeg && c.last) {
+        AVFormatContext *fmt = camera_open(v, v->camera, c.live);
+        AVCodecContext *dec = NULL;
+        const AVCodec *codec = NULL;
+        int idx = -1, frames = 0, ret;
+
+        if (!fmt) {
+            fprintf(stderr, "cast-view: camera %s: cannot open\n", v->camera);
+            break;
+        }
+        if (avformat_find_stream_info(fmt, NULL) >= 0) {
+            idx = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
+        }
+        if (idx >= 0) {
+            dec = avcodec_alloc_context3(codec);
+        }
+        if (!dec || avcodec_parameters_to_context(dec, fmt->streams[idx]->codecpar) < 0 ||
+            avcodec_open2(dec, codec, NULL) < 0) {
+            fprintf(stderr, "cast-view: camera %s: no decodable video\n",
+                    v->camera);
+            avcodec_free_context(&dec);
+            avformat_close_input(&fmt);
+            break;
+        }
+        if (!c.encoded) {
+            fprintf(stderr, "cast-view: camera %s %dx%d\n", v->camera,
+                    dec->width, dec->height);
+        }
+        c.tb = fmt->streams[idx]->time_base;
+        c.first_ts = AV_NOPTS_VALUE;
+        c.pass_start = now_us();
+        while (!v->quit) {
+            ret = av_read_frame(fmt, pkt);
+            if (ret == AVERROR(EAGAIN)) {
+                SDL_Delay(2); /* avfoundation: no frame yet */
+                continue;
+            }
+            if (ret < 0) {
+                avcodec_send_packet(dec, NULL); /* drain */
+            } else if (pkt->stream_index != idx) {
+                av_packet_unref(pkt);
+                continue;
+            } else {
+                avcodec_send_packet(dec, pkt);
+                av_packet_unref(pkt);
+            }
+            while (avcodec_receive_frame(dec, frame) == 0) {
+                frames++;
+                camera_frame(&c, frame);
+                av_frame_unref(frame);
+            }
+            if (ret < 0) {
+                break;
+            }
+        }
+        avcodec_free_context(&dec);
+        avformat_close_input(&fmt);
+        if (c.live) {
+            /* Device went away: retry, giving up if it cannot reopen. */
+            if (!v->quit) {
+                fprintf(stderr, "cast-view: camera read failed, reopening\n");
+                SDL_Delay(1000);
+            }
+            continue;
+        }
+        if (frames == 0) {
+            fprintf(stderr, "cast-view: camera %s: no frames\n", v->camera);
+            break;
+        }
+        if (frames == 1) {
+            while (!v->quit && c.last->size) {
+                SDL_Delay(CAMERA_FRAME_US / 1000);
+                send_record(v, CAST_CODEC_MJPEG, c.last->data,
+                            (size_t)c.last->size);
+            }
+            break;
+        }
+    }
+    av_packet_free(&pkt);
+    av_frame_free(&frame);
+    av_frame_free(&c.scaled);
+    av_packet_free(&c.jpeg);
+    av_packet_free(&c.last);
+    avcodec_free_context(&c.enc);
+    sws_freeContext(c.sws);
     return 0;
 }
 
@@ -571,11 +1165,17 @@ static void usage(const char *argv0)
 {
     fprintf(stderr,
             "Usage: %s [--host H] [--port P] [--id INSTANCE] [--input-port U]\n"
-            "          [--height PX]\n"
+            "          [--height PX] [--no-audio] [--mic] [--camera SRC]\n"
             "  --id          go through tebox-api: video on --port (9901),\n"
             "                input as UDP to --input-port (9903); without it\n"
             "                --port is a bare tebox-cast port (view only)\n"
-            "  --height  initial window height in points (default 900)\n"
+            "  --height      initial window height in points (default 900)\n"
+            "  --no-audio    do not play the guest's audio (AAC records)\n"
+            "  --mic         send the default microphone to the guest\n"
+            "                (48 kHz mono PCM, upstream on the video socket)\n"
+            "  --camera SRC  send a camera to the guest as JPEG frames:\n"
+            "                avfoundation:N (macOS camera N, e.g. avfoundation:0)\n"
+            "                or a video/image file, looped (30 fps max)\n"
             "Mouse: touch.  Esc / right click back, Home/F1 home, F2 menu,\n"
             "F5 power, PgUp/PgDn volume.  Typing (any IME) goes to the\n"
             "focused field; Cmd+A/C/X/Z/Y act in the guest, Cmd+V pastes the\n"
@@ -590,11 +1190,12 @@ int main(int argc, char **argv)
     int port = 9901;
     int input_port = 9903;
     int win_h = 900;
-    struct viewer v = { .video_fd = -1, .ctrl_fd = -1 };
+    struct viewer v = { .video_fd = -1, .ctrl_fd = -1, .audio = true };
+    bool mic = false;
     SDL_Window *win;
     SDL_Renderer *ren;
     SDL_Texture *tex = NULL;
-    SDL_Thread *thread;
+    SDL_Thread *thread, *mic_thr = NULL, *camera_thr = NULL;
     bool touching = false;
     float touch_x = 0, touch_y = 0;
     uint32_t touch_tick = 0, ping_tick = 0;
@@ -615,6 +1216,12 @@ int main(int argc, char **argv)
             input_port = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--height") && i + 1 < argc) {
             win_h = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--no-audio")) {
+            v.audio = false;
+        } else if (!strcmp(argv[i], "--mic")) {
+            mic = true;
+        } else if (!strcmp(argv[i], "--camera") && i + 1 < argc) {
+            v.camera = argv[++i];
         } else {
             usage(argv[0]);
             return !strcmp(argv[i], "--help") ? 0 : 1;
@@ -654,6 +1261,25 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Audio is optional: without it the viewer still shows video. */
+    if ((v.audio || mic) && SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
+        fprintf(stderr, "cast-view: SDL audio: %s, audio off\n", SDL_GetError());
+        v.audio = false;
+        mic = false;
+    }
+    if (mic) {
+        SDL_AudioSpec want = {0};
+
+        want.freq = CAST_AUDIO_RATE;
+        want.format = AUDIO_S16LSB;
+        want.channels = 1;
+        want.samples = 480; /* 10 ms */
+        v.mic_dev = SDL_OpenAudioDevice(NULL, 1, &want, NULL, 0);
+        if (!v.mic_dev) {
+            fprintf(stderr, "cast-view: microphone: %s\n", SDL_GetError());
+        }
+    }
+
     clipboard_event_type = SDL_RegisterEvents(1);
     if (v.ctrl_fd >= 0) {
         SDL_DetachThread(SDL_CreateThread(control_thread, "cast-control", &v));
@@ -662,11 +1288,21 @@ int main(int argc, char **argv)
     }
 
     v.lock = SDL_CreateMutex();
+    v.send_lock = SDL_CreateMutex();
     v.latest = av_frame_alloc();
     thread = SDL_CreateThread(video_thread, "cast-video", &v);
-    fprintf(stderr, "cast-view: %s:%d%s%s input=%s\n", host, port,
-            id ? " id=" : "", id ? id : "",
-            v.ctrl_fd >= 0 ? "udp" : "off");
+    if (v.mic_dev) {
+        SDL_PauseAudioDevice(v.mic_dev, 0);
+        mic_thr = SDL_CreateThread(mic_thread, "cast-mic", &v);
+    }
+    if (v.camera) {
+        avdevice_register_all();
+        camera_thr = SDL_CreateThread(camera_thread, "cast-camera", &v);
+    }
+    fprintf(stderr, "cast-view: %s:%d%s%s input=%s audio=%s mic=%s camera=%s\n",
+            host, port, id ? " id=" : "", id ? id : "",
+            v.ctrl_fd >= 0 ? "udp" : "off", v.audio ? "on" : "off",
+            v.mic_dev ? "on" : "off", v.camera ? v.camera : "off");
 
     while (!v.quit) {
         SDL_Event ev;
@@ -857,6 +1493,12 @@ int main(int argc, char **argv)
         SDL_RenderPresent(ren);
     }
 
+    /* Uploaders first: they write to video_fd under send_lock. */
+    SDL_WaitThread(camera_thr, NULL);
+    SDL_WaitThread(mic_thr, NULL);
+    if (v.mic_dev) {
+        SDL_CloseAudioDevice(v.mic_dev);
+    }
     if (v.video_fd >= 0) {
         shutdown(v.video_fd, SHUT_RDWR);
     }
@@ -870,6 +1512,7 @@ int main(int argc, char **argv)
     }
     av_frame_free(&v.latest);
     SDL_DestroyMutex(v.lock);
+    SDL_DestroyMutex(v.send_lock);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();

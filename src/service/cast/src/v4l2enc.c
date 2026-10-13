@@ -47,6 +47,7 @@ struct cast_v4l2 {
     size_t headers_size;
     uint8_t *encoded;
     size_t encoded_size, encoded_cap;
+    unsigned frames;
 };
 
 static int xioctl(int fd, unsigned long request, void *arg)
@@ -437,14 +438,45 @@ int cast_v4l2_encode(struct cast_v4l2 *e, const uint8_t *pixels, int stride,
         uint32_t types = nal_types(frame, frame_size);
 
         *key = (types & NAL_IDR_MASK) != 0;
-        /* Every IDR carries SPS/PPS so a viewer can join at any keyframe. */
-        if (*key && !(types & NAL_SPS_MASK) && e->headers_size) {
+        if (types & NAL_SPS_MASK) {
+            /* In-band parameter sets: keep them for later forced IDRs. */
+            size_t end = 0, hcap = 0;
+
+            for (size_t i = 0; i + 3 < frame_size; i++) {
+                if (frame[i] == 0 && frame[i + 1] == 0 && frame[i + 2] == 1 &&
+                    ((1u << (frame[i + 3] & 0x1f)) & NAL_SLICE_MASK)) {
+                    end = i > 0 && frame[i - 1] == 0 ? i - 1 : i;
+                    break;
+                }
+            }
+            if (end) {
+                free(e->headers);
+                e->headers = NULL;
+                e->headers_size = 0;
+                append(&e->headers, &e->headers_size, &hcap, frame, end);
+            }
+        } else if (*key && e->headers_size) {
+            /* Every IDR carries SPS/PPS so a viewer can join at any keyframe. */
             append(&e->encoded, &e->encoded_size, &e->encoded_cap, e->headers,
                    e->headers_size);
         }
     }
     append(&e->encoded, &e->encoded_size, &e->encoded_cap, frame, frame_size);
     free(frame);
+    if (e->frames++ < 3) {
+        char nals[64] = "";
+        size_t used = 0;
+
+        for (size_t i = 0; i + 3 < e->encoded_size && used + 4 < sizeof(nals); i++) {
+            if (e->encoded[i] == 0 && e->encoded[i + 1] == 0 && e->encoded[i + 2] == 1) {
+                used += snprintf(nals + used, sizeof(nals) - used, "%u ",
+                                 e->encoded[i + 3] & 0x1f);
+                i += 2;
+            }
+        }
+        fprintf(stderr, "cast-v4l2: frame %u bytes=%zu nal=[%s] headers=%zu\n",
+                e->frames - 1, e->encoded_size, nals, e->headers_size);
+    }
     *out = e->encoded;
     *out_size = e->encoded_size;
     return 0;

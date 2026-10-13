@@ -16,6 +16,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	api "tebox-api/api/v1"
 	tebox "tebox-api/internal/tebox"
@@ -229,6 +230,8 @@ func main() {
 	}
 	grpcServer := grpc.NewServer()
 	api.RegisterAndroidServiceServer(grpcServer, &server{mgr: mgr})
+	// Lets grpcurl and other tools discover the service without tebox.proto.
+	reflection.Register(grpcServer)
 	castListener, err := net.Listen("tcp", *castAddr)
 	if err != nil {
 		fatal(err)

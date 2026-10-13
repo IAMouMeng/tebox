@@ -3,10 +3,15 @@
 # R1P over SSH. Only binaries and runtime images leave this machine. The
 # container runs tebox-api (gRPC 50051, cast 9901, UDP input 9903).
 #
-# Usage: scripts/r1p-deploy.sh [build|push|images|start|stop|status|logs|all]
+# Usage: scripts/r1p-deploy.sh [build|push|images|start|stop|status|logs|all|bin]
+#   bin: rebuild only tebox-api and tebox-cast, upload them to $R1P_DIR/bin
+#        (mounted over the image's copies) and restart the container. Needs
+#        the tebox-r1p-builder image that `build` tags; no image transfer.
 # Env:   R1P_HOST (user@10.10.2.142)  R1P_DIR (/mmc/tebox)  R1P_NAME (tebox-1)
 #        R1P_ADB_PORT (5555)  R1P_SUDO_ASKPASS (~/.askpass on the remote)
-#        CIX_DEBS (downloads/cix)  VARIANT  MEM SMP USERDATA_MB
+#        R1P_DRIVERS (cix-8180, under thirdparty/host-drivers)  VARIANT  MEM SMP USERDATA_MB
+#        R1P_APT_MIRROR (replaces http://deb.debian.org in the image build;
+#        default http://mirrors.ustc.edu.cn, empty for upstream)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/env.sh"
@@ -16,27 +21,22 @@ R1P_DIR="${R1P_DIR:-/mmc/tebox}"
 R1P_NAME="${R1P_NAME:-tebox-1}"
 R1P_ADB_PORT="${R1P_ADB_PORT:-5555}"
 R1P_IMAGE="${R1P_IMAGE:-tebox-r1p:latest}"
-CIX_DEBS="${CIX_DEBS:-$ROOT/downloads/cix}"
-CIX_REPO="https://radxa-repo.github.io/cd8180-bookworm-test/pool/main/c"
+R1P_DRIVERS="${R1P_DRIVERS:-cix-8180}"
+R1P_BUILDER="${R1P_BUILDER:-tebox-r1p-builder}"
+R1P_APT_MIRROR="${R1P_APT_MIRROR-http://mirrors.ustc.edu.cn}"
 CONTEXT="$ROOT/out/r1p-context"
+BIN="$ROOT/out/r1p-bin"
 
 remote() {
   # sudo -A keeps stdin free for streamed docker images.
   ssh "$R1P_HOST" "export SUDO_ASKPASS=\${R1P_SUDO_ASKPASS:-\$HOME/.askpass}; $*"
 }
 
-fetch_debs() {
-  mkdir -p "$CIX_DEBS"
-  local deb
-  for deb in cix-gpu-umd/cix-gpu-umd_2.0.0_arm64.deb cix-libglvnd/cix-libglvnd_1.7.0_arm64.deb; do
-    [[ -f "$CIX_DEBS/$(basename "$deb")" ]] || curl -fL -o "$CIX_DEBS/$(basename "$deb")" "$CIX_REPO/$deb"
-  done
-}
 
 build() {
-  fetch_debs
+  bash "$ROOT/scripts/fetch-host-drivers.sh" "$R1P_DRIVERS"
   rm -rf "$CONTEXT"
-  mkdir -p "$CONTEXT"/{.ci,scripts,thirdparty,cix-debs,runtime-src/aosp/"$VARIANT"/qemu/cmdline}
+  mkdir -p "$CONTEXT"/{.ci,scripts,thirdparty,host-drivers,runtime-src/aosp/"$VARIANT"/qemu/cmdline}
   rsync -a --delete --exclude .git "$ROOT/qemu" "$CONTEXT/"
   rsync -a --delete --exclude .git "$ROOT/thirdparty/libepoxy" "$ROOT/thirdparty/virglrenderer" \
     "$CONTEXT/thirdparty/"
@@ -47,14 +47,40 @@ build() {
   cp "$ROOT"/.ci/{build-libepoxy.sh,build-virglrenderer.sh,build-qemu.sh,requirements.txt} "$CONTEXT/.ci/"
   cp "$ROOT"/scripts/{env.sh,boot-qemu.sh,check-runtime-inputs.py,cix-mali-env.sh,cix-r1p-start.sh} \
     "$CONTEXT/scripts/"
-  cp "$CIX_DEBS"/cix-gpu-umd_*.deb "$CIX_DEBS"/cix-libglvnd_*.deb "$CONTEXT/cix-debs/"
+  cp "$ROOT/thirdparty/host-drivers/$R1P_DRIVERS"/*.deb "$CONTEXT/host-drivers/"
   cp "$AOSP/KERNEL" "$CONTEXT/runtime-src/aosp/$VARIANT/"
   cp "$AOSP/qemu/cmdline/boot" "$CONTEXT/runtime-src/aosp/$VARIANT/qemu/cmdline/"
-  docker build --platform linux/arm64 -f "$ROOT/.ci/cix-r1p/Dockerfile" \
+  docker build --platform linux/arm64 -f "$ROOT/.ci/cix-r1p/Dockerfile" --build-arg APT_MIRROR="$R1P_APT_MIRROR" \
     --build-arg VARIANT="$VARIANT" --build-arg KERNEL_ID="$KID" -t "$R1P_IMAGE" "$CONTEXT"
+  # Tag the compiler stage as an image so pruning the build cache keeps it.
+  docker build --platform linux/arm64 -f "$ROOT/.ci/cix-r1p/Dockerfile" --target deps \
+    --build-arg APT_MIRROR="$R1P_APT_MIRROR" -t "$R1P_BUILDER" "$CONTEXT"
+}
+
+bin() {
+  docker image inspect "$R1P_BUILDER" >/dev/null 2>&1 || {
+    echo "missing $R1P_BUILDER image; run: $0 build" >&2; exit 1; }
+  mkdir -p "$BIN/service"
+  (cd "$ROOT/src/service/api" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$BIN/tebox-api" ./cmd/tebox-api)
+  # Objects stay in out/r1p-bin/service, so this is an incremental make.
+  docker run --rm --platform linux/arm64 \
+    -v "$ROOT/src/service/cast:/src/src/service/cast:ro" -v "$BIN/service:/src/out/service" \
+    -w /src "$R1P_BUILDER" make -C src/service/cast CAST_SYSTEM_FFMPEG=1
+  remote "sudo -A mkdir -p $R1P_DIR/bin"
+  local f name
+  for f in "$BIN/tebox-api" "$BIN/service/tebox-cast"; do
+    name="$(basename "$f")"
+    gzip -1 -c "$f" | remote "gunzip | sudo -A tee $R1P_DIR/bin/$name.part >/dev/null \
+      && sudo -A chmod 755 $R1P_DIR/bin/$name.part && sudo -A mv $R1P_DIR/bin/$name.part $R1P_DIR/bin/$name"
+  done
+  # Restarting reboots the guests: tebox-api owns the QEMU processes.
+  remote "sudo -A docker restart $R1P_NAME" >/dev/null
+  echo "updated tebox-api and tebox-cast on ${R1P_HOST#*@}; container $R1P_NAME restarted"
 }
 
 push() {
+  # A new image supersedes binaries uploaded by `bin`.
+  remote "sudo -A rm -rf $R1P_DIR/bin"
   docker save "$R1P_IMAGE" | gzip -1 | remote 'gunzip | sudo -A docker load'
 }
 
@@ -90,6 +116,7 @@ start() {
     -v $R1P_DIR/images:/opt/tebox/src/aosp/$VARIANT/images:ro \
     -v $R1P_DIR/kernel:/opt/tebox/src/kernel/$KID/gki:ro \
     -v $R1P_DIR/$R1P_NAME:/data \
+    -v $R1P_DIR/bin:/opt/tebox/override:ro \
     $R1P_IMAGE"
   echo "adb connect ${R1P_HOST#*@}:$R1P_ADB_PORT"
   echo "gRPC ${R1P_HOST#*@}:50051  cast ${R1P_HOST#*@}:9901  input udp ${R1P_HOST#*@}:9903  instance $R1P_NAME"
@@ -100,7 +127,7 @@ status() { remote "sudo -A docker ps -a --filter name=$R1P_NAME"; }
 logs() { remote "sudo -A docker logs --tail ${TAIL:-200} $R1P_NAME"; }
 
 case "${1:-all}" in
-  build|push|images|start|stop|status|logs) "$1" ;;
+  build|push|images|start|stop|status|logs|bin) "$1" ;;
   all) build; push; images; start ;;
-  *) echo "usage: $0 [build|push|images|start|stop|status|logs|all]" >&2; exit 2 ;;
+  *) echo "usage: $0 [build|push|images|start|stop|status|logs|all|bin]" >&2; exit 2 ;;
 esac

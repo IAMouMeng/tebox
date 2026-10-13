@@ -65,6 +65,7 @@ type Manager struct {
 	procs     map[string]*exec.Cmd
 	castProcs map[string]*exec.Cmd
 	castPorts map[string]int
+	castFails map[string]int // consecutive short-lived tebox-cast runs
 	input     inputHub
 	booted    map[string]bool // sys.boot_completed seen for the running process
 	stopping  map[string]bool
@@ -82,6 +83,7 @@ func NewManager(projectRoot, dataRoot string) (*Manager, error) {
 		procs:       make(map[string]*exec.Cmd),
 		castProcs:   make(map[string]*exec.Cmd),
 		castPorts:   make(map[string]int),
+		castFails:   make(map[string]int),
 		booted:      make(map[string]bool),
 		stopping:    make(map[string]bool),
 	}
@@ -278,6 +280,7 @@ func (m *Manager) Start(id string) error {
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	delete(m.castFails, id)
 	m.startCastLocked(item)
 	if err := cmd.Start(); err != nil {
 		if cast := m.castProcs[item.ID]; cast != nil && cast.Process != nil {
@@ -314,6 +317,7 @@ func (m *Manager) Stop(id string) error {
 	if cast := m.castProcs[id]; cast != nil && cast.Process != nil {
 		_ = cast.Process.Kill()
 		delete(m.castProcs, id)
+		delete(m.castPorts, id)
 	}
 	if cmd == nil || cmd.Process == nil {
 		return nil
@@ -348,12 +352,34 @@ func (m *Manager) startCastLocked(item Instance) {
 		return
 	}
 	m.castProcs[item.ID], m.castPorts[item.ID] = cmd, port
+	started := time.Now()
 	go func() {
-		_ = cmd.Wait()
+		err := cmd.Wait()
 		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.castProcs[item.ID] != cmd {
+			return // killed by Stop/Delete
+		}
 		delete(m.castProcs, item.ID)
 		delete(m.castPorts, item.ID)
-		m.mu.Unlock()
+		if m.procs[item.ID] == nil || m.stopping[item.ID] {
+			return
+		}
+		// The guest keeps running, so bring the cast back; QEMU's capture
+		// hook reconnects to cast.sock on its own. Back off on crash loops.
+		if time.Since(started) > time.Minute {
+			m.castFails[item.ID] = 0
+		}
+		delay := time.Second << min(m.castFails[item.ID], 5)
+		m.castFails[item.ID]++
+		fmt.Fprintf(os.Stderr, "tebox-api: tebox-cast for %s exited (%v), restarting in %s\n", item.ID, err, delay)
+		time.AfterFunc(delay, func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if m.procs[item.ID] != nil && !m.stopping[item.ID] {
+				m.startCastLocked(item)
+			}
+		})
 	}()
 }
 

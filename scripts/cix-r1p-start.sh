@@ -11,6 +11,11 @@
 # started automatically; TEBOX_DIRECT=1 boots it with boot-qemu.sh alone.
 set -euo pipefail
 TEBOX="${TEBOX:-/opt/tebox}"
+# Binaries uploaded by `r1p-deploy.sh bin` (mounted at override/) replace the
+# ones baked into the image, so API and cast updates skip an image rebuild.
+for f in bin/tebox-api out/service/tebox-cast; do
+  [[ -x "$TEBOX/override/${f##*/}" ]] && cp "$TEBOX/override/${f##*/}" "$TEBOX/$f"
+done
 source "$TEBOX/scripts/cix-mali-env.sh"
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$CIX_GPU_COMPAT/lib/aarch64-linux-gnu:$TEBOX/lib"
 export ADB_BIND="${ADB_BIND:-0.0.0.0}"

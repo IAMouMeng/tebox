@@ -51,7 +51,7 @@ var inputKeys = map[string]string{
 
 var qcodePattern = regexp.MustCompile(`^[a-z0-9_]{1,24}$`)
 
-var ErrInputNotRunning = errors.New("instance is not running")
+var ErrInputNotRunning = errors.New("instance is not running or does not exist")
 
 // inputHub owns, per running instance, the connection to QEMU's input
 // monitor (QMP_INPUT_SOCKET) and the plain-TCP control port. QEMU serves one

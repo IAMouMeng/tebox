@@ -39,6 +39,28 @@ client selects the Android instance immediately after connecting by sending
 cast stream format from [`cast/include/cast/protocol.h`](cast/include/cast/protocol.h).
 Set `TEBOX_CAST_ADDR` or `--cast-listen` to change that endpoint.
 `Instance.cast_port` reports the per-instance `tebox-cast` port while it runs.
+Up to 16 viewers can watch one instance at once. Each viewer receives a
+keyframe as soon as it connects. A viewer that falls about 4 MB behind is
+dropped, so it can never stall the others.
+
+The same connection carries guest audio and the viewer's camera and
+microphone (codec values in `protocol.h`):
+
+| Direction | codec | Payload |
+|---|---|---|
+| server → viewer | 0 | H.264 video (Annex-B) |
+| server → viewer | 16 | guest audio, AAC-LC 48 kHz stereo, one ADTS frame per record |
+| viewer → server | 32 | camera frame, one JPEG of any size (scaled and centre-cropped to 1280×720) |
+| viewer → server | 33 | microphone, PCM s16le 48 kHz mono, ~10–20 ms per record |
+
+Viewers send upstream records in the same `[u32 len][u8 codec][u8 flags][u64 pts][payload]`
+framing after the handshake line. Any viewer can feed the camera or microphone;
+the latest frame wins. Without camera frames the guest camera shows a moving
+test pattern; without microphone data it records silence.
+
+Inside the guest these travel over virtio-serial ports (`tebox.audio_out`,
+`tebox.audio_in`, `tebox.camera`; sockets `audio-out.sock`, `audio-in.sock`,
+`camera.sock` next to `cast.sock`) to the audio HAL and the camera HAL.
 
 Guest input (touch and keys) has three entry points, all feeding one
 dedicated QMP monitor per instance (`qmp-input.sock`, from `QMP_INPUT_SOCKET`),

@@ -65,6 +65,7 @@ if [[ "$HOST_OS" == darwin ]]; then
   export DYLD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib:$RUTABAGA_PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 else
   export LD_LIBRARY_PATH="$EPOXY_PREFIX/lib:$VIRGL_PREFIX/lib:$RUTABAGA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 
 [[ -f "$KERNEL" ]] || { echo "missing $KERNEL (fetch kernel for $KID)" >&2; exit 1; }
 [[ -f "$SYSTEM" ]] || { echo "missing $SYSTEM" >&2; exit 1; }
@@ -74,7 +75,14 @@ else
 if [[ ! -f "$WORKDIR/userdata.img" ]]; then
   # Sparse: host space grows with guest data, not with the configured size.
   dd if=/dev/zero of="$WORKDIR/userdata.img" bs=1048576 count=0 seek="${USERDATA_MB:-1024}" status=none
-  "$E2/mke2fs" -t ext4 -F -L userdata "$WORKDIR/userdata.img"
+  "$E2/mke2fs" -t ext4 -F -L userdata -O quota,project \
+    -E quotatype=usrquota:grpquota:prjquota "$WORKDIR/userdata.img"
+fi
+# vold assigns project IDs to app external dirs (Android/data/<pkg>); without
+# ext4 project quota getExternalCacheDir() is null and e.g. Camera cannot save.
+# Upgrade images made before this in place (the VM is not running yet).
+if ! "$E2/dumpe2fs" -h "$WORKDIR/userdata.img" 2>/dev/null | grep -q "features:.* project"; then
+  "$E2/tune2fs" -O quota,project -Q usrquota,grpquota,prjquota "$WORKDIR/userdata.img" >/dev/null
 fi
 
 ACCEL=tcg
@@ -187,6 +195,18 @@ if [[ "${TEBOX_CAST:-0}" == 1 ]]; then
   export TEBOX_CAST_FPS="${TEBOX_CAST_FPS:-60}"
   export TEBOX_CAST_MAX_W="${TEBOX_CAST_MAX_W:-720}" TEBOX_CAST_MAX_H="${TEBOX_CAST_MAX_H:-1600}"
   echo "cast:    TEBOX_CAST=1 sock=$TEBOX_CAST_SOCK fps=$TEBOX_CAST_FPS max=${TEBOX_CAST_MAX_W}x$TEBOX_CAST_MAX_H"
+  # Guest audio, microphone and camera reach tebox-cast through virtio-serial
+  # ports; the audio and camera HALs find them by name under
+  # /sys/class/virtio-ports. Sockets sit next to cast.sock.
+  MEDIA_DIR="$(dirname "$TEBOX_CAST_SOCK")"
+  # Fixed high slot: auto-assignment would shift virtio-net into slot 6 (GPU).
+  EXTRA+=(-device virtio-serial-pci,id=media,addr=0x10)
+  for port in audio-out:tebox.audio_out audio-in:tebox.audio_in camera:tebox.camera; do
+    sock="${port%%:*}"
+    rm -f "$MEDIA_DIR/$sock.sock"
+    EXTRA+=(-chardev "socket,id=${sock/-/_},path=$MEDIA_DIR/$sock.sock,server=on,wait=off"
+      -device "virtserialport,bus=media.0,chardev=${sock/-/_},name=${port#*:}")
+  done
 fi
 
 echo "variant: $VARIANT"

@@ -20,6 +20,9 @@ on early-init
 
 on init
     restorecon_recursive /dev/dri
+    # The dir is created before policy load and stays tmpfs-labelled; apps
+    # are then denied DMA-BUF heap allocations (software codecs, SoundPool).
+    restorecon_recursive /dev/dma_heap
 
 # The initramfs already mounts unencrypted userdata; no vold decrypt event follows.
 on post-fs-data

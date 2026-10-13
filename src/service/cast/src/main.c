@@ -1,9 +1,11 @@
 #include "cast/capture.h"
 #include "cast/control.h"
 #include "cast/encoder.h"
+#include "cast/media.h"
 #include "cast/transport.h"
 
 #include <getopt.h>
+#include <libgen.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,9 +20,29 @@ struct app {
     struct cast_transport *tx;
     struct cast_file_sink *file;
     struct cast_control *ctrl;
+    struct cast_media *media;
     uint64_t frames_in;
     uint64_t packets_out;
 };
+
+static void on_audio(void *user, const uint8_t *adts, size_t size, uint64_t pts_us)
+{
+    struct app *app = user;
+
+    cast_transport_send_packet(app->tx, CAST_CODEC_AAC, 0, pts_us, adts, size);
+}
+
+/* Viewer uplink: camera frames and microphone audio go to the guest. */
+static void on_uplink(void *user, uint8_t codec, const uint8_t *payload, size_t size)
+{
+    struct app *app = user;
+
+    if (codec == CAST_CODEC_MJPEG) {
+        cast_media_camera_jpeg(app->media, payload, size);
+    } else if (codec == CAST_CODEC_PCM_S16LE) {
+        cast_media_mic_pcm(app->media, payload, size);
+    }
+}
 
 static void on_sig(int sig)
 {
@@ -346,6 +368,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "cast: capture listen failed on %s\n", capture_sock);
         goto out;
     }
+    {
+        /* Guest audio/camera sockets sit next to cast.sock (boot-qemu.sh). */
+        char dir[sizeof(capture_sock)];
+
+        snprintf(dir, sizeof(dir), "%s", capture_sock);
+        app.media = cast_media_open(dirname(dir));
+        cast_transport_set_uplink(app.tx, on_uplink, &app);
+    }
 
     fprintf(stderr, "cast: running soft=%d encoder=%s\n", soft,
             cast_encoder_name(app.enc));
@@ -355,11 +385,10 @@ int main(int argc, char **argv)
     while (g_run) {
         struct cast_frame fr;
         int got;
-        bool had_client = cast_transport_ready(app.tx);
 
         /* A new viewer cannot decode until the next IDR (SPS/PPS + key).
          * Re-encode the last frame at once: a static screen sends nothing. */
-        if (cast_transport_try_accept(app.tx) == 1 && !had_client) {
+        if (cast_transport_try_accept(app.tx) == 2) {
             cast_encoder_force_idr(app.enc);
             if (last.data) {
                 struct cast_packet *pkts = NULL;
@@ -373,6 +402,7 @@ int main(int argc, char **argv)
             }
         }
         cast_control_poll(app.ctrl);
+        cast_media_poll(app.media, cast_transport_ready(app.tx), on_audio, &app);
         got = cast_capture_poll_frame(cap, &fr);
         if (got < 0) {
             usleep(2000);
@@ -403,6 +433,7 @@ int main(int argc, char **argv)
             (unsigned long long)app.packets_out);
 
 out:
+    cast_media_close(app.media);
     cast_capture_destroy(cap);
     cast_control_destroy(app.ctrl);
     cast_file_sink_close(app.file);
