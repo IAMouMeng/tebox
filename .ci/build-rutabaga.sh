@@ -29,6 +29,12 @@ if ! pkg-config --exists gbm 2>/dev/null; then
 fi
 
 clone_or_update() { # repo ref dest
+  # Pinned submodule (the default paths): build exactly the recorded commit.
+  local rel="${3#"$ROOT"/}"
+  if [[ "$rel" != "$3" && "$(git -C "$ROOT" ls-files -s -- "$rel" | cut -c1-6)" == 160000 ]]; then
+    git -C "$ROOT" submodule update --init --depth 1 -- "$rel"
+    return
+  fi
   if [[ -d "$3/.git" ]]; then
     echo "reusing $3"
     git -C "$3" fetch --depth 1 origin "$2" 2>/dev/null || true

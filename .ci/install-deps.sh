@@ -11,8 +11,6 @@ case "$(uname -s)" in
     [[ "$(id -u)" == 0 ]] || SUDO=(sudo)
     # ${SUDO[@]+...} also supports macOS Bash 3's empty-array nounset behavior.
     ${SUDO[@]+"${SUDO[@]}"} apt-get update
-    ${SUDO[@]+"${SUDO[@]}"} curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    cargo install bindgen-cli | sh -s -- -y
     ${SUDO[@]+"${SUDO[@]}"} apt-get install -y --no-install-recommends \
       build-essential clang git ca-certificates curl xz-utils unzip zip \
       python3 python3-venv python3-pip ninja-build pkg-config \
@@ -22,7 +20,13 @@ case "$(uname -s)" in
       libxext-dev libxfixes-dev libxrandr-dev libxi-dev \
       zlib1g-dev libpng-dev libjpeg-dev libzstd-dev libusb-1.0-0-dev \
       flex bison e2fsprogs cpio rsync patchelf file ripgrep busybox-static \
-      libvulkan-dev libvulkan1 vulkan-tools mesa-vulkan-drivers pkg-config
+      libvulkan-dev libvulkan1 vulkan-tools mesa-vulkan-drivers libclang-dev
+    # Rust for rutabaga_gfx (.ci/build-rutabaga.sh): per user, not root, and
+    # after apt so curl exists. bindgen-cli needs libclang-dev above.
+    export PATH="$HOME/.cargo/bin:$PATH"
+    command -v cargo >/dev/null 2>&1 ||
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    command -v bindgen >/dev/null 2>&1 || cargo install bindgen-cli
     ;;
   *) echo 'Only macOS and Linux are supported' >&2; exit 1 ;;
 esac
