@@ -3,6 +3,7 @@
         <name>android.hardware.audio.core</name>
         <version>1</version>
         <fqname>IModule/default</fqname>
+        <fqname>IModule/r_submix</fqname>
         <fqname>IConfig/default</fqname>
     </hal>
     <hal format="aidl">

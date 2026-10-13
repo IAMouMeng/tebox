@@ -699,14 +699,17 @@ class StubAllocator : public BnAllocator {
         for (int32_t i = 0; i < count; ++i) {
             int fd = -1;
             uint32_t drm_stride = 0, drm_size = 0;
-            const bool virgl = qemuGbmUsesVirgl() && static_cast<int>(effective.format) != 35;
+            const bool cpuOnly = static_cast<int>(effective.format) == 35 ||
+                                 static_cast<int>(effective.format) == 0x21;
+            const bool virgl = qemuGbmUsesVirgl() && !cpuOnly;
             if (virgl) {
+                // CPU writers: CPU_WRITE_* (0xf0) or a camera HAL (CAMERA_OUTPUT).
                 fd = gbmCreate(effective.width, effective.height, static_cast<int>(effective.format),
-                               (static_cast<int64_t>(effective.usage) & 0xf0) != 0,
+                               (static_cast<int64_t>(effective.usage) & (0xf0 | (1LL << 17))) != 0,
                                &drm_stride, &drm_size);
                 if (fd < 0) return ScopedAStatus::fromServiceSpecificError(1);
                 backend = "gbm-virgl";
-            } else if (static_cast<int>(effective.format) != 35) {
+            } else if (!cpuOnly) {
                 fd = drmDumbCreate(static_cast<uint32_t>(effective.width),
                                    static_cast<uint32_t>(effective.height),
                                    static_cast<uint32_t>(bpp * 8), &drm_stride, &drm_size);
@@ -745,8 +748,11 @@ class StubAllocator : public BnAllocator {
     ScopedAStatus isSupported(const BufferDescriptorInfo& desc, bool* out) override {
         const bool fmt_ok = bufferFormat(static_cast<int>(desc.format)).bytes != 0 ||
                             desc.format == PixelFormat::IMPLEMENTATION_DEFINED;
+        // BLOB buffers are width bytes x 1 row (camera JPEG: several MB).
+        const bool blob = static_cast<int>(desc.format) == 0x21;
+        const int32_t maxWidth = blob ? (64 << 20) : 16384;
         *out = fmt_ok && desc.width > 0 && desc.height > 0 &&
-               desc.width <= 16384 && desc.height <= 16384 && desc.layerCount == 1 &&
+               desc.width <= maxWidth && desc.height <= (blob ? 1 : 16384) && desc.layerCount == 1 &&
                !(static_cast<int64_t>(desc.usage) & (1LL << 14)) &&
                desc.additionalOptions.empty();
         return ScopedAStatus::ok();

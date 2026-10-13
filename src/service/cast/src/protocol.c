@@ -10,6 +10,9 @@ const char *cast_codec_name(enum cast_codec c)
     case CAST_CODEC_VP8:  return "vp8";
     case CAST_CODEC_VP9:  return "vp9";
     case CAST_CODEC_AV1:  return "av1";
+    case CAST_CODEC_AAC:  return "aac";
+    case CAST_CODEC_MJPEG: return "mjpeg";
+    case CAST_CODEC_PCM_S16LE: return "pcm_s16le";
     default: return "unknown";
     }
 }

@@ -99,5 +99,21 @@ inline std::vector<uint8_t> makeString(uint32_t index, const char* value) {
     return out;
 }
 
+// C2StoreDmaBufUsageInfo: {u64 usage, u32 capacity, i32 allocFlags,
+// char heapName[]}. Codec2 asks the preferred (vendor) store which DMA-BUF
+// heap backs linear/graphic blocks; an unanswered query leaves the name empty
+// and every software codec in the app then fails to allocate.
+constexpr uint32_t kParamIndexStoreDmaBufUsage = 0x14019;  // flexible
+inline std::vector<uint8_t> makeDmaBufUsage(uint32_t index, const char* heap) {
+    const size_t length = strlen(heap) + 1;
+    const size_t size = 8 + 16 + length;
+    std::vector<uint8_t> out((size + 7u) & ~7u, 0);
+    const uint32_t size32 = static_cast<uint32_t>(size);
+    memcpy(out.data(), &size32, 4);
+    memcpy(out.data() + 4, &index, 4);
+    memcpy(out.data() + 24, heap, length);
+    return out;
+}
+
 }  // namespace c2param
 }  // namespace gki

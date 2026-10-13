@@ -117,8 +117,9 @@ static int parse_handle(const native_handle_t* h, BufSlot* info) {
     // YUV_420_888 is backed by a tightly packed Y + interleaved UV buffer.
     // Other formats use the packed RGBA-sized mapper storage used by this
     // bring-up implementation.
-    info->size = (uint64_t)info->stride * (uint64_t)info->height *
-                 (info->format == 35 ? 3u : 4u) / (info->format == 35 ? 2u : 1u);
+    info->size = (uint64_t)info->stride * (uint64_t)info->height;
+    if (info->format == 35) info->size = info->size * 3 / 2;
+    else if (info->format != 0x21) info->size *= 4;  // BLOB is one byte per "pixel"
     info->cpu_mappable = 0;
     struct stat st;
     if (fstat(h->data[0], &st) != 0) {
@@ -321,9 +322,48 @@ static int32_t encode_ext_none(int64_t type, void* dest, size_t cap) {
     return w.wanted;
 }
 
+/* One PlaneLayout: components are {type, offsetInBits, sizeInBits}. */
+static void mw_plane(MetaWriter* w, const int64_t (*comps)[3], int ncomps, int64_t offset,
+                     int64_t increment, int64_t stride, int64_t width, int64_t height,
+                     int64_t size, int64_t hsub, int64_t vsub) {
+    mw_i64(w, ncomps);
+    for (int i = 0; i < ncomps; i++) {
+        mw_str(w, "android.hardware.graphics.common.PlaneLayoutComponentType");
+        mw_i64(w, comps[i][0]);
+        mw_i64(w, comps[i][1]);
+        mw_i64(w, comps[i][2]);
+    }
+    mw_i64(w, offset);
+    mw_i64(w, increment);
+    mw_i64(w, stride);
+    mw_i64(w, width);
+    mw_i64(w, height);
+    mw_i64(w, size);
+    mw_i64(w, hsub);
+    mw_i64(w, vsub);
+}
+
 static int32_t encode_planes(const BufSlot* info, void* dest, size_t cap) {
     MetaWriter w = {(uint8_t*)dest, cap, 0};
     mw_header(&w, META_PLANE_LAYOUTS);
+    if (info->format == 35) {
+        /* NV12: Y plane, then interleaved Cb/Cr at half resolution. */
+        const int64_t y[1][3] = {{1 /* Y */, 0, 8}};
+        const int64_t uv[2][3] = {{2 /* CB */, 0, 8}, {4 /* CR */, 8, 8}};
+        const int64_t luma = (int64_t)info->stride * info->height;
+        mw_i64(&w, 2);
+        mw_plane(&w, y, 1, 0, 8, info->stride, info->width, info->height, luma, 1, 1);
+        mw_plane(&w, uv, 2, luma, 16, info->stride, info->width / 2, info->height / 2, luma / 2,
+                 2, 2);
+        return w.wanted;
+    }
+    if (info->format == 0x21) {
+        const int64_t raw[1][3] = {{1 << 20 /* RAW */, 0, 8}};
+        mw_i64(&w, 1);
+        mw_plane(&w, raw, 1, 0, 8, info->stride, info->width, info->height,
+                 (int64_t)info->stride * info->height, 1, 1);
+        return w.wanted;
+    }
     mw_i64(&w, 1);
     mw_i64(&w, 4);
     const char* kComp = "android.hardware.graphics.common.PlaneLayoutComponentType";

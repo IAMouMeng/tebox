@@ -52,6 +52,7 @@ SRCS := \
 	src/capture.c \
 	src/control.c \
 	src/v4l2enc.c \
+	src/media.c \
 	src/main.c
 
 OBJS := $(SRCS:src/%.c=$(OUT)/%.o)
@@ -70,7 +71,7 @@ viewer: $(OUT)/tebox-cast-view
 # FFmpeg's include dir first so a Homebrew/system FFmpeg cannot win.
 $(OUT)/tebox-cast-view: tools/cast_view.c
 	@mkdir -p $(OUT)
-	$(CC) $(CFLAGS) $(AV_CFLAGS) $(SDL_CFLAGS) -o $@ $< -L$(FFMPEG_HOME)/lib -lavcodec -lavutil $(SDL_LIBS) $(RPATH) $(LDFLAGS)
+	$(CC) $(CFLAGS) $(AV_CFLAGS) $(SDL_CFLAGS) -o $@ $< -L$(FFMPEG_HOME)/lib -lavdevice -lavformat -lavcodec -lswscale -lavutil $(SDL_LIBS) $(RPATH) $(LDFLAGS)
 
 $(OUT)/tebox-cast: $(OBJS)
 	@mkdir -p $(OUT)

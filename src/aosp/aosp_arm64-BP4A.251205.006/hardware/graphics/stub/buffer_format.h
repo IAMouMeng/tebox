@@ -28,6 +28,8 @@ inline BufferFormat bufferFormat(int format) {
         // YUV_420_888 is a multi-plane CPU buffer. Keep it on the ashmem
         // fallback; the VirGL GBM path only supports packed RGB formats.
         case 35: return {0, 1, 3, {0,0,0,0}, {8,8,8,0}};
+        // BLOB (camera JPEG): width bytes x 1 row of opaque data, ashmem too.
+        case 0x21: return {0, 1, 1, {0,0,0,0}, {8,0,0,0}};
         default: return {};
     }
 }
