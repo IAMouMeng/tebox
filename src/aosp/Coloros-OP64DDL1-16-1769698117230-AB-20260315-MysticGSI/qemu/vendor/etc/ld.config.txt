@@ -6,6 +6,16 @@ dir.system_ext = /system_ext/lib64
 dir.product = /product/lib64
 dir.vendor = /vendor/lib64
 dir.odm = /odm/lib64
+# Executables must map to a section, or the linker falls back to its built-in
+# paths without /system_ext (ColorOS logd/vold need system_ext libraries).
+dir.default = /system/bin/
+dir.default = /system/xbin/
+dir.default = /system_ext/bin/
+dir.default = /product/bin/
+dir.default = /vendor/bin/
+dir.default = /odm/bin/
+dir.default = /apex/
+dir.default = /data/
 
 [default]
 additional.namespaces = system:sphal

@@ -1,10 +1,2 @@
-on early-init
-    setprop ro.hardware ranchu
-    setprop ro.zygote zygote64
-    setprop debug.renderengine.backend skiaglthreaded
-
-on early-boot
-    start vendor.health-default
-
-on boot
-    start vendor.health-default
+# Placeholder: the initramfs binds qemu/init/init.ranchu.rc here (imported as
+# init.${ro.hardware}.rc); this GSI has no /init.ranchu.rc at its read-only root.

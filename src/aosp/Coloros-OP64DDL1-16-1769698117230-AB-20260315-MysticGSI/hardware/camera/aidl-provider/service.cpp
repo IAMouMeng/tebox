@@ -197,9 +197,15 @@ const int32_t kDynamicKeys[] = {
     ANDROID_SENSOR_ROLLING_SHUTTER_SKEW,
 };
 
-CameraMetadata makeCharacteristics() {
+const char kBackName[] = "device@1.0/internal/0";
+const char kFrontName[] = "device@1.0/internal/1";
+
+// Both cameras show the same host frames. The front one keeps orientation 90:
+// the frames are the same landscape image, and apps mirror front previews.
+CameraMetadata makeCharacteristics(bool front) {
     Meta m(160, 8192);
-    m.set<uint8_t>(ANDROID_LENS_FACING, {ANDROID_LENS_FACING_BACK});
+    m.set<uint8_t>(ANDROID_LENS_FACING, {front ? uint8_t(ANDROID_LENS_FACING_FRONT)
+                                               : uint8_t(ANDROID_LENS_FACING_BACK)});
     m.set<int32_t>(ANDROID_SENSOR_ORIENTATION, {90});
     m.set<int32_t>(ANDROID_SENSOR_INFO_ACTIVE_ARRAY_SIZE, {0, 0, kSensorW, kSensorH});
     m.set<int32_t>(ANDROID_SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE, {0, 0, kSensorW, kSensorH});
@@ -842,8 +848,9 @@ bool supported(const StreamConfiguration& config) {
 
 class Device final : public aidl::android::hardware::camera::device::BnCameraDevice {
   public:
+    explicit Device(bool front) : front_(front) {}
     ndk::ScopedAStatus getCameraCharacteristics(CameraMetadata* out) override {
-        *out = makeCharacteristics();
+        *out = makeCharacteristics(front_);
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus getPhysicalCameraCharacteristics(const std::string&, CameraMetadata* out) override {
@@ -851,7 +858,9 @@ class Device final : public aidl::android::hardware::camera::device::BnCameraDev
         return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
     }
     ndk::ScopedAStatus getResourceCost(CameraResourceCost* out) override {
+        // One frame source: opening either camera evicts the other.
         out->resourceCost = 100;
+        out->conflictingDevices = {front_ ? kBackName : kFrontName};
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus isStreamCombinationSupported(const StreamConfiguration& config, bool* out) override {
@@ -891,6 +900,9 @@ class Device final : public aidl::android::hardware::camera::device::BnCameraDev
         out->metadata.clear();
         return ndk::ScopedAStatus::ok();
     }
+
+  private:
+    const bool front_;
 };
 
 class Provider final : public BnCameraProvider {
@@ -903,15 +915,17 @@ class Provider final : public BnCameraProvider {
         out->clear();
         return ndk::ScopedAStatus::ok();
     }
+    // ColorOS reports at least two API1 cameras to every app (CameraExtImpl
+    // getNumPhysicalCameras), so camera 1 must exist: a front camera.
     ndk::ScopedAStatus getCameraIdList(std::vector<std::string>* out) override {
-        *out = {"device@1.0/internal/0"};
+        *out = {kBackName, kFrontName};
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus getCameraDeviceInterface(const std::string& name,
                                                 std::shared_ptr<ICameraDevice>* out) override {
-        if (name != "device@1.0/internal/0")
+        if (name != kBackName && name != kFrontName)
             return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
-        *out = ndk::SharedRefBase::make<Device>();
+        *out = ndk::SharedRefBase::make<Device>(name == kFrontName);
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus notifyDeviceStateChange(int64_t) override { return ndk::ScopedAStatus::ok(); }

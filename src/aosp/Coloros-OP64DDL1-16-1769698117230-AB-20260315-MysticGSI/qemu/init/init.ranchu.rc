@@ -1,4 +1,8 @@
 on early-init
+    # 64-bit-only guest (no AArch32): ColorOS's mediaserverwrapper must exec
+    # mediaserver64; the default 32-bit mediaserver cannot run and leaves
+    # every MediaPlayer call hanging (video wallpaper ANR, blocked input).
+    setprop ro.mediaserver.64b.enable true
     setprop ro.hardware ranchu
     setprop ro.zygote zygote64
     setprop debug.renderengine.backend skiaglthreaded
@@ -17,6 +21,10 @@ on early-init
     # Soft wificond is bind-mounted from initramfs (rootfs label). Relabel
     # before class main so init can start it as wificond_exec.
     restorecon /system/bin/wificond
+    # libcompiler_rt.so from qemu/init/system-overlay carries the no-op QTI
+    # Performance natives (hardware/qti-perf-stub); bind-mounted from the
+    # initramfs (rootfs-labelled), zygote preloads it.
+    restorecon /system/lib64/libcompiler_rt.so
 
 on init
     restorecon_recursive /dev/dri
@@ -32,16 +40,6 @@ on property:sys.boot_completed=1
     # settings is a shell script, not an init service executable. Use the shell
     # domain explicitly so init can launch it and the plugged-in VM stays awake.
     exec_background u:r:shell:s0 shell shell -- /system/bin/sh /system/bin/settings put global stay_on_while_plugged_in 1
-    # PackageManager disables the stock launcher alias on first boot. Re-enable
-    # it after boot so the Camera2 app is discoverable from the Launcher.
-    start camera_launcher_enable
-
-service camera_launcher_enable /vendor/bin/enable-camera-launcher.sh
-    class late_start
-    user root
-    group root
-    seclabel u:r:init:s0
-    oneshot
 
 # Opt-in local serial diagnostics for this bring-up image.
 on init && property:ro.boot.qemu_debug=1
@@ -83,3 +81,18 @@ on property:sys.boot_completed=1 && property:ro.boot.qemu_adb=1
     # extra lookup to the QEMU host subnet so TCP debugging can send replies.
     exec u:r:vendor_init:s0 root root -- /system/bin/ip rule add priority 9000 to 10.0.2.0/24 lookup main
     exec_background u:r:shell:s0 shell shell -- /system/bin/sh /system/bin/settings put global adb_enabled 1
+
+# ColorOS GSI without its setup wizard (com.coloros.bootreg): mark setup done,
+# otherwise PhoneWindowManager ignores Home/Recents ("user setup is in
+# progress"). ColorOS hides the navigation bar for its immersive apps; keep it.
+on property:sys.boot_completed=1
+    exec_background u:r:shell:s0 shell shell -- /system/bin/cmd settings put global device_provisioned 1
+    exec_background u:r:shell:s0 shell shell -- /system/bin/cmd settings put secure user_setup_complete 1
+    exec_background u:r:shell:s0 shell shell -- /system/bin/cmd settings put secure nav_bar_force_visible 1
+
+# Once per userdata: the default video live wallpaper stays black here; use
+# SystemUI's static ImageWallpaper (hardware/coloros-setup). A wallpaper the
+# user picks later is kept.
+on property:sys.boot_completed=1 && property:persist.vendor.tebox.wallpaper=
+    exec_background u:r:su:s0 root root -- /system/bin/app_process -Djava.class.path=/vendor/etc/tebox/set-wallpaper.dex /system/bin SetWallpaper
+    setprop persist.vendor.tebox.wallpaper image
