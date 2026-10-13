@@ -76,10 +76,15 @@ download_if_needed() {
 }
 
 if [[ "$VARIANT" != "$LOCK_VARIANT" ]]; then
-  echo "no pinned runtime downloads configured for $VARIANT" >&2
-  echo "update .ci/guest.lock.json or place custom files under src/aosp/$VARIANT/images/" >&2
-  exit 1
+  # Unpinned variants (e.g. a third-party GSI) bring their own system.img;
+  # the kernel is still the pinned one for KERNEL.
+  if [[ ! -s "$SYSTEM" ]] || ! python3 "$ROOT/scripts/check-runtime-inputs.py" "$SYSTEM" >/dev/null 2>&1; then
+    echo "no pinned runtime downloads configured for $VARIANT" >&2
+    echo "update .ci/guest.lock.json or place custom files under src/aosp/$VARIANT/images/" >&2
+    exit 1
+  fi
+  echo "system.img for $VARIANT ready (unpinned)"
+else
+  download_if_needed "$SYSTEM" "$SYSTEM_URL" "$SYSTEM_SHA256" "system.img for $VARIANT"
 fi
-
-download_if_needed "$SYSTEM" "$SYSTEM_URL" "$SYSTEM_SHA256" "system.img for $VARIANT"
 download_if_needed "$KERNEL_IMAGE" "$KERNEL_URL" "$KERNEL_SHA256" "GKI Image for $KID"

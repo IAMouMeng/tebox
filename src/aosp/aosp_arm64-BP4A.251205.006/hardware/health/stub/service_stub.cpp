@@ -1,3 +1,4 @@
+#include <algorithm>
 /*
  * Soft Health HAL stub for GKI+QEMU bring-up (NDK AIDL v3).
  * Always-present AC-powered "battery" so BatteryService / system_server can boot.
@@ -126,13 +127,15 @@ class StubHealth : public BnHealth {
             std::lock_guard<std::mutex> lock(mu_);
             copy = callbacks_;
         }
-        bool died = false;
+        // Like the reference HAL: drop callbacks that fail, but the update
+        // itself succeeds (frameworks such as ColorOS do not catch an error
+        // from update() during BatteryService start).
         for (auto& cb : copy) {
             auto st = cb->healthInfoChanged(info);
-            if (!st.isOk()) died = true;
-        }
-        if (died) {
-            return ScopedAStatus::fromServiceSpecificError(IHealth::STATUS_CALLBACK_DIED);
+            if (st.isOk()) continue;
+            ALOGE("healthInfoChanged failed, dropping callback: %s", st.getDescription().c_str());
+            std::lock_guard<std::mutex> lock(mu_);
+            callbacks_.erase(std::remove(callbacks_.begin(), callbacks_.end(), cb), callbacks_.end());
         }
         return ScopedAStatus::ok();
     }
