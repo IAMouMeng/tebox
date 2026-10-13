@@ -101,6 +101,14 @@ option(
 )
 
 option(
+  'video-backend',
+  type : 'combo',
+  value : 'auto',
+  choices : ['auto', 'vaapi', 'v4l2'],
+  description : 'host video backend on Linux (auto selects VA-API; macOS always uses VideoToolbox)'
+)
+
+option(
   'tests',
   type : 'boolean',
   value : 'false',

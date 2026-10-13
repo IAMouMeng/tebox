@@ -19,6 +19,9 @@ if [[ "${GKI_MESA_VIDEO_ENABLE:-0}" == 1 || "${VIRGL_VIDEO:-0}" == 1 ]]; then
   install -m 0644 "$HERE/../etc/media_codecs_c2.xml" "$STUB/etc/media_codecs_c2.xml"
   install -m 0644 "$HERE/../etc/media_codecs_c2.xml" "$STUB/etc/media_codecs.xml"
 fi
+# Hosts with a VirGL video encoder opt in at boot with
+# androidboot.tebox.video_encode=1 (ro.media.xml_variant.codecs=_tebox_video).
+install -m 0644 "$HERE/../etc/media_codecs_c2.xml" "$STUB/etc/media_codecs_tebox_video.xml"
 install -m 0644 "$HERE/../etc/seccomp_policy/android.hardware.media.c2-service.policy" \
   "$STUB/etc/seccomp_policy/android.hardware.media.c2-service.policy"
 

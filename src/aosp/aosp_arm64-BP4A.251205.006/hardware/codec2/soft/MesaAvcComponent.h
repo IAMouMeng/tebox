@@ -8,6 +8,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <memory>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -62,8 +63,22 @@ private:
         std::vector<aidl::android::hardware::media::c2::BaseBlock> baseBlocks;
     };
 
+    // Encoder pipeline: the worker submits frames, the collector completes
+    // them in input order (encoded, failed or dropped).
+    struct InFlight {
+        enum class Kind { kEncoded, kDone, kDropped } kind = Kind::kDone;
+        PendingWork pending;
+        mesa_video::EncodeTicket ticket;
+    };
+
     void workerLoop();
+    void collectorLoop();
     void processWork(PendingWork* pending);
+    bool submitEncode(PendingWork* pending, mesa_video::EncodeTicket* ticket);
+    void finishEncode(PendingWork* pending, int rc, const std::vector<uint8_t>& bs,
+                      int64_t pts, uint64_t index);
+    void emitWork(PendingWork* pending);
+    static void markDropped(PendingWork* pending);
     static std::vector<uint8_t> extractLinearData(
             const aidl::android::hardware::media::c2::Buffer& buf,
             const std::vector<aidl::android::hardware::media::c2::BaseBlock>& baseBlocks);
@@ -82,6 +97,11 @@ private:
     std::atomic<bool> mStarted{false};
     std::atomic<bool> mReleased{false};
     std::thread mWorker;
+    std::thread mCollector;
+    std::deque<InFlight> mInFlight;   // guarded by mLock
+    unsigned mEncodedInFlight = 0;    // kEncoded entries in mInFlight
+    bool mWorkerDone = false;
+    std::condition_variable mInFlightCv;
 
     mesa_video::Session mSession;
     int64_t mNextBlockPoolId = 1;

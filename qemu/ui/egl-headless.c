@@ -6,6 +6,7 @@
 #include "ui/egl-helpers.h"
 #include "ui/egl-context.h"
 #include "ui/shader.h"
+#include "tebox-cast-hook.h"
 
 typedef struct egl_dpy {
     DisplayChangeListener dcl;
@@ -177,6 +178,9 @@ static void egl_scanout_flush(DisplayChangeListener *dcl,
     }
 
     egl_fb_read(edpy->ds, &edpy->blit_fb);
+    /* Local tebox cast: headless hosts (CIX R1P) have no SDL window. */
+    tebox_cast_capture(edpy->guest_fb.framebuffer, edpy->guest_fb.width,
+                       edpy->guest_fb.height, edpy->y_0_top);
     qemu_console_update(edpy->dcl.con, x, y, w, h);
 }
 

@@ -137,9 +137,15 @@ endif
 
 # The macOS VideoToolbox backend does not need a DRM device. Linux VA-API
 # video still requires libdrm for the render-node display.
+video_backend = get_option('video-backend')
+if with_host_darwin
+   video_backend = 'vt'
+elif video_backend == 'auto'
+   video_backend = 'vaapi'
+endif
 libdrm_dep = dependency('libdrm', version : '>=2.4.50',
                         required: with_drm_renderers or
-                                  (get_option('video') and not with_host_darwin))
+                                  (get_option('video') and video_backend == 'vaapi'))
 libdrm_amdgpu_dep = dependency('libdrm_amdgpu', version : '>=2.4.121', required: with_drm_amdgpu)
 conf_data.set('ENABLE_LIBDRM', libdrm_dep.found())
 drm_uapi_dep = declare_dependency(
@@ -412,6 +418,8 @@ if with_video
      videotoolbox_dep = dependency('appleframeworks',
                                    modules: ['CoreFoundation', 'CoreMedia',
                                              'CoreVideo', 'VideoToolbox'])
+  elif video_backend == 'v4l2'
+     conf_data.set('ENABLE_VIDEO_V4L2', 1)
   else
      libva_dep = dependency('libva')
      libvadrm_dep = dependency('libva-drm')

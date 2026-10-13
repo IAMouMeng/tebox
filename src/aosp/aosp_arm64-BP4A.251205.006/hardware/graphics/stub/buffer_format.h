@@ -25,6 +25,9 @@ inline BufferFormat bufferFormat(int format) {
         case 5: return {fourcc('A','R','2','4'), 4, 4, {16,8,0,24}, {8,8,8,8}};
         case 0x16: return {fourcc('A','B','4','H'), 8, 4, {0,16,32,48}, {16,16,16,16}};
         case 0x2b: return {fourcc('A','B','3','2'), 4, 4, {0,10,20,30}, {10,10,10,2}};
+        // YUV_420_888 is a multi-plane CPU buffer. Keep it on the ashmem
+        // fallback; the VirGL GBM path only supports packed RGB formats.
+        case 35: return {0, 1, 3, {0,0,0,0}, {8,8,8,0}};
         default: return {};
     }
 }

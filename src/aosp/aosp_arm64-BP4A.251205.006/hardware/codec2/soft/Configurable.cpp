@@ -110,6 +110,23 @@ ScopedAStatus Configurable::querySupportedParams(int32_t /*start*/, int32_t /*co
     picture.attrib = ParamDescriptor::ATTRIBUTE_READ_ONLY;
     picture.name = "raw.size";
     out->push_back(std::move(picture));
+    if (mId == 0) return ScopedAStatus::ok();  // store-level configurable
+    // CCodecConfig only maps advertised params into MediaFormat keys; without
+    // output.media-type the output format has no "mime" and MediaMuxer
+    // rejects the track.
+    static const struct { uint32_t index; const char* name; } kComponentParams[] = {
+        {0xA0000804u, "component.kind"},     // C2ComponentKindSetting
+        {0xA0000805u, "component.domain"},   // C2ComponentDomainSetting
+        {0x8001080Cu, "input.media-type"},   // C2PortMediaTypeSetting::input
+        {0x9001080Cu, "output.media-type"},  // C2PortMediaTypeSetting::output
+    };
+    for (const auto& param : kComponentParams) {
+        ParamDescriptor d;
+        d.index = static_cast<int32_t>(param.index);
+        d.attrib = ParamDescriptor::ATTRIBUTE_READ_ONLY;
+        d.name = param.name;
+        out->push_back(std::move(d));
+    }
     return ScopedAStatus::ok();
 }
 

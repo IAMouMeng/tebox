@@ -29,6 +29,16 @@ on property:sys.boot_completed=1
     # settings is a shell script, not an init service executable. Use the shell
     # domain explicitly so init can launch it and the plugged-in VM stays awake.
     exec_background u:r:shell:s0 shell shell -- /system/bin/sh /system/bin/settings put global stay_on_while_plugged_in 1
+    # PackageManager disables the stock launcher alias on first boot. Re-enable
+    # it after boot so the Camera2 app is discoverable from the Launcher.
+    start camera_launcher_enable
+
+service camera_launcher_enable /vendor/bin/enable-camera-launcher.sh
+    class late_start
+    user root
+    group root
+    seclabel u:r:init:s0
+    oneshot
 
 # Opt-in local serial diagnostics for this bring-up image.
 on init && property:ro.boot.qemu_debug=1
@@ -50,6 +60,11 @@ on boot
 
 # TCP ADB when the host launcher passes androidboot.qemu_adb=1 (default).
 # Initramfs clears ro.adb.secure so adbd skips RSA; use the GSI adbd binary.
+# Hosts whose VirGL renderer has a hardware encoder (VideoToolbox, V4L2)
+# expose c2.mesa.avc.encoder through /vendor/etc/media_codecs_tebox_video.xml.
+on early-init && property:ro.boot.tebox.video_encode=1
+    setprop ro.media.xml_variant.codecs _tebox_video
+
 on boot && property:ro.boot.qemu_adb=1
     # QEMU forwards to 10.0.2.15. Keep early ADB reachable; EthernetService
     # subsequently provisions eth0 through DHCP and registers routes and DNS

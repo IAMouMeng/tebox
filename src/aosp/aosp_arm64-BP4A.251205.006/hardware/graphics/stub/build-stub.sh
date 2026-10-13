@@ -96,6 +96,9 @@ compile_one() {
     -DBINDER_STABILITY_SUPPORT \
     -I"$GEN/include" \
     -I"$HAL/stub" \
+    -I"$ANDROID_HEADERS" \
+    -I"$MESA_PREFIX/include" \
+    -I"$DRM_PREFIX/include" -I"$DRM_PREFIX/include/libdrm" \
     -I"$GSI_LIBS/include" \
     -Wno-unused-parameter \
     -Wno-deprecated-declarations
@@ -111,9 +114,10 @@ echo "== link graphics-service =="
 BIN="$OUT/bin/android.hardware.graphics-service"
 "$CC" -o "$BIN" "${OBJS[@]}" \
   -L"$GSI_LIBS" \
+  -L"$MESA_PREFIX/lib" \
   -Wl,-rpath,/system/lib64 \
   -static-libstdc++ \
-  -lbinder_ndk -llog \
+  -lbinder_ndk -llog -lgbm_mesa \
   -Wl,--allow-shlib-undefined
 
 file "$BIN"

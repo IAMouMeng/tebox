@@ -24,6 +24,11 @@ debug.hwui.renderer=skiagl
 # Dual-SIM soft radio (slot1 T-Mobile US 5G, slot2 Vodafone DE 4G).
 persist.radio.multisim.config=dsds
 ro.telephony.sim.count=2
+# Stable line-1 values used by telephony when the virtual SIM has no EF-MSISDN.
+persist.radio.sim1.number=+8613800138000
+persist.radio.sim2.number=+8613900139000
+persist.radio.line1.number=+8613800138000
+persist.radio.line2.number=+8613900139000
 ro.vendor.api_level=202404
 
 # Soft WiFi HAL chip country (US).

@@ -7,7 +7,8 @@
 #   ./run <n>                 # menu index
 #   VARIANT=... ./run
 #
-# Env (optional): FORCE_VIRGL SNAPSHOT QEMU_DEBUG QEMU MEM SMP GRAPHIC ...
+# Env (optional): FORCE_VIRGL SNAPSHOT QEMU_DEBUG QEMU MEM SMP GRAPHIC
+#   TEBOX_CAST TEBOX_CAST_SOCK TEBOX_CAST_FPS (host cast → host/cast/) ...
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"

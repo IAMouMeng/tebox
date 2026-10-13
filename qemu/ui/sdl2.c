@@ -68,12 +68,14 @@ static Notifier mouse_mode_notifier;
 #endif
 
 static void sdl_update_caption(struct sdl2_console *scon);
+static void toggle_full_screen(struct sdl2_console *scon);
 
 static struct sdl2_console *get_scon_from_window(uint32_t window_id)
 {
     int i;
     for (i = 0; i < sdl2_num_outputs; i++) {
-        if (sdl2_console[i].real_window == SDL_GetWindowFromID(window_id)) {
+        SDL_Window *window = SDL_GetWindowFromID(window_id);
+        if (sdl2_console[i].real_window == window) {
             return &sdl2_console[i];
         }
     }
@@ -113,6 +115,7 @@ void sdl2_window_create(struct sdl2_console *scon)
 #ifdef CONFIG_OPENGL
     if (scon->opengl) {
         flags |= SDL_WINDOW_OPENGL;
+        flags |= SDL_WINDOW_ALLOW_HIGHDPI;
 #ifdef __APPLE__
         if (scon->opts->gl != DISPLAY_GL_MODE_ES) {
             /* macOS needs an explicit core context for desktop GL shaders. */
@@ -154,6 +157,7 @@ void sdl2_window_create(struct sdl2_console *scon)
     }
 
     sdl_update_caption(scon);
+
 }
 
 void sdl2_window_destroy(struct sdl2_console *scon)
@@ -232,6 +236,15 @@ static void sdl_update_caption(struct sdl2_console *scon)
     } else {
         snprintf(win_title, sizeof(win_title), "QEMU%s", status);
         snprintf(icon_title, sizeof(icon_title), "QEMU");
+    }
+
+    /* The service client supplies a per-instance name so several Android
+     * windows remain distinguishable in the host window switcher. */
+    {
+        const char *instance_name = getenv("QEMU_NAME");
+        if (instance_name && instance_name[0]) {
+            snprintf(win_title, sizeof(win_title), "%s%s", instance_name, status);
+        }
     }
 
     if (scon->real_window) {
@@ -746,7 +759,22 @@ void sdl2_poll_events(struct sdl2_console *scon)
         if (scon->idle_counter < SDL2_MAX_IDLE_COUNT) {
             scon->idle_counter++;
             if (scon->idle_counter >= SDL2_MAX_IDLE_COUNT) {
-                scon->dcl.update_interval = GUI_REFRESH_INTERVAL_DEFAULT;
+                const char *cast = getenv("TEBOX_CAST");
+                const char *fps_env = getenv("TEBOX_CAST_FPS");
+                int fps = fps_env && fps_env[0] ? atoi(fps_env) : 60;
+
+                /* Keep ~60Hz GUI tick while host cast is active. */
+                if (cast && cast[0] == '1' && !cast[1]) {
+                    if (fps < 1) {
+                        fps = 1;
+                    }
+                    if (fps > 60) {
+                        fps = 60;
+                    }
+                    scon->dcl.update_interval = MAX(10, 1000 / fps);
+                } else {
+                    scon->dcl.update_interval = GUI_REFRESH_INTERVAL_DEFAULT;
+                }
             }
         }
     } else {

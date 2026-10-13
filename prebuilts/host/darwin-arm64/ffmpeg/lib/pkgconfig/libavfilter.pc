@@ -1,0 +1,14 @@
+prefix=/Users/myt/Desktop/work/GKI/out/cast-ffmpeg
+exec_prefix=${prefix}
+libdir=/Users/myt/Desktop/work/GKI/out/cast-ffmpeg/lib
+includedir=/Users/myt/Desktop/work/GKI/out/cast-ffmpeg/include
+
+Name: libavfilter
+Description: FFmpeg audio/video filtering library
+Version: 11.14.103
+Requires: 
+Requires.private: libswscale >= 9.5.103, libavformat >= 62.12.103, libavcodec >= 62.28.103, libswresample >= 6.3.103, libavutil >= 60.26.103
+Conflicts:
+Libs: -L${libdir}  -lavfilter 
+Libs.private: -framework OpenGL -framework OpenGL -pthread -lm -lz -framework VideoToolbox -framework CoreImage -framework AppKit -framework CoreFoundation -framework CoreMedia -framework CoreVideo -framework CoreServices
+Cflags: -I${includedir}

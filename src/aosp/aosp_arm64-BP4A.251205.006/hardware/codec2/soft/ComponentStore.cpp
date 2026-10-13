@@ -184,14 +184,39 @@ ScopedAStatus ComponentStore::getStructDescriptors(
     // MediaFormat width/height into C2StreamPictureSizeInfo.  The rest of the
     // component uses fixed, framework-defined layouts and can be reflected by
     // the platform.
-    bool requested = indices.empty();
-    for (int32_t index : indices) {
-        if ((static_cast<uint32_t>(index) & 0x1ffffu) == 0x1800u) {
-            requested = true;
-            break;
+    auto requested = [&indices](uint32_t core) {
+        if (indices.empty()) return true;
+        for (int32_t index : indices) {
+            if ((static_cast<uint32_t>(index) & 0x1ffffu) == core) return true;
         }
+        return false;
+    };
+    // component.kind / component.domain: C2SimpleValueStruct<uint32 enum>.
+    for (uint32_t core : {0x804u, 0x805u}) {
+        if (!requested(core)) continue;
+        StructDescriptor d;
+        d.type = static_cast<int32_t>(core);
+        FieldDescriptor value;
+        value.fieldId = FieldId{0, 4};
+        value.type = FieldDescriptor::Type::UINT32;
+        value.extent = 1;
+        value.name = "value";
+        d.fields = {std::move(value)};
+        out->push_back(std::move(d));
     }
-    if (requested) {
+    // {input,output}.media-type: flexible C2StringValue.
+    if (requested(0x1080Cu)) {
+        StructDescriptor d;
+        d.type = static_cast<int32_t>(0x1080Cu);
+        FieldDescriptor value;
+        value.fieldId = FieldId{0, 1};
+        value.type = FieldDescriptor::Type::STRING;
+        value.extent = 0;
+        value.name = "value";
+        d.fields = {std::move(value)};
+        out->push_back(std::move(d));
+    }
+    if (requested(0x1800u)) {
         StructDescriptor d;
         d.type = 0x1800;
         FieldDescriptor width;
