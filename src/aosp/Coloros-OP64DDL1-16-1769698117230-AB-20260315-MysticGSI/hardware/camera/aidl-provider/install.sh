@@ -2,7 +2,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../../../../.." && pwd)
-DEST="$ROOT/src/aosp/aosp_arm64-BP4A.251205.006/qemu/vendor"
+DEST="$(cd "$HERE/../../../qemu/vendor" && pwd)"
 mkdir -p "$DEST/bin/hw" "$DEST/etc/init" "$DEST/etc/vintf/manifest"
 install -m 0755 "$ROOT/out/camera-aidl-provider/bin/android.hardware.camera.provider-service" \
   "$DEST/bin/hw/android.hardware.camera.provider-service"

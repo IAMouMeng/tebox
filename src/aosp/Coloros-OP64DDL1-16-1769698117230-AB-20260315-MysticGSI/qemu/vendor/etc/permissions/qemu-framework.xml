@@ -36,9 +36,12 @@
     <!-- Soft fingerprint (sensor props only; no real enroll/auth). -->
     <feature name="android.hardware.fingerprint"/>
 
-    <!-- Soft NFC (enable/disable toggle; no tags). -->
-    <feature name="android.hardware.nfc"/>
-    <feature name="android.hardware.nfc.hce"/>
-    <feature name="android.hardware.nfc.any"/>
+    <!-- Virtual cameras (host webcam through tebox-cast): back and front. -->
+    <feature name="android.hardware.camera"/>
+    <feature name="android.hardware.camera.front"/>
+    <feature name="android.hardware.camera.any"/>
+
+    <!-- No NFC: ColorOS's NfcNci needs a vendor HIDL NFC service and
+         crash-loops without one; without the feature it stays idle. -->
 </permissions>
 
