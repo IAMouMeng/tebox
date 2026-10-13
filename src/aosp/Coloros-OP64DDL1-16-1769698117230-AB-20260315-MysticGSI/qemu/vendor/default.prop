@@ -1,0 +1,9 @@
+ro.hardware=ranchu
+ro.hardware.egl=mesa
+ro.opengles.version=196609
+ro.hardware.gralloc=minigbm
+ro.hardware.hwcomposer=drm_minigbm
+persist.sys.glamor=1
+persist.radio.multisim.config=dsds
+ro.telephony.sim.count=2
+wifi.interface=wlan0
