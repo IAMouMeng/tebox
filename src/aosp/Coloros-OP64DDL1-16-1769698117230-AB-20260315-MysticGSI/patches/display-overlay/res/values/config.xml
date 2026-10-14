@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <integer-array name="config_availableColorModes">
+        <item>0</item><item>1</item><item>3</item><item>256</item>
+        <item>257</item><item>258</item><item>259</item><item>260</item>
+        <item>261</item><item>262</item><item>263</item><item>264</item>
+        <item>265</item><item>301</item><item>302</item><item>303</item>
+        <item>304</item><item>305</item><item>306</item><item>307</item>
+        <item>308</item>
+    </integer-array>
+    <!-- ColorOS: 160px corners and an 80x135 notch, drawn as black masks. -->
+    <dimen name="rounded_corner_radius">0px</dimen>
+    <string name="config_mainBuiltInDisplayCutout" translatable="false"></string>
+    <string name="config_mainBuiltInDisplayCutoutRectApproximation" translatable="false"></string>
+    <integer name="config_defaultRefreshRate">0</integer>
+    <dimen name="status_bar_height_portrait">40dp</dimen>
+    <dimen name="status_bar_height_landscape">40dp</dimen>
+</resources>

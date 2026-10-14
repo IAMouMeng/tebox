@@ -1,0 +1,15 @@
+VARIANT=Coloros-OP64DDL1-16-1769698117230-AB-20260315-MysticGSI
+GSI=ColorOS OP64DDL1 16 (MysticGSI, A/B, 2026-03-15 build 1769698117230)
+# system.img is a third-party ColorOS GSI placed by hand under images/; it has
+# no pinned download in .ci/guest.lock.json. Digest: images/sha256sum.txt.
+# The vendor/HAL/runtime inputs below were copied from aosp_arm64-BP4A.251205.006.
+
+# system.img / vendor.img / initramfs.img — under images/:
+IMAGES=src/aosp/Coloros-OP64DDL1-16-1769698117230-AB-20260315-MysticGSI/images
+# packing inputs (vendor, busybox, init) — under qemu/:
+QEMU_RT=src/aosp/Coloros-OP64DDL1-16-1769698117230-AB-20260315-MysticGSI/qemu
+# GSI link libs — under prebuilts/:
+GSI_LIBS=src/aosp/Coloros-OP64DDL1-16-1769698117230-AB-20260315-MysticGSI/prebuilts/gsi-lib64
+# Kernel used by this variant (see KERNEL file → src/kernel/<id>/):
+KERNEL_ID=gki-6.1-android14-gsi
+KERNEL_FETCHED_FROM=../../kernel/gki-6.1-android14-gsi/FETCHED_FROM.txt
