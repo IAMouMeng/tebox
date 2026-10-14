@@ -121,17 +121,19 @@ class KmsDisplay {
         if (buffer.slot < 0) return false;
         if (buffer.handle) {
             const auto& h = *buffer.handle;
-            if (h.fds.size() != 1 || h.ints.size() < 6) return false;
-            const int bytes = bufferFormat(h.ints[3]).bytes;
-            if (!bytes || h.ints[0] != kWidth || h.ints[1] != kHeight ||
-                h.ints[2] < kWidth || h.ints[2] > 32768) return false;
+            TeboxBufferInfo info;
+            if (h.fds.size() != 1 ||
+                !teboxBufferInfoFromInts(h.ints.data(), h.ints.size(), &info)) return false;
+            const int bytes = bufferFormat(info.format).bytes;
+            if (!bytes || info.width != kWidth || info.height != kHeight ||
+                info.stride < kWidth || info.stride > 32768) return false;
             struct stat st;
             if (fstat(h.fds[0].get(), &st) ||
-                uint64_t(st.st_size) < uint64_t(h.ints[2]) * kHeight * bytes) return false;
+                uint64_t(st.st_size) < uint64_t(info.stride) * kHeight * bytes) return false;
             Target t;
             t.fd.set(fcntl(h.fds[0].get(), F_DUPFD_CLOEXEC, 0));
             if (t.fd.get() < 0) return false;
-            t.width = h.ints[0]; t.height = h.ints[1]; t.stride = h.ints[2]; t.format = h.ints[3];
+            t.width = info.width; t.height = info.height; t.stride = info.stride; t.format = info.format;
             if (virgl_) {
                 drm_prime_handle prime = {};
                 prime.fd = t.fd.get();
@@ -160,8 +162,38 @@ class KmsDisplay {
         return !(buffer.fence.get() >= 0 && acquire_.get() < 0);
     }
 
+    static int64_t nowUs() {
+        struct timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        return int64_t(t.tv_sec) * 1000000 + t.tv_nsec / 1000;
+    }
+    // Present timing, logged every ~2 s: time blocked on the acquire fence and
+    // in the scanout ioctl, both inside SurfaceFlinger's present call.
+    struct PresentStats {
+        int64_t windowStart = 0, fenceUs = 0, flipUs = 0, maxFenceUs = 0, maxFlipUs = 0;
+        int frames = 0;
+    } stats_;
+    void notePresent(int64_t fenceUs, int64_t flipUs) {
+        const int64_t t = nowUs();
+        if (!stats_.windowStart) stats_.windowStart = t;
+        stats_.frames++;
+        stats_.fenceUs += fenceUs;
+        stats_.flipUs += flipUs;
+        if (fenceUs > stats_.maxFenceUs) stats_.maxFenceUs = fenceUs;
+        if (flipUs > stats_.maxFlipUs) stats_.maxFlipUs = flipUs;
+        if (t - stats_.windowStart >= 2000000) {
+            ALOGI("present: %.1f fps, fence wait avg %lld us (max %lld), flip avg %lld us (max %lld)",
+                  stats_.frames * 1e6 / double(t - stats_.windowStart),
+                  (long long)(stats_.fenceUs / stats_.frames), (long long)stats_.maxFenceUs,
+                  (long long)(stats_.flipUs / stats_.frames), (long long)stats_.maxFlipUs);
+            stats_ = PresentStats{};
+            stats_.windowStart = t;
+        }
+    }
+
     bool present() {
         if ((!virgl_ && !frames_[next_].fb) || !targets_.count(slot_)) return false;
+        const int64_t t0 = nowUs();
         if (acquire_.get() >= 0) {
             struct pollfd fence = {acquire_.get(), POLLIN, 0};
             int ret;
@@ -169,6 +201,7 @@ class KmsDisplay {
             if (ret <= 0 || (fence.revents & (POLLERR | POLLNVAL))) return fail("acquire fence");
             acquire_.set(-1);
         }
+        const int64_t t1 = nowUs();
         const auto& target = targets_.at(slot_);
         if (virgl_) {
             if (!target.gpu_frame) return false;
@@ -180,6 +213,7 @@ class KmsDisplay {
             // CPU mmap would upload stale guest memory over the rendered frame.
             if (ioctl(fd_, DRM_IOCTL_MODE_SETCRTC, &crtc)) return fail("GPU scanout");
             current_gpu_frame_ = target.gpu_frame;
+            notePresent(t1 - t0, nowUs() - t1);
             return true;
         }
         const auto fmt = bufferFormat(target.format);

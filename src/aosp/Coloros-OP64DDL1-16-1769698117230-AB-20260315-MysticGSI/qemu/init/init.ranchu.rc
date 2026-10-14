@@ -4,6 +4,19 @@ on early-init
     # every MediaPlayer call hanging (video wallpaper ANR, blocked input).
     setprop ro.mediaserver.64b.enable true
     setprop ro.hardware ranchu
+    # GPU backend from androidboot.tebox.gpu (HALs read ro.boot.tebox.gpu):
+    # virgl (Mesa) or gfxstream (ANGLE on the gfxstream Vulkan driver; see
+    # src/aosp/<variant>/GPU). The vendor props leave these unset so this is
+    # their only writer.
+    setprop ro.hardware.egl ${ro.boot.hardwareegl:-mesa}
+    setprop ro.opengles.version ${ro.boot.opengles.version:-196609}
+    setprop ro.hardware.gralloc ${ro.boot.hardware.gralloc:-minigbm}
+    setprop ro.hardware.hwcomposer ${ro.boot.hardware.hwcomposer:-drm_minigbm}
+    setprop ro.hardware.vulkan ${ro.boot.hardware.vulkan}
+    # App UI renderer (androidboot.hwui.renderer): gfxstream uses skiavk, as
+    # HWUI on ANGLE's GLES misrenders some backgrounds on CIX Mali; VirGL has
+    # no guest Vulkan: skiagl.
+    setprop debug.hwui.renderer ${ro.boot.hwui.renderer:-skiagl}
     setprop ro.zygote zygote64
     setprop debug.renderengine.backend skiaglthreaded
     setprop ro.vendor.build.version.sdk 36
@@ -116,3 +129,36 @@ on property:sys.boot_completed=1
 on property:sys.boot_completed=1 && property:persist.vendor.tebox.wallpaper=
     exec_background u:r:su:s0 root root -- /system/bin/app_process -Djava.class.path=/vendor/etc/tebox/set-wallpaper.dex /system/bin SetWallpaper
     setprop persist.vendor.tebox.wallpaper image
+
+# Zygote must not preload the Vulkan driver: it keeps /dev/dri/renderD128 open
+# and zygote then aborts forking system_server ("Not allowlisted").
+on early-init && property:ro.boot.hwui.renderer=skiavk
+    setprop ro.zygote.disable_gl_preload true
+
+# Debug builds (androidboot.qemu_debug=1): `setprop debug.tebox.perf 1` lets
+# simpleperf profile the whole system, kernel included: SELinux permissive,
+# perf events and kernel symbols opened up (init has the
+# capabilities a shell or the root console lack).
+on property:debug.tebox.perf=1 && property:ro.boot.qemu_debug=1
+    write /sys/fs/selinux/enforce 0
+    write /proc/sys/kernel/perf_event_paranoid -1
+    write /proc/sys/kernel/kptr_restrict 0
+
+# Debug builds: `setprop debug.tebox.prof 1` runs /data/local/tmp/tebox-prof.sh
+# as root with full capabilities (system-wide simpleperf needs them).
+service tebox_prof /system/bin/sh /data/local/tmp/tebox-prof.sh
+    user root
+    group root
+    seclabel u:r:shell:s0
+    disabled
+    oneshot
+
+on property:debug.tebox.prof=1 && property:ro.boot.qemu_debug=1
+    start tebox_prof
+
+# Let SurfaceFlinger use the display's full refresh rate (androidboot.tebox.
+# refresh_hz, see boot-qemu.sh); Android's smooth-display policy otherwise
+# keeps rendering at 60 Hz.
+on property:sys.boot_completed=1
+    exec_background u:r:shell:s0 shell shell -- /system/bin/settings put system peak_refresh_rate ${ro.boot.tebox.refresh_hz:-60}
+    exec_background u:r:shell:s0 shell shell -- /system/bin/settings put system min_refresh_rate ${ro.boot.tebox.refresh_hz:-60}
