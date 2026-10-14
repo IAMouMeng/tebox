@@ -59,7 +59,8 @@ Android booted or text rendered. For a real guest, check boot completion,
 renderer, display size/density and crash logs using `scripts/qemu-console.py`.
 Report what was actually tested and identify unavailable platforms explicitly.
 Default guest launch is `./run` (lunch menu over `src/aosp/*`, auto-rebuilds
-stale `vendor.img` / `initramfs.img`, kernel from each variant’s `KERNEL`).
+stale `vendor.img` / `initramfs.img`, kernel from each variant’s `KERNEL`, GPU
+backend from its `GPU` file: `gfxstream` (default) or `virgl`).
 
 Project skills live in `.ai/skills/` (`gki-build`, `gki-gsi`, `gki-hal`,
 `gki-ci`); prompts live in `.ai/prompts/`. Tool aliases are under

@@ -57,9 +57,10 @@ if [[ -z "$pick" ]] || [[ "$pick" =~ ^[0-9]+$ ]]; then
   default=1
   for v in "${VARIANTS[@]}"; do
     kid="$(tr -d '[:space:]' < "$ROOT/src/aosp/$v/KERNEL" 2>/dev/null || echo '?')"
+    gpu="$(tr -d '[:space:]' < "$ROOT/src/aosp/$v/GPU" 2>/dev/null || echo gfxstream)"
     mark=
     (( i == default )) && mark=" (default)"
-    printf '     %d. %s%s\n         kernel: %s\n' "$i" "$v" "$mark" "$kid"
+    printf '     %d. %s%s\n         kernel: %s  gpu: %s\n' "$i" "$v" "$mark" "$kid" "$gpu"
     i=$((i + 1))
   done
   echo

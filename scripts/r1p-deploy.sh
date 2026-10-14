@@ -67,6 +67,7 @@ build() {
     "$CONTEXT/scripts/"
   cp "$ROOT/thirdparty/host-drivers/$R1P_DRIVERS"/*.deb "$CONTEXT/host-drivers/"
   cp "$AOSP/KERNEL" "$CONTEXT/runtime-src/aosp/$VARIANT/"
+  [[ ! -f "$AOSP/GPU" ]] || cp "$AOSP/GPU" "$CONTEXT/runtime-src/aosp/$VARIANT/"
   cp "$AOSP/qemu/cmdline/boot" "$CONTEXT/runtime-src/aosp/$VARIANT/qemu/cmdline/"
   docker build --platform linux/arm64 -f "$ROOT/.ci/cix-r1p/Dockerfile" --build-arg APT_MIRROR="$R1P_APT_MIRROR" \
     --build-arg VARIANT="$VARIANT" --build-arg KERNEL_ID="$KID" -t "$R1P_IMAGE" "$CONTEXT"

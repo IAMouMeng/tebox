@@ -166,12 +166,16 @@ if [[ "$FORCE_VIRGL" == 1 ]]; then
   GPU_DEV=virtio-gpu-gl-pci
 fi
 
-# GPU backend: src/aosp/<variant>/GPU says "virgl" or "gfxstream" (default):
-# a variant's vendor HALs support one of them (ColorOS: Mesa/VirGL only, which
-# falls back to softpipe on a gfxstream GPU). FORCE_RUTABAGA=0/1 overrides.
+# GPU backend, like KERNEL: src/aosp/<variant>/GPU holds "gfxstream" (or
+# "gfx"; also the default without the file) or "virgl". FORCE_RUTABAGA=1/0
+# overrides it for one boot.
 if [[ -z "${FORCE_RUTABAGA:-}" ]]; then
-  FORCE_RUTABAGA=1
-  [[ -f "$AOSP/GPU" && "$(tr -d '[:space:]' < "$AOSP/GPU")" == virgl ]] && FORCE_RUTABAGA=0
+  GPU_BACKEND="$(tr -d '[:space:]' < "$AOSP/GPU" 2>/dev/null || echo gfxstream)"
+  case "${GPU_BACKEND:-gfxstream}" in
+    gfxstream|gfx) FORCE_RUTABAGA=1 ;;
+    virgl) FORCE_RUTABAGA=0 ;;
+    *) echo "$AOSP/GPU: unknown backend '$GPU_BACKEND' (use gfxstream or virgl)" >&2; exit 1 ;;
+  esac
 fi
 if [[ "$FORCE_RUTABAGA" == 1 ]]; then
   DEVICES="$("$QEMU_BIN" -device help)"
@@ -191,17 +195,13 @@ if [[ "$FORCE_RUTABAGA" == 1 ]]; then
   APPEND+=(androidboot.tebox.gpu=gfxstream androidboot.hardwareegl=angle
     androidboot.hardware.vulkan=ranchu androidboot.opengles.version=196610
     androidboot.hardware.gltransport=virtio-gpu-asg)
-  # HWUI renderer (HWUI_RENDERER overrides). macOS: skiavk, as HWUI on ANGLE's
-  # GLES misrenders some layers (ColorOS clock dial); HWUI's Vulkan backend
-  # needs two queues, so gfxstream adds a virtual one (MoltenVK has one).
-  # Linux (CIX Mali): skiagl for now -- skiavk there hit GPU page faults
-  # (device lost) under load; ANGLE's GLES leaves the launcher scrim
-  # transparent instead.
+  # HWUI renders with Vulkan (skiavk; HWUI_RENDERER=skiagl overrides): HWUI on
+  # ANGLE's GLES misrenders some layers (CIX Mali: launcher scrim drawn
+  # transparent; macOS: ColorOS clock dial). HWUI's Vulkan backend needs two
+  # queues, so on macOS (MoltenVK has one) gfxstream adds a virtual one.
+  APPEND+=(androidboot.hwui.renderer="${HWUI_RENDERER:-skiavk}")
   if [[ "$HOST_OS" == darwin ]]; then
-    APPEND+=(androidboot.hwui.renderer="${HWUI_RENDERER:-skiavk}")
     export GFXSTREAM_RENDERER_FEATURES="${GFXSTREAM_RENDERER_FEATURES:-VulkanVirtualQueue:enabled}"
-  elif [[ -n "${HWUI_RENDERER:-}" ]]; then
-    APPEND+=(androidboot.hwui.renderer="$HWUI_RENDERER")
   fi
   # Linux (R1P): zero-copy display. gfxstream keeps ColorBuffers linear and
   # exports them as dma-bufs that the GL display (egl-headless) imports, so
