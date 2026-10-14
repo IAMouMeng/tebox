@@ -63,7 +63,6 @@ build() {
   (cd "$ROOT/src/service/api" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$CONTEXT/tebox-api" ./cmd/tebox-api)
   rsync -a --delete "$ROOT/prebuilts/android-arm64/scrcpy/" "$CONTEXT/scrcpy/"
   cp "$ROOT"/.ci/{build-libepoxy.sh,build-virglrenderer.sh,build-qemu.sh,build-rutabaga.sh,requirements.txt} "$CONTEXT/.ci/"
-  rsync -a --delete "$ROOT/.ci/patches" "$CONTEXT/.ci/"
   cp "$ROOT"/scripts/{env.sh,boot-qemu.sh,check-runtime-inputs.py,cix-mali-env.sh,cix-r1p-start.sh} \
     "$CONTEXT/scripts/"
   cp "$ROOT/thirdparty/host-drivers/$R1P_DRIVERS"/*.deb "$CONTEXT/host-drivers/"
