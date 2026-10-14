@@ -33,18 +33,27 @@ keys (Home, Back, volume, power) come from `SendKey` or the cast viewer below.
 Start the API process separately with `TEBOX_ROOT="$PWD" ./out/service/tebox-api`.
 The Wails client connects to `TEBOX_API_ADDR` (default `127.0.0.1:50051`).
 The gRPC API is defined in [`api/api/v1/tebox.proto`](api/api/v1/tebox.proto).
-The API also exposes one cast endpoint (default `127.0.0.1:9901`). A cast
-client selects the Android instance immediately after connecting by sending
-`TEBOX-CAST/1 <instance-id>\n`; the remaining bytes use the existing encoded
-cast stream format from [`cast/include/cast/protocol.h`](cast/include/cast/protocol.h).
-Set `TEBOX_CAST_ADDR` or `--cast-listen` to change that endpoint.
+The API exposes three TCP endpoints. A client selects the Android instance
+immediately after connecting by sending one handshake line; the remaining bytes
+use the encoded cast record format from
+[`cast/include/cast/protocol.h`](cast/include/cast/protocol.h)
+(`[u32 len][u8 codec][u8 flags][u64 pts][payload]`) or, for input, JSON lines:
+
+| Endpoint (default, flag / env) | Handshake | Server → client | Client → server |
+|---|---|---|---|
+| video `127.0.0.1:9901` (`--cast-listen` / `TEBOX_CAST_ADDR`) | `TEBOX-CAST/1 <id>` | H.264 records only | nothing (ignored) |
+| audio `127.0.0.1:9904` (`--audio-listen` / `TEBOX_AUDIO_ADDR`) | `TEBOX-AUDIO/1 <id>` | AAC records only | microphone PCM records |
+| control `127.0.0.1:9905` (`--control-listen` / `TEBOX_CONTROL_ADDR`) | `TEBOX-CTRL/1 <id>` | input replies, clipboard | input JSON lines |
+| control (same port) | `TEBOX-CAMERA/1 <id>` | nothing | camera JPEG records |
+| control, UDP (same number) | none; each datagram names `"id"` | errors, clipboard | input JSON datagrams |
+
+The video endpoint never accepts input or uplink data.
 `Instance.cast_port` reports the per-instance `tebox-cast` port while it runs.
 Up to 16 viewers can watch one instance at once. Each viewer receives a
 keyframe as soon as it connects. A viewer that falls about 4 MB behind is
 dropped, so it can never stall the others.
 
-The same connection carries guest audio and the viewer's camera and
-microphone (codec values in `protocol.h`):
+Record codecs (values in `protocol.h`):
 
 | Direction | codec | Payload |
 |---|---|---|
@@ -53,8 +62,9 @@ microphone (codec values in `protocol.h`):
 | viewer → server | 32 | camera frame, one JPEG of any size (scaled and centre-cropped to 1280×720) |
 | viewer → server | 33 | microphone, PCM s16le 48 kHz mono, ~10–20 ms per record |
 
-Viewers send upstream records in the same `[u32 len][u8 codec][u8 flags][u64 pts][payload]`
-framing after the handshake line. Any viewer can feed the camera or microphone;
+Clients send upstream records in the same framing after the handshake line
+(microphone on the audio endpoint, camera on the control endpoint); records of
+any other codec are dropped. Any client can feed the camera or microphone;
 the latest frame wins. Without camera frames the guest camera shows a moving
 test pattern; without microphone data it records silence.
 
@@ -69,7 +79,9 @@ so input never holds the lifecycle QMP socket:
 - `Instance.control_port`: plain TCP on 127.0.0.1. The server greets with
   `{"ok":true}`, then reads one JSON object per line and answers only on
   errors (`{"ok":false,"error":...}`).
-- `TEBOX-CTRL/1 <instance-id>\n` on the cast endpoint, then the same lines.
+- `TEBOX-CTRL/1 <instance-id>\n` on the control endpoint (9905), then the same lines.
+- UDP datagrams to the control port number (9905), each event naming its
+  instance with `"id"` (plus an increasing `"seq"`).
 - gRPC `SendInput` (one event) and `StreamInput` (client stream for gestures).
 
 One JSON object per line:
@@ -105,6 +117,12 @@ sync both ways while the window is open.
 again as a factory reset. The server binds to loopback by default; set
 `TEBOX_GRPC_ADDR` or `--listen` explicitly when exposing it to another process.
 
+`CreateInstance` takes optional `system_image`, `vendor_image` and
+`initramfs_image`: absolute paths on the API host (empty = the variant's images
+under `src/aosp/<variant>/images/`). They are stored with the instance and passed
+to `./run` as `SYSTEM_IMG` / `VENDOR_IMG` / `INITRD_IMG`; system and vendor stay
+read-only, so instances can share them.
+
 Artifacts use only the project FFmpeg under `out/cast-ffmpeg` /
 `prebuilts/host/<os-arch>/ffmpeg` (no system Homebrew `ffmpeg` required).
 
@@ -113,5 +131,5 @@ Artifacts use only the project FFmpeg under `out/cast-ffmpeg` /
 ```bash
 ./out/service/tebox-cast --capture-sock "$SOCK" --codec h264 --listen 127.0.0.1:9901 &
 TEBOX_CAST=1 TEBOX_CAST_SOCK="$SOCK" TEBOX_ROOT="$PWD" ./run
-./out/service/tebox-cast-view --port 9901   # bare tebox-cast port, view only
+./out/service/tebox-cast-view --port 9901   # bare tebox-cast port: video + audio on one socket
 ```

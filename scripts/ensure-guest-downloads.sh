@@ -75,7 +75,10 @@ download_if_needed() {
   echo "$label downloaded to $dest"
 }
 
-if [[ "$VARIANT" != "$LOCK_VARIANT" ]]; then
+if [[ "${GUEST_SKIP_SYSTEM:-0}" == 1 ]]; then
+  # The caller boots its own system.img (SYSTEM_IMG); only the kernel is needed.
+  :
+elif [[ "$VARIANT" != "$LOCK_VARIANT" ]]; then
   # Other variants (e.g. a third-party GSI on its own branch) pin their GSI
   # in their own directory: images/system.url plus the system.img line of
   # images/sha256sum.txt. Without a pin they bring their own system.img.

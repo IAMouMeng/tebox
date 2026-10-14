@@ -1,18 +1,15 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -43,6 +40,8 @@ func (s *server) CreateInstance(_ context.Context, req *api.CreateInstanceReques
 	item, err := s.mgr.Create(tebox.CreateOptions{
 		Name: req.GetName(), CPUCores: int(req.GetCpuCores()),
 		MemoryMB: int(req.GetMemoryMb()), DiskMB: int(req.GetDiskMb()),
+		SystemImage: req.GetSystemImage(), VendorImage: req.GetVendorImage(),
+		InitramfsImage: req.GetInitramfsImage(), InstanceDir: req.GetInstanceDir(),
 	})
 	if err != nil {
 		if errors.Is(err, tebox.ErrInvalidOptions) {
@@ -179,7 +178,9 @@ func instanceMessage(item tebox.Instance) *api.Instance {
 		CastPort: int32(item.CastPort), ControlPort: int32(item.ControlPort),
 		CpuCores: int32(item.CPUCores), MemoryMb: int32(item.MemoryMB),
 		DiskMb: int32(item.DiskMB), DiskUsedMb: int32(item.DiskUsedMB),
-		State: instanceState(item.State),
+		State:       instanceState(item.State),
+		SystemImage: item.SystemImage, VendorImage: item.VendorImage,
+		InitramfsImage: item.InitramfsImage,
 		Profile: &api.DeviceProfile{
 			Latitude: item.Profile.Latitude, Longitude: item.Profile.Longitude,
 			Country: item.Profile.Country, OperatorNumeric: item.Profile.OperatorNumeric,
@@ -204,17 +205,21 @@ func instanceState(state string) api.InstanceState {
 }
 
 func internalError(err error) error {
-	if errors.Is(err, os.ErrNotExist) {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, tebox.ErrInvalidOptions):
+		return status.Error(codes.InvalidArgument, err.Error())
 	}
 	return status.Error(codes.Internal, err.Error())
 }
 
 func main() {
 	addr := flag.String("listen", getenv("TEBOX_GRPC_ADDR", "127.0.0.1:50051"), "gRPC listen address")
-	castAddr := flag.String("cast-listen", getenv("TEBOX_CAST_ADDR", "127.0.0.1:9901"), "multiplexed cast listen address")
+	castAddr := flag.String("cast-listen", getenv("TEBOX_CAST_ADDR", "127.0.0.1:9901"), "video listen address (TEBOX-CAST/1)")
+	audioAddr := flag.String("audio-listen", getenv("TEBOX_AUDIO_ADDR", "127.0.0.1:9904"), "audio + microphone listen address (TEBOX-AUDIO/1)")
+	controlAddr := flag.String("control-listen", getenv("TEBOX_CONTROL_ADDR", "127.0.0.1:9905"), "control address: TCP input + camera (TEBOX-CTRL/1, TEBOX-CAMERA/1) and UDP input datagrams")
 	autostart := flag.String("start", getenv("TEBOX_AUTOSTART", ""), "comma-separated instance ids to start once serving")
-	inputAddr := flag.String("input-udp", getenv("TEBOX_INPUT_UDP_ADDR", "127.0.0.1:9903"), "shared UDP input address (events carry id/ids)")
 	flag.Parse()
 	root, err := tebox.ResolveProjectRoot()
 	if err != nil {
@@ -232,12 +237,19 @@ func main() {
 	api.RegisterAndroidServiceServer(grpcServer, &server{mgr: mgr})
 	// Lets grpcurl and other tools discover the service without tebox.proto.
 	reflection.Register(grpcServer)
-	castListener, err := net.Listen("tcp", *castAddr)
-	if err != nil {
-		fatal(err)
+	for _, ep := range []struct {
+		addr   string
+		handle func(net.Conn, *tebox.Manager)
+	}{{*castAddr, handleCast}, {*audioAddr, handleAudio}, {*controlAddr, handleControlConn}} {
+		listener, err := net.Listen("tcp", ep.addr)
+		if err != nil {
+			fatal(err)
+		}
+		handle := ep.handle
+		go serve(listener, func(conn net.Conn) { handle(conn, mgr) })
 	}
-	go serveCast(castListener, mgr)
-	if err := mgr.ServeInputUDP(*inputAddr); err != nil {
+	// UDP input shares the control port number (events carry "id").
+	if err := mgr.ServeInputUDP(*controlAddr); err != nil {
 		fatal(err)
 	}
 
@@ -255,54 +267,11 @@ func main() {
 		grpcServer.GracefulStop()
 		mgr.ShutdownRunning()
 	}()
-	fmt.Printf("tebox gRPC listening on %s, cast %s, input udp %s (root=%s, data=%s)\n",
-		*addr, *castAddr, *inputAddr, root, mgr.DataRoot)
+	fmt.Printf("tebox gRPC listening on %s, video %s, audio %s, control tcp+udp %s (root=%s, data=%s)\n",
+		*addr, *castAddr, *audioAddr, *controlAddr, root, mgr.DataRoot)
 	if err := grpcServer.Serve(listener); err != nil && ctx.Err() == nil {
 		fatal(err)
 	}
-}
-
-func serveCast(listener net.Listener, mgr *tebox.Manager) {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		go handleCast(conn, mgr)
-	}
-}
-
-func handleCast(conn net.Conn, mgr *tebox.Manager) {
-	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	reader := bufio.NewReader(conn)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return
-	}
-	parts := strings.Fields(strings.TrimSpace(line))
-	if len(parts) == 2 && parts[0] == "TEBOX-CTRL/1" {
-		_ = conn.SetReadDeadline(time.Time{})
-		handleControl(conn, reader, mgr, parts[1])
-		return
-	}
-	if len(parts) != 2 || parts[0] != "TEBOX-CAST/1" {
-		return
-	}
-	port, err := mgr.CastPort(parts[1])
-	if err != nil {
-		return
-	}
-	backend, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
-	if err != nil {
-		return
-	}
-	defer backend.Close()
-	_ = conn.SetReadDeadline(time.Time{})
-	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(conn, backend); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(backend, conn); done <- struct{}{} }()
-	<-done
 }
 
 func getenv(key, fallback string) string {

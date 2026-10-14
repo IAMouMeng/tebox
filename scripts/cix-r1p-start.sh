@@ -6,8 +6,8 @@
 #   $TEBOX/src/kernel/$KERNEL_ID/gki Image (ro)
 #   /data                            instances (userdata, QMP, cast sockets)
 #
-# tebox-api manages the instances and serves gRPC (50051), cast (9901) and
-# UDP input (9903) on the LAN. R1P_INSTANCE is created on first start and
+# tebox-api manages the instances and serves gRPC (50051), video (9901),
+# audio (9904) and control (9905, TCP + UDP input) on the LAN. R1P_INSTANCE is created on first start and
 # started automatically; TEBOX_DIRECT=1 boots it with boot-qemu.sh alone.
 set -euo pipefail
 TEBOX="${TEBOX:-/opt/tebox}"
@@ -48,5 +48,6 @@ export TEBOX_ROOT="$TEBOX" TEBOX_DATA_DIR=/data TEBOX_VARIANT="$VARIANT"
 exec "$TEBOX/bin/tebox-api" \
   --listen "${TEBOX_GRPC_ADDR:-0.0.0.0:50051}" \
   --cast-listen "${TEBOX_CAST_ADDR:-0.0.0.0:9901}" \
-  --input-udp "${TEBOX_INPUT_UDP_ADDR:-0.0.0.0:9903}" \
+  --audio-listen "${TEBOX_AUDIO_ADDR:-0.0.0.0:9904}" \
+  --control-listen "${TEBOX_CONTROL_ADDR:-0.0.0.0:9905}" \
   --start "${TEBOX_AUTOSTART:-$ID}"

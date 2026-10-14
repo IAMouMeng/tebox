@@ -8,6 +8,7 @@
 #   VARIANT=... ./run
 #
 # Env (optional): FORCE_VIRGL SNAPSHOT QEMU_DEBUG QEMU MEM SMP GRAPHIC
+#   SYSTEM_IMG VENDOR_IMG INITRD_IMG (use these images instead of the variant's)
 #   TEBOX_CAST TEBOX_CAST_SOCK TEBOX_CAST_FPS (host cast → host/cast/) ...
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -97,6 +98,13 @@ fi
 export VARIANT="$pick"
 echo "==> lunch $VARIANT"
 
-bash "$ROOT/scripts/ensure-guest-downloads.sh" "$VARIANT"
-bash "$ROOT/scripts/ensure-runtime-imgs.sh" "$VARIANT"
+# SYSTEM_IMG / VENDOR_IMG / INITRD_IMG replace the variant's images. The
+# variant's own images are fetched and built only while one of them is used
+# (the default vendor.img is built from the variant's system.img).
+if [[ -n "${SYSTEM_IMG:-}" && -n "${VENDOR_IMG:-}" && -n "${INITRD_IMG:-}" ]]; then
+  GUEST_SKIP_SYSTEM=1 bash "$ROOT/scripts/ensure-guest-downloads.sh" "$VARIANT"
+else
+  bash "$ROOT/scripts/ensure-guest-downloads.sh" "$VARIANT"
+  bash "$ROOT/scripts/ensure-runtime-imgs.sh" "$VARIANT"
+fi
 exec bash "$ROOT/scripts/boot-qemu.sh" "$VARIANT"

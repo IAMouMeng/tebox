@@ -11,9 +11,11 @@ AOSP="$ROOT/src/aosp/$VARIANT"
 KID="$(tr -d '[:space:]' < "$AOSP/KERNEL")"
 K="$ROOT/src/kernel/$KID"
 KERNEL="$K/gki/Image"
-SYSTEM="$AOSP/images/system.img"
-VENDOR="$AOSP/images/vendor.img"
-INITRD="$AOSP/images/initramfs.img"
+# SYSTEM_IMG / VENDOR_IMG / INITRD_IMG point an instance at its own images
+# (tebox-api CreateInstance); the variant's images are the default.
+SYSTEM="${SYSTEM_IMG:-$AOSP/images/system.img}"
+VENDOR="${VENDOR_IMG:-$AOSP/images/vendor.img}"
+INITRD="${INITRD_IMG:-$AOSP/images/initramfs.img}"
 WORKDIR="$ROOT/out/test-$VARIANT"
 # The service client gives every Android instance its own userdata, QMP and
 # debug sockets.  Keep the legacy per-variant directory when no instance was

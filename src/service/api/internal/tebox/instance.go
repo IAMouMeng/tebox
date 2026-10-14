@@ -35,6 +35,15 @@ type Instance struct {
 	// State is stopped, starting (QEMU up, Android booting), running
 	// (sys.boot_completed) or stopping.
 	State string `json:"state"`
+	// Images set at creation; empty means the variant's own image.
+	SystemImage    string `json:"systemImage,omitempty"`
+	VendorImage    string `json:"vendorImage,omitempty"`
+	InitramfsImage string `json:"initramfsImage,omitempty"`
+	// RunDir is the instance directory chosen at creation (empty: the
+	// default under the data root, which always holds instance.json).
+	RunDir string `json:"runDir,omitempty"`
+
+	metaDir string // data root entry holding instance.json
 }
 
 // CreateOptions sizes a new instance; zero fields take the defaults.
@@ -43,6 +52,14 @@ type CreateOptions struct {
 	CPUCores int
 	MemoryMB int
 	DiskMB   int
+	// Absolute image paths; empty takes the variant's image.
+	SystemImage    string
+	VendorImage    string
+	InitramfsImage string
+	// InstanceDir holds userdata.img and sockets; empty takes
+	// <data root>/instances/<id>. It must be absent or empty, and Delete
+	// removes it.
+	InstanceDir string
 }
 
 type DeviceProfile struct {
@@ -176,7 +193,7 @@ func (m *Manager) List() ([]Instance, error) {
 		}
 		item.CastPort = m.castPorts[item.ID]
 		item.ControlPort = m.input.port(item.ID)
-		out = append(out, item)
+		out = append(out, m.withImages(item))
 	}
 	return out, nil
 }
@@ -195,23 +212,83 @@ func (m *Manager) Create(opts CreateOptions) (Instance, error) {
 		MemoryMB: opts.MemoryMB,
 		DiskMB:   opts.DiskMB,
 		State:    StateStopped,
+
+		SystemImage:    opts.SystemImage,
+		VendorImage:    opts.VendorImage,
+		InitramfsImage: opts.InitramfsImage,
+		RunDir:         opts.InstanceDir,
 	}
 	if opts.Name != "" {
 		item.Name = opts.Name
 	}
-	item.Dir = filepath.Join(m.instancesDir(), item.ID)
+	item.metaDir = filepath.Join(m.instancesDir(), item.ID)
+	item.Dir = item.metaDir
+	if item.RunDir != "" {
+		item.Dir = item.RunDir
+	}
 	port, err := m.allocateAdbPort(item.ID)
 	if err != nil {
 		return Instance{}, err
 	}
 	item.AdbPort = port
-	if err := os.MkdirAll(item.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(item.metaDir, 0o755); err != nil {
 		return Instance{}, err
+	}
+	if err := os.MkdirAll(item.Dir, 0o755); err != nil {
+		_ = os.RemoveAll(item.metaDir)
+		return Instance{}, err
+	}
+	if item.RunDir != "" {
+		// Claims the directory: it is no longer empty for another
+		// CreateInstance, and Delete checks it before removing anything.
+		if err := os.WriteFile(filepath.Join(item.Dir, runDirMarker), []byte(item.ID+"\n"), 0o644); err != nil {
+			_ = os.RemoveAll(item.metaDir)
+			return Instance{}, err
+		}
 	}
 	if err := writeMetadata(item); err != nil {
 		return Instance{}, err
 	}
-	return item, nil
+	return m.withImages(item), nil
+}
+
+// runDirMarker names the owning instance inside a chosen instance_dir.
+const runDirMarker = ".tebox-instance"
+
+// withImages fills the image paths the instance boots, defaulting to the
+// variant's images.
+func (m *Manager) withImages(item Instance) Instance {
+	images := filepath.Join(m.ProjectRoot, "src", "aosp", item.Variant, "images")
+	if item.SystemImage == "" {
+		item.SystemImage = filepath.Join(images, "system.img")
+	}
+	if item.VendorImage == "" {
+		item.VendorImage = filepath.Join(images, "vendor.img")
+	}
+	if item.InitramfsImage == "" {
+		item.InitramfsImage = filepath.Join(images, "initramfs.img")
+	}
+	return item
+}
+
+// imageEnv passes the instance's own images to ./run, after checking they
+// are still there.
+func imageEnv(item Instance) ([]string, error) {
+	var env []string
+	for _, img := range []struct{ key, path string }{
+		{"SYSTEM_IMG", item.SystemImage},
+		{"VENDOR_IMG", item.VendorImage},
+		{"INITRD_IMG", item.InitramfsImage},
+	} {
+		if img.path == "" {
+			continue
+		}
+		if err := checkImage(img.path); err != nil {
+			return nil, err
+		}
+		env = append(env, img.key+"="+img.path)
+	}
+	return env, nil
 }
 
 func (m *Manager) Delete(id string) error {
@@ -232,7 +309,16 @@ func (m *Manager) Delete(id string) error {
 		delete(m.castPorts, id)
 	}
 	m.input.stop(id)
-	return os.RemoveAll(item.Dir)
+	if item.Dir != item.metaDir {
+		owner, _ := os.ReadFile(filepath.Join(item.Dir, runDirMarker))
+		if strings.TrimSpace(string(owner)) != item.ID {
+			return fmt.Errorf("instance %s: %s is not marked as its directory; not removing it", id, item.Dir)
+		}
+		if err := os.RemoveAll(item.Dir); err != nil {
+			return err
+		}
+	}
+	return os.RemoveAll(item.metaDir)
 }
 
 func (m *Manager) Start(id string) error {
@@ -243,6 +329,10 @@ func (m *Manager) Start(id string) error {
 		return nil
 	}
 	item, err := m.readMetadata(filepath.Join(m.instancesDir(), id))
+	if err != nil {
+		return err
+	}
+	images, err := imageEnv(item)
 	if err != nil {
 		return err
 	}
@@ -278,6 +368,7 @@ func (m *Manager) Start(id string) error {
 		"TEBOX_CAST=1",
 		"TEBOX_CAST_SOCK="+filepath.Join(item.Dir, "cast.sock"),
 	)
+	cmd.Env = append(cmd.Env, images...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	delete(m.castFails, id)
@@ -323,8 +414,9 @@ func (m *Manager) Stop(id string) error {
 		return nil
 	}
 	m.stopping[id] = true
-	path := filepath.Join(m.instancesDir(), id, "qmp.sock")
-	_ = PowerDown(path)
+	if path, err := m.QMPPath(id); err == nil {
+		_ = PowerDown(path)
+	}
 	_ = cmd.Process.Signal(os.Interrupt)
 	return nil
 }
@@ -396,29 +488,8 @@ func (m *Manager) CastPort(id string) (int, error) {
 // instance userdata image on the next boot, which provides a factory reset.
 func (m *Manager) Reset(id string, wipeData bool) error {
 	if wipeData {
-		m.mu.Lock()
-		cmd := m.procs[id]
-		m.mu.Unlock()
-		if cmd != nil && cmd.Process != nil {
-			if err := m.Stop(id); err != nil {
-				return err
-			}
-			deadline := time.Now().Add(5 * time.Second)
-			for time.Now().Before(deadline) {
-				m.mu.Lock()
-				stopped := m.procs[id] == nil
-				m.mu.Unlock()
-				if stopped {
-					break
-				}
-				time.Sleep(50 * time.Millisecond)
-			}
-			m.mu.Lock()
-			stillRunning := m.procs[id] != nil
-			m.mu.Unlock()
-			if stillRunning {
-				return fmt.Errorf("instance %s did not stop before factory reset", id)
-			}
+		if _, err := m.stopAndWait(id, "factory reset"); err != nil {
+			return err
 		}
 		item, err := m.readMetadata(filepath.Join(m.instancesDir(), id))
 		if err != nil {
@@ -447,6 +518,31 @@ func (m *Manager) Reset(id string, wipeData bool) error {
 	}
 	m.mu.Unlock()
 	return nil
+}
+
+// stopAndWait stops a running instance and waits for QEMU to exit; it
+// reports whether the instance was running.
+func (m *Manager) stopAndWait(id, why string) (bool, error) {
+	m.mu.Lock()
+	cmd := m.procs[id]
+	m.mu.Unlock()
+	if cmd == nil || cmd.Process == nil {
+		return false, nil
+	}
+	if err := m.Stop(id); err != nil {
+		return true, err
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		stopped := m.procs[id] == nil
+		m.mu.Unlock()
+		if stopped {
+			return true, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return true, fmt.Errorf("instance %s did not stop before %s", id, why)
 }
 
 // Configure applies instance-specific guest identity/location values over ADB.
@@ -523,8 +619,9 @@ func (m *Manager) ShutdownRunning() {
 		if cmd == nil || cmd.Process == nil {
 			continue
 		}
-		path := filepath.Join(m.instancesDir(), id, "qmp.sock")
-		_ = PowerDown(path)
+		if path, err := m.QMPPath(id); err == nil {
+			_ = PowerDown(path)
+		}
 	}
 	for id, cmd := range m.castProcs {
 		if cmd != nil && cmd.Process != nil {
@@ -555,7 +652,10 @@ func (m *Manager) readMetadata(dir string) (Instance, error) {
 	if err := json.Unmarshal(data, &item); err != nil {
 		return Instance{}, err
 	}
-	item.Dir = dir
+	item.metaDir, item.Dir = dir, dir
+	if item.RunDir != "" {
+		item.Dir = item.RunDir
+	}
 	if item.ID == "" || item.Variant == "" {
 		return Instance{}, fmt.Errorf("invalid metadata")
 	}
@@ -573,11 +673,17 @@ func writeMetadata(item Instance) error {
 		CPUCores int           `json:"cpuCores"`
 		MemoryMB int           `json:"memoryMb"`
 		DiskMB   int           `json:"diskMb"`
-	}{item.ID, item.Name, item.Variant, item.AdbPort, item.Profile, item.CPUCores, item.MemoryMB, item.DiskMB})
+
+		SystemImage    string `json:"systemImage,omitempty"`
+		VendorImage    string `json:"vendorImage,omitempty"`
+		InitramfsImage string `json:"initramfsImage,omitempty"`
+		RunDir         string `json:"runDir,omitempty"`
+	}{item.ID, item.Name, item.Variant, item.AdbPort, item.Profile, item.CPUCores, item.MemoryMB, item.DiskMB,
+		item.SystemImage, item.VendorImage, item.InitramfsImage, item.RunDir})
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(item.Dir, "instance.json"), append(data, '\n'), 0o644)
+	return os.WriteFile(filepath.Join(item.metaDir, "instance.json"), append(data, '\n'), 0o644)
 }
 
 func (m *Manager) allocateAdbPort(skipID string) (int, error) {

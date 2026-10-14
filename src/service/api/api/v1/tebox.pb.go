@@ -250,12 +250,22 @@ func (*ListInstancesRequest) Descriptor() ([]byte, []int) {
 }
 
 // Zero fields take the defaults: 4 cores, 4096 MB memory, 8192 MB disk.
+// Empty image paths take the variant's images under src/aosp/<variant>/images.
 type CreateInstanceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	CpuCores      int32                  `protobuf:"varint,2,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"` // 1..host cores
-	MemoryMb      int32                  `protobuf:"varint,3,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"` // 1024..65536
-	DiskMb        int32                  `protobuf:"varint,4,opt,name=disk_mb,json=diskMb,proto3" json:"disk_mb,omitempty"`       // userdata size, 1024..1048576
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Name     string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	CpuCores int32                  `protobuf:"varint,2,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"` // 1..host cores
+	MemoryMb int32                  `protobuf:"varint,3,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"` // 1024..65536
+	DiskMb   int32                  `protobuf:"varint,4,opt,name=disk_mb,json=diskMb,proto3" json:"disk_mb,omitempty"`       // userdata size, 1024..1048576
+	// Absolute paths on the API host. QEMU opens system and vendor read-only,
+	// so instances can share them.
+	SystemImage    string `protobuf:"bytes,5,opt,name=system_image,json=systemImage,proto3" json:"system_image,omitempty"`          // ext4 system.img
+	VendorImage    string `protobuf:"bytes,6,opt,name=vendor_image,json=vendorImage,proto3" json:"vendor_image,omitempty"`          // ext4 vendor.img
+	InitramfsImage string `protobuf:"bytes,7,opt,name=initramfs_image,json=initramfsImage,proto3" json:"initramfs_image,omitempty"` // gzip cpio initramfs.img
+	// Instance directory on the API host: userdata.img, QMP/cast
+	// sockets. Absolute, absent or empty, at most 88 bytes (Unix socket
+	// paths); removed by DeleteInstance. Empty: <data root>/instances/<id>.
+	InstanceDir   string `protobuf:"bytes,8,opt,name=instance_dir,json=instanceDir,proto3" json:"instance_dir,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -316,6 +326,34 @@ func (x *CreateInstanceRequest) GetDiskMb() int32 {
 		return x.DiskMb
 	}
 	return 0
+}
+
+func (x *CreateInstanceRequest) GetSystemImage() string {
+	if x != nil {
+		return x.SystemImage
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetVendorImage() string {
+	if x != nil {
+		return x.VendorImage
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetInitramfsImage() string {
+	if x != nil {
+		return x.InitramfsImage
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetInstanceDir() string {
+	if x != nil {
+		return x.InstanceDir
+	}
+	return ""
 }
 
 type InstanceRequest struct {
@@ -567,7 +605,7 @@ type Instance struct {
 	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Name     string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Variant  string                 `protobuf:"bytes,3,opt,name=variant,proto3" json:"variant,omitempty"`
-	Dir      string                 `protobuf:"bytes,4,opt,name=dir,proto3" json:"dir,omitempty"`
+	Dir      string                 `protobuf:"bytes,4,opt,name=dir,proto3" json:"dir,omitempty"` // instance directory (userdata, sockets)
 	AdbPort  int32                  `protobuf:"varint,5,opt,name=adb_port,json=adbPort,proto3" json:"adb_port,omitempty"`
 	Pid      int32                  `protobuf:"varint,6,opt,name=pid,proto3" json:"pid,omitempty"`
 	Running  bool                   `protobuf:"varint,7,opt,name=running,proto3" json:"running,omitempty"`
@@ -575,14 +613,18 @@ type Instance struct {
 	CastPort int32                  `protobuf:"varint,9,opt,name=cast_port,json=castPort,proto3" json:"cast_port,omitempty"`
 	// Input port while running, TCP and UDP on the same number: JSON lines such
 	// as {"type":"touch","action":"down","x":0.5,"y":0.25} (see README).
-	ControlPort   int32         `protobuf:"varint,10,opt,name=control_port,json=controlPort,proto3" json:"control_port,omitempty"`
-	CpuCores      int32         `protobuf:"varint,11,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
-	MemoryMb      int32         `protobuf:"varint,12,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
-	DiskMb        int32         `protobuf:"varint,13,opt,name=disk_mb,json=diskMb,proto3" json:"disk_mb,omitempty"`               // userdata size
-	DiskUsedMb    int32         `protobuf:"varint,14,opt,name=disk_used_mb,json=diskUsedMb,proto3" json:"disk_used_mb,omitempty"` // host space userdata.img occupies
-	State         InstanceState `protobuf:"varint,15,opt,name=state,proto3,enum=tebox.v1.InstanceState" json:"state,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ControlPort int32         `protobuf:"varint,10,opt,name=control_port,json=controlPort,proto3" json:"control_port,omitempty"`
+	CpuCores    int32         `protobuf:"varint,11,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
+	MemoryMb    int32         `protobuf:"varint,12,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
+	DiskMb      int32         `protobuf:"varint,13,opt,name=disk_mb,json=diskMb,proto3" json:"disk_mb,omitempty"`               // userdata size
+	DiskUsedMb  int32         `protobuf:"varint,14,opt,name=disk_used_mb,json=diskUsedMb,proto3" json:"disk_used_mb,omitempty"` // host space userdata.img occupies
+	State       InstanceState `protobuf:"varint,15,opt,name=state,proto3,enum=tebox.v1.InstanceState" json:"state,omitempty"`
+	// Images the instance boots (the variant's unless set at creation).
+	SystemImage    string `protobuf:"bytes,16,opt,name=system_image,json=systemImage,proto3" json:"system_image,omitempty"`
+	VendorImage    string `protobuf:"bytes,17,opt,name=vendor_image,json=vendorImage,proto3" json:"vendor_image,omitempty"`
+	InitramfsImage string `protobuf:"bytes,18,opt,name=initramfs_image,json=initramfsImage,proto3" json:"initramfs_image,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Instance) Reset() {
@@ -718,6 +760,27 @@ func (x *Instance) GetState() InstanceState {
 		return x.State
 	}
 	return InstanceState_INSTANCE_STATE_UNSPECIFIED
+}
+
+func (x *Instance) GetSystemImage() string {
+	if x != nil {
+		return x.SystemImage
+	}
+	return ""
+}
+
+func (x *Instance) GetVendorImage() string {
+	if x != nil {
+		return x.VendorImage
+	}
+	return ""
+}
+
+func (x *Instance) GetInitramfsImage() string {
+	if x != nil {
+		return x.InitramfsImage
+	}
+	return ""
 }
 
 type DeviceProfile struct {
@@ -1232,12 +1295,16 @@ const file_tebox_proto_rawDesc = "" +
 	"\n" +
 	"\vtebox.proto\x12\btebox.v1\"\a\n" +
 	"\x05Empty\"\x16\n" +
-	"\x14ListInstancesRequest\"~\n" +
+	"\x14ListInstancesRequest\"\x90\x02\n" +
 	"\x15CreateInstanceRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1b\n" +
 	"\tcpu_cores\x18\x02 \x01(\x05R\bcpuCores\x12\x1b\n" +
 	"\tmemory_mb\x18\x03 \x01(\x05R\bmemoryMb\x12\x17\n" +
-	"\adisk_mb\x18\x04 \x01(\x05R\x06diskMb\"!\n" +
+	"\adisk_mb\x18\x04 \x01(\x05R\x06diskMb\x12!\n" +
+	"\fsystem_image\x18\x05 \x01(\tR\vsystemImage\x12!\n" +
+	"\fvendor_image\x18\x06 \x01(\tR\vvendorImage\x12'\n" +
+	"\x0finitramfs_image\x18\a \x01(\tR\x0einitramfsImage\x12!\n" +
+	"\finstance_dir\x18\b \x01(\tR\vinstanceDir\"!\n" +
 	"\x0fInstanceRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"C\n" +
 	"\x14ResetInstanceRequest\x12\x0e\n" +
@@ -1251,7 +1318,7 @@ const file_tebox_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\"I\n" +
 	"\x15ListInstancesResponse\x120\n" +
-	"\tinstances\x18\x01 \x03(\v2\x12.tebox.v1.InstanceR\tinstances\"\xb8\x03\n" +
+	"\tinstances\x18\x01 \x03(\v2\x12.tebox.v1.InstanceR\tinstances\"\xa7\x04\n" +
 	"\bInstance\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -1269,7 +1336,10 @@ const file_tebox_proto_rawDesc = "" +
 	"\adisk_mb\x18\r \x01(\x05R\x06diskMb\x12 \n" +
 	"\fdisk_used_mb\x18\x0e \x01(\x05R\n" +
 	"diskUsedMb\x12-\n" +
-	"\x05state\x18\x0f \x01(\x0e2\x17.tebox.v1.InstanceStateR\x05state\"\x83\x02\n" +
+	"\x05state\x18\x0f \x01(\x0e2\x17.tebox.v1.InstanceStateR\x05state\x12!\n" +
+	"\fsystem_image\x18\x10 \x01(\tR\vsystemImage\x12!\n" +
+	"\fvendor_image\x18\x11 \x01(\tR\vvendorImage\x12'\n" +
+	"\x0finitramfs_image\x18\x12 \x01(\tR\x0einitramfsImage\"\x83\x02\n" +
 	"\rDeviceProfile\x12\x1a\n" +
 	"\blatitude\x18\x01 \x01(\x01R\blatitude\x12\x1c\n" +
 	"\tlongitude\x18\x02 \x01(\x01R\tlongitude\x12\x18\n" +
