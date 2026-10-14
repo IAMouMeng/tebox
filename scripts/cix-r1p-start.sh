@@ -12,8 +12,9 @@
 set -euo pipefail
 TEBOX="${TEBOX:-/opt/tebox}"
 # Binaries uploaded by `r1p-deploy.sh bin` (mounted at override/) replace the
-# ones baked into the image, so API and cast updates skip an image rebuild.
-for f in bin/tebox-api out/service/tebox-cast; do
+# ones baked into the image, so API, cast and boot script updates skip an image
+# rebuild.
+for f in bin/tebox-api out/service/tebox-cast scripts/boot-qemu.sh; do
   [[ -x "$TEBOX/override/${f##*/}" ]] && cp "$TEBOX/override/${f##*/}" "$TEBOX/$f"
 done
 source "$TEBOX/scripts/cix-mali-env.sh"

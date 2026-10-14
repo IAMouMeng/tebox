@@ -57,12 +57,13 @@ build() {
   mkdir -p "$CONTEXT"/{.ci,scripts,thirdparty,host-drivers,runtime-src/aosp/"$VARIANT"/qemu/cmdline}
   rsync -a --delete --exclude .git "$ROOT/qemu" "$CONTEXT/"
   rsync -a --delete --exclude .git "$ROOT/thirdparty/libepoxy" "$ROOT/thirdparty/virglrenderer" \
-    "$CONTEXT/thirdparty/"
+    "$ROOT/thirdparty/gfxstream" "$ROOT/thirdparty/rutabaga_gfx" "$CONTEXT/thirdparty/"
   mkdir -p "$CONTEXT/src/service"
   rsync -a --delete "$ROOT/src/service/cast" "$CONTEXT/src/service/"
   (cd "$ROOT/src/service/api" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$CONTEXT/tebox-api" ./cmd/tebox-api)
   rsync -a --delete "$ROOT/prebuilts/android-arm64/scrcpy/" "$CONTEXT/scrcpy/"
-  cp "$ROOT"/.ci/{build-libepoxy.sh,build-virglrenderer.sh,build-qemu.sh,requirements.txt} "$CONTEXT/.ci/"
+  cp "$ROOT"/.ci/{build-libepoxy.sh,build-virglrenderer.sh,build-qemu.sh,build-rutabaga.sh,requirements.txt} "$CONTEXT/.ci/"
+  rsync -a --delete "$ROOT/.ci/patches" "$CONTEXT/.ci/"
   cp "$ROOT"/scripts/{env.sh,boot-qemu.sh,check-runtime-inputs.py,cix-mali-env.sh,cix-r1p-start.sh} \
     "$CONTEXT/scripts/"
   cp "$ROOT/thirdparty/host-drivers/$R1P_DRIVERS"/*.deb "$CONTEXT/host-drivers/"

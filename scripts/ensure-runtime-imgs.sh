@@ -47,6 +47,7 @@ VENDOR_INPUTS=(
 )
 [[ -d "$ROOT/prebuilts/android-arm64/mesa" ]] && VENDOR_INPUTS+=("$ROOT/prebuilts/android-arm64/mesa")
 [[ -d "$ROOT/thirdparty/mesa/prebuilt/arm64" ]] && VENDOR_INPUTS+=("$ROOT/thirdparty/mesa/prebuilt/arm64")
+[[ -d "$ROOT/prebuilts/android-arm64/gfxstream" ]] && VENDOR_INPUTS+=("$ROOT/prebuilts/android-arm64/gfxstream")
 
 INIT_INPUTS=(
   "$QEMU_RT/busybox"

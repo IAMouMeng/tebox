@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include "buffer_format.h"
 #include "gpu_buffer.h"
+#include "buffer_handle.h"
 
 #define LOG_TAG "mapper-stub"
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -64,6 +65,10 @@ typedef struct {
     // 0 when the dma-buf must not be mmap'd (fstat failed, or st_size is a
     // positive value smaller than the logical image).
     int cpu_mappable;
+    // gfxstream: a virtio-gpu resource whose pixels live in the host
+    // ColorBuffer; CPU locks transfer them in and (for writers) back out.
+    int gfxstream;
+    int lock_write;
 } BufSlot;
 
 #define MAX_BUFS 256
@@ -112,6 +117,23 @@ static void mw_str(MetaWriter* w, const char* s) {
 }
 
 static int parse_handle(const native_handle_t* h, BufSlot* info) {
+    struct TeboxBufferInfo tb;
+    if (teboxBufferInfo(h, &tb) && tb.gfxstream) {
+        int bpp = bufferFormat(tb.format).bytes;
+        if (!bpp || tb.width <= 0 || tb.height <= 0 || tb.stride < tb.width) return 0;
+        info->width = tb.width;
+        info->height = tb.height;
+        info->stride = tb.stride;
+        info->format = tb.format;
+        info->usage = tb.usage;
+        info->size = (uint64_t)tb.stride * (uint64_t)tb.height * (uint64_t)bpp;
+        info->cpu_mappable = 1;
+        info->gfxstream = 1;
+        struct stat st;
+        info->id = fstat(h->data[0], &st) == 0 ? (uint64_t)st.st_ino : 0;
+        return 1;
+    }
+    info->gfxstream = 0;
     if (!h || h->version != (int)sizeof(native_handle_t) || h->numFds < 1 || h->numInts < 6)
         return 0;
     const int* ints = &h->data[h->numFds];
@@ -319,6 +341,31 @@ static AIMapper_Error lock(buffer_handle_t buffer, uint64_t cpuUsage, ARect acce
         pthread_mutex_unlock(&g_mu);
         return AIMAPPER_ERROR_BAD_BUFFER;
     }
+    if (slot->gfxstream) {
+        const uint32_t pitch = (uint32_t)slot->stride * (uint32_t)bufferFormat(slot->format).bytes;
+        // Pull the host ColorBuffer into the guest backing before the CPU
+        // reads it (writers get the current pixels too: partial updates).
+        if (signaled && !virtgpuTransfer(buffer->data[0], false, (uint32_t)slot->width,
+                                         (uint32_t)slot->height, pitch))
+            ALOGW("gfxstream transfer from host failed errno=%d", errno);
+        if (!slot->mapped) {
+            void* p = mmap(NULL, (size_t)slot->size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                           buffer->data[0], 0);
+            if (p == MAP_FAILED) {
+                int err = errno;
+                pthread_mutex_unlock(&g_mu);
+                ALOGE("gfxstream mmap failed size=%llu errno=%d", (unsigned long long)slot->size, err);
+                return AIMAPPER_ERROR_NO_RESOURCES;
+            }
+            slot->mapped = p;
+            slot->mapped_anonymous = 0;
+        }
+        if (cpuUsage & 0xf0) slot->lock_write = 1;
+        slot->lock_count++;
+        *outData = slot->mapped;
+        pthread_mutex_unlock(&g_mu);
+        return AIMAPPER_ERROR_NONE;
+    }
     if (!slot->mapped) {
         void* p = MAP_FAILED;
         int anonymous = 0;
@@ -366,6 +413,19 @@ static AIMapper_Error unlock(buffer_handle_t buffer, int* releaseFence) {
         return AIMAPPER_ERROR_BAD_BUFFER;
     }
     if (slot->lock_count > 0) slot->lock_count--;
+    if (slot->gfxstream) {
+        // Upload CPU writes to the host ColorBuffer once the last lock ends.
+        if (slot->lock_count == 0 && slot->lock_write) {
+            const uint32_t pitch = (uint32_t)slot->stride * (uint32_t)bufferFormat(slot->format).bytes;
+            if (!virtgpuTransfer(buffer->data[0], true, (uint32_t)slot->width,
+                                 (uint32_t)slot->height, pitch))
+                ALOGW("gfxstream transfer to host failed errno=%d", errno);
+            slot->lock_write = 0;
+        }
+        pthread_mutex_unlock(&g_mu);
+        *releaseFence = -1;
+        return AIMAPPER_ERROR_NONE;
+    }
     if (!slot->mapped_anonymous) {
         struct dma_buf_sync sync = {DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW};
         ioctl(buffer->data[0], DMA_BUF_IOCTL_SYNC, &sync);
@@ -612,7 +672,6 @@ int32_t ANDROID_HAL_MAPPER_VERSION = AIMAPPER_VERSION_5;
 
 AIMapper_Error AIMapper_loadIMapper(AIMapper** outImplementation) {
     ALOGI("AIMapper_loadIMapper v5 stub");
-    fprintf(stderr, "mapper-stub I: AIMapper_loadIMapper\n");
     *outImplementation = &gMapper;
     return AIMAPPER_ERROR_NONE;
 }

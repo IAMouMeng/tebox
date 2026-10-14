@@ -86,6 +86,19 @@ if [[ -n "$MESA_PRE" ]]; then
 else
   echo "note: no Mesa prebuilts under ${MESA_PRE_CANDIDATES[*]} (props already mesa/virtio)"
 fi
+# gfxstream guest stack (scripts/fetch-gfxstream-guest.sh), selected at boot
+# with androidboot.tebox.gpu=gfxstream. Never overwrite VirGL/Mesa files of
+# the same name (libdrm.so, ...): the VirGL path must stay as it was.
+GFX_PRE="${GFX_PRE:-$ANDROID_PRE/gfxstream}"
+if [[ -d "$GFX_PRE/lib64" ]]; then
+  echo "injecting gfxstream guest stack from $GFX_PRE"
+  (cd "$GFX_PRE" && find . -type f | sed 's|^\./||') | while read -r f; do
+    [[ -e "$STAGE/$f" ]] && continue
+    mkdir -p "$STAGE/$(dirname "$f")"
+    cp -p "$GFX_PRE/$f" "$STAGE/$f"
+  done
+fi
+
 # Keep Android's stable mapper lookup and Mesa's explicit hw lookup identical.
 # Prefer the maintained HAL template over mapper copies bundled with Mesa.
 if [[ -f "$STUB/lib64/hw/mapper.stub.so" ]]; then

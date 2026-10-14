@@ -8,6 +8,7 @@
 #   VARIANT=... ./run
 #
 # Env (optional): FORCE_VIRGL SNAPSHOT QEMU_DEBUG QEMU MEM SMP GRAPHIC
+#   FORCE_RUTABAGA (1 = gfxstream, 0 = VirGL; default from src/aosp/<variant>/GPU)
 #   SYSTEM_IMG VENDOR_IMG INITRD_IMG (use these images instead of the variant's)
 #   TEBOX_CAST TEBOX_CAST_SOCK TEBOX_CAST_FPS (host cast → host/cast/) ...
 set -euo pipefail
