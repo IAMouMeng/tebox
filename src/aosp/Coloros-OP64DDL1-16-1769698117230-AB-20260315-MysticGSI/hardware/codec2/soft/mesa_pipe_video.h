@@ -109,6 +109,13 @@ public:
 
 private:
     bool ensurePipe();
+    int submitHost(int fd, uint32_t width, uint32_t height, uint32_t format, int64_t ptsUs,
+                   bool keyframe, EncodeTicket* ticket);
+
+    // gfxstream backend: frames go to the host encoder over tebox.venc.
+    bool mHost = false;
+    int mHostFd = -1;
+    uint64_t mHostGen = 0;  // owner generation of the shared tebox.venc port
     unsigned pollFeedback(void* feedback, std::unique_lock<std::mutex>* lock);
     bool createCodec();
 

@@ -2,7 +2,9 @@
 
 #include <android/log.h>
 
+#include <dirent.h>
 #include <dlfcn.h>
+#include <sys/system_properties.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -137,9 +139,118 @@ std::mutex gCapsMu;
 bool gCapsInit = false;
 Caps gCaps;
 
+// ---- Host encoder (gfxstream backend) ----
+// No VirGL video without VirGL: frames are encoded by tebox-cast on the host.
+// We send each frame's virtio-gpu resource id over the virtio-serial port
+// tebox.venc; QEMU reads that gfxstream ColorBuffer for the host hardware
+// encoder and the H.264 comes back on the same port (CAST_VENC_* in
+// src/service/cast/include/cast/protocol.h, mirrored here).
+constexpr uint32_t kVencMagic = 0x434e4556u;  // 'VENC'
+enum : uint32_t { kVencConfig = 1, kVencFrame = 2, kVencClose = 3, kVencBitstream = 16 };
+constexpr uint32_t kVencFlagKey = 1;
+
+struct __attribute__((packed)) VencHdr { uint32_t magic, type, size; };
+struct __attribute__((packed)) VencConfig { uint32_t width, height, bitrate, fps, gop_sec; };
+struct __attribute__((packed)) VencFrame {
+    uint64_t index;
+    int64_t pts_us;
+    uint32_t resource_id, width, height, format, flags;
+};
+struct __attribute__((packed)) VencOut { uint64_t index; int64_t pts_us; int32_t status; uint32_t flags; };
+
+bool gfxstreamGpu() {
+    char value[PROP_VALUE_MAX] = "";
+    __system_property_get("ro.boot.tebox.gpu", value);
+    return strcmp(value, "gfxstream") == 0;
+}
+
+// /dev/vportNpM whose virtio-serial name is tebox.venc, or -1.
+// tebox.venc is a virtio-serial port: one opener at a time, while every
+// component lives in this process. A stale component (a killed client, or a
+// fast re-create such as scrcpy's retries) must not block the next one, so the
+// port is opened once and handed to the newest session; older sessions see a
+// different generation and stop. Reads are serialized so replies (one per
+// frame, process-wide indices) are only consumed by the current owner.
+std::mutex gVencRead;
+std::mutex gVencWrite;
+int gVencFd = -1;
+uint64_t gVencGen = 0;
+uint32_t gVencIndex = 0;
+
+int openVencPort() {
+    DIR* dir = opendir("/sys/class/virtio-ports");
+    if (!dir) return -1;
+    int fd = -1;
+    while (dirent* e = readdir(dir)) {
+        if (e->d_name[0] == '.') continue;
+        char path[256], name[64] = "";
+        snprintf(path, sizeof(path), "/sys/class/virtio-ports/%s/name", e->d_name);
+        FILE* f = fopen(path, "re");
+        if (!f) continue;
+        if (fgets(name, sizeof(name), f)) name[strcspn(name, "\n")] = 0;
+        fclose(f);
+        if (strcmp(name, "tebox.venc") == 0) {
+            snprintf(path, sizeof(path), "/dev/%s", e->d_name);
+            fd = open(path, O_RDWR | O_CLOEXEC);
+            break;
+        }
+    }
+    closedir(dir);
+    return fd;
+}
+
+bool writeFull(int fd, const void* data, size_t size) {
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    while (size) {
+        ssize_t w = write(fd, p, size);
+        if (w < 0 && errno == EINTR) continue;
+        if (w <= 0) return false;
+        p += w;
+        size -= static_cast<size_t>(w);
+    }
+    return true;
+}
+
+bool readFull(int fd, void* data, size_t size) {
+    uint8_t* p = static_cast<uint8_t*>(data);
+    while (size) {
+        ssize_t r = read(fd, p, size);
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0) return false;
+        p += r;
+        size -= static_cast<size_t>(r);
+    }
+    return true;
+}
+
+bool vencSend(int fd, uint32_t type, const void* payload, uint32_t size) {
+    VencHdr hdr = {kVencMagic, type, size};
+    return writeFull(fd, &hdr, sizeof(hdr)) && (!size || writeFull(fd, payload, size));
+}
+
+// virtio-gpu resource id behind a dma-buf (our allocator's gfxstream buffers).
+uint32_t resourceIdFromFd(int dmabuf) {
+    static int render = open(kRenderNode, O_RDWR | O_CLOEXEC);
+    if (render < 0) return 0;
+    drm_prime_handle prime = {};
+    prime.fd = dmabuf;
+    if (ioctl(render, DRM_IOCTL_PRIME_FD_TO_HANDLE, &prime)) return 0;
+    drm_virtgpu_resource_info info = {};
+    info.bo_handle = prime.handle;
+    const int ret = ioctl(render, DRM_IOCTL_VIRTGPU_RESOURCE_INFO, &info);
+    drm_gem_close close_handle = {};
+    close_handle.handle = prime.handle;
+    ioctl(render, DRM_IOCTL_GEM_CLOSE, &close_handle);
+    return ret ? 0 : info.res_handle;
+}
+
 }  // namespace
 
 const Caps& queryCaps() {
+    if (gfxstreamGpu()) {
+        static const Caps kHostCaps = {false, true, 4096, 4096};
+        return kHostCaps;
+    }
     std::lock_guard<std::mutex> lock(gCapsMu);
     // The HAL is started in parallel with virtio-gpu.  Do not permanently
     // cache an empty capset observed before renderD128 is ready.
@@ -161,6 +272,14 @@ bool backendAvailable(Entrypoint ep) {
     // Decoder submission still needs an AVC parameter-set/slice parser, so do
     // not publish a decoder that would accept work and then return ENOSYS.
     if (ep == Entrypoint::kDecode) return false;
+    if (gfxstreamGpu()) {
+        // tebox-cast connects to the port at any time; the port existing is
+        // what makes this guest offer the encoder.
+        const int fd = openVencPort();
+        if (fd >= 0) ::close(fd);
+        ALOGI("AVC encode via host (tebox.venc): %s", fd >= 0 ? "ok" : "no port");
+        return fd >= 0;
+    }
     Session probe;
     const bool ok = probe.open(ep, Profile::kAvcMain, 640, 360);
     FILE* trace = fopen("/data/local/tmp/mesa-c2-probe.log", "a");
@@ -327,6 +446,26 @@ bool Session::open(Entrypoint ep, Profile profile, uint32_t width, uint32_t heig
     // CPU copy.
     mWidth = width;
     mHeight = height;
+    if (ep == Entrypoint::kEncode && gfxstreamGpu()) {
+        std::lock_guard<std::mutex> rlock(gVencRead);
+        std::lock_guard<std::mutex> wlock(gVencWrite);
+        if (gVencFd < 0) gVencFd = openVencPort();
+        const VencConfig cfg = {width, height, 8000000, 30, 2};
+        if (gVencFd < 0 || !vencSend(gVencFd, kVencConfig, &cfg, sizeof(cfg))) {
+            ALOGE("host encoder: tebox.venc unavailable (%s)", strerror(errno));
+            if (gVencFd >= 0) ::close(gVencFd);
+            gVencFd = -1;
+            return false;
+        }
+        mHostFd = gVencFd;
+        mHostGen = ++gVencGen;
+        mHost = true;
+        mOpen = true;
+        mFrameIndex = 0;
+        mSubmitted = 0;
+        ALOGI("session open enc %ux%u via host encoder", width, height);
+        return true;
+    }
     ensurePipe();  // best-effort
     if (!createCodec()) return false;
     mOpen = true;
@@ -340,6 +479,18 @@ bool Session::open(Entrypoint ep, Profile profile, uint32_t width, uint32_t heig
 }
 
 void Session::close() {
+    if (mHost) {
+        std::lock_guard<std::mutex> rlock(gVencRead);
+        std::lock_guard<std::mutex> wlock(gVencWrite);
+        if (mHostGen == gVencGen && gVencFd >= 0) {
+            vencSend(gVencFd, kVencClose, nullptr, 0);
+            ++gVencGen;  // the port stays open for the next session
+        }
+        mHostFd = -1;
+        mHost = false;
+        mOpen = false;
+        return;
+    }
     if (mTarget) {
         mTarget->destroy(mTarget);
         mTarget = nullptr;
@@ -376,6 +527,7 @@ void Session::close() {
 }
 
 void Session::flush() {
+    if (mHost) return;  // host frames in flight still get collected
     mFrameIndex = 0;
     mSubmitted = 0;
 }
@@ -621,9 +773,29 @@ unsigned Session::pollFeedback(void* feedback, std::unique_lock<std::mutex>* loc
     return size;
 }
 
+int Session::submitHost(int fd, uint32_t width, uint32_t height, uint32_t format,
+                        int64_t ptsUs, bool keyframe, EncodeTicket* ticket) {
+    const uint32_t resource = resourceIdFromFd(fd);
+    if (!resource) return -EBADF;
+    VencFrame frame = {0, ptsUs, resource, width, height, format,
+                       keyframe ? kVencFlagKey : 0u};
+    {
+        std::lock_guard<std::mutex> lock(gVencWrite);
+        if (mHostGen != gVencGen || mHostFd < 0) return -EIO;  // superseded
+        frame.index = gVencIndex++;
+        if (!vencSend(mHostFd, kVencFrame, &frame, sizeof(frame))) return -EIO;
+    }
+    *ticket = EncodeTicket{};
+    ticket->ptsUs = ptsUs;
+    ticket->index = frame.index;
+    ++mSubmitted;
+    return 0;
+}
+
 int Session::submitGraphic(int fd, uint32_t width, uint32_t height, uint32_t stride,
                            uint32_t format, int64_t ptsUs, bool keyframe, EncodeTicket* ticket) {
     if (!ticket) return -EINVAL;
+    if (mHost) return submitHost(fd, width, height, format, ptsUs, keyframe, ticket);
     std::lock_guard<std::mutex> lock(mPipeLock);
     *ticket = EncodeTicket{};
     mTicketOut = ticket;
@@ -638,6 +810,28 @@ int Session::submitGraphic(int fd, uint32_t width, uint32_t height, uint32_t str
 }
 
 int Session::collect(EncodeTicket* ticket, std::vector<uint8_t>* outBs) {
+    if (mHost) {
+        if (!ticket || !outBs) return -EINVAL;
+        outBs->clear();
+        std::lock_guard<std::mutex> lock(gVencRead);
+        if (mHostGen != gVencGen) return -EIO;  // superseded by a newer session
+        // Replies come one per frame, in submission order.
+        for (;;) {
+            VencHdr hdr;
+            VencOut out;
+            if (mHostFd < 0 || !readFull(mHostFd, &hdr, sizeof(hdr)) || hdr.magic != kVencMagic ||
+                hdr.type != kVencBitstream || hdr.size < sizeof(out) || hdr.size > (16u << 20) ||
+                !readFull(mHostFd, &out, sizeof(out)))
+                return -EIO;
+            std::vector<uint8_t> data(hdr.size - sizeof(out));
+            if (!data.empty() && !readFull(mHostFd, data.data(), data.size())) return -EIO;
+            if (out.index < ticket->index) continue;  // reply to an abandoned frame
+            if (out.status < 0) return out.status;
+            ++mFrameIndex;
+            *outBs = std::move(data);
+            return static_cast<int>(outBs->size());
+        }
+    }
     if (!ticket || !outBs || !ticket->bitstream) return -EINVAL;
     outBs->clear();
     // Wait outside the lock so the submit thread can queue the next frame.
