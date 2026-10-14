@@ -1,14 +1,16 @@
 /* Live cast viewer with input: tebox-cast TCP stream → libavcodec → SDL2.
  *
- * With --id the viewer goes through tebox-api: video from the cast endpoint
- * ("TEBOX-CAST/1 <id>"), input as JSON datagrams to the shared UDP input
- * endpoint (each event carries "id" and "seq"). Guest clipboard changes come
- * back as datagrams on the same socket. Without --id it reads a bare
- * tebox-cast port (view only). Video reconnects if the API restarts.
- *
- * AAC records interleaved with the video are played through SDL audio.
- * With --mic / --camera the viewer also sends microphone PCM and camera
- * JPEGs upstream on the same TCP connection, in the same record framing.
+ * With --id the viewer goes through tebox-api, one endpoint per kind:
+ *   video   "TEBOX-CAST/1 <id>" on --port (9901), H.264 records only
+ *   audio   "TEBOX-AUDIO/1 <id>" on --audio-port (9904): AAC records played
+ *           through SDL audio; --mic sends microphone PCM records back
+ *   camera  "TEBOX-CAMERA/1 <id>" on --control-port (9905): --camera JPEGs
+ *   input   JSON datagrams to UDP --control-port (each event carries "id"
+ *           and "seq"); guest clipboard changes come back as datagrams on
+ *           the same socket.
+ * Without --id it reads a bare tebox-cast port, where video, AAC and the
+ * mic/camera uplink share one connection. Connections reconnect if the API
+ * restarts.
  */
 #include <SDL.h>
 #include <libavcodec/avcodec.h>
@@ -47,13 +49,28 @@
 #define CAMERA_MAX_H 720
 #define CAMERA_FRAME_US (1000000 / 30)
 
+/* One TCP connection to the API (or a bare tebox-cast port). fd is
+ * replaced or closed only under lock, so uploaders never write to a closed
+ * (or reused) descriptor. A reader thread owns reconnects, except for
+ * self_dial links, which nothing reads: senders redial them. */
+struct link {
+    const char *proto;    /* handshake, e.g. "TEBOX-CAST/1" */
+    int port;
+    int fd;
+    SDL_mutex *lock;      /* also serialises upstream records */
+    bool stalled;         /* under lock: last record was dropped */
+    bool self_dial;
+    uint32_t retry_at;    /* self_dial: next dial attempt (SDL ticks) */
+};
+
 struct viewer {
     const char *host;
-    int port;
     const char *id;
-    int video_fd;         /* replaced/closed only under send_lock */
-    SDL_mutex *send_lock; /* serialises upstream records (mic + camera) */
-    bool up_stalled;      /* under send_lock: last record was dropped */
+    struct link video;
+    struct link audio_link;  /* --id: AAC down, microphone up */
+    struct link camera_link; /* --id: camera up */
+    struct link *mic_up;     /* where microphone records go */
+    struct link *camera_up;  /* where camera records go */
     bool audio;           /* play AAC records */
     SDL_AudioDeviceID mic_dev;
     const char *camera;
@@ -177,16 +194,56 @@ static uint64_t now_us(void)
     return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
 }
 
-/* The video thread owns reconnects; uploaders read video_fd under the same
- * lock, so they never write to a closed (or reused) descriptor. */
-static void set_video_fd(struct viewer *v, int fd)
+static void set_link_fd(struct link *l, int fd)
 {
-    SDL_LockMutex(v->send_lock);
-    if (v->video_fd >= 0) {
-        close(v->video_fd);
+    SDL_LockMutex(l->lock);
+    if (l->fd >= 0) {
+        close(l->fd);
     }
-    v->video_fd = fd;
-    SDL_UnlockMutex(v->send_lock);
+    l->fd = fd;
+    SDL_UnlockMutex(l->lock);
+}
+
+/* Reader threads: drop the connection, wait a second and dial again. */
+static void link_redial(struct viewer *v, struct link *l, const char *what)
+{
+    if (l->fd >= 0) {
+        set_link_fd(l, -1);
+        fprintf(stderr, "cast-view: %s lost, reconnecting\n", what);
+    }
+    SDL_Delay(1000);
+    set_link_fd(l, dial_handshake(v->host, l->port, l->proto, v->id));
+}
+
+/* One cast record into *body (grown as needed, with decoder padding).
+ * Returns its length, or 0 when the connection failed or sent garbage. */
+static uint32_t read_record(int fd, uint8_t **body, size_t *cap)
+{
+    uint8_t lenbuf[4];
+    uint32_t length;
+
+    if (fd < 0 || read_full(fd, lenbuf, 4) <= 0) {
+        return 0;
+    }
+    length = r32be(lenbuf);
+    if (length < CAST_ENC_HDR_SIZE || length > 32u * 1024u * 1024u) {
+        fprintf(stderr, "cast-view: bad length %u\n", length);
+        return 0;
+    }
+    if (length + AV_INPUT_BUFFER_PADDING_SIZE > *cap) {
+        uint8_t *nbuf = realloc(*body, length + AV_INPUT_BUFFER_PADDING_SIZE);
+
+        if (!nbuf) {
+            return 0;
+        }
+        *body = nbuf;
+        *cap = length + AV_INPUT_BUFFER_PADDING_SIZE;
+    }
+    if (read_full(fd, *body, length) <= 0) {
+        return 0;
+    }
+    memset(*body + length, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+    return length;
 }
 
 /* Non-blocking send of p[0..n) until done or the deadline passes. A server
@@ -219,12 +276,12 @@ static int send_until(int fd, const uint8_t *p, size_t n, uint32_t deadline,
     return 0;
 }
 
-/* One upstream record, written whole under send_lock (mic and camera run in
- * different threads). A record that cannot start within 500 ms is dropped;
- * one that stops half way would desync the stream, so the socket is shut
- * down and the video thread reconnects. */
-static void send_record(struct viewer *v, uint8_t codec, const void *payload,
-                        size_t n)
+/* One upstream record, written whole under the link lock (mic and camera
+ * may share a link from different threads). A record that cannot start
+ * within 500 ms is dropped; one that stops half way would desync the
+ * stream, so the socket is dropped and reconnected. */
+static void send_record(struct viewer *v, struct link *l, uint8_t codec,
+                        const void *payload, size_t n)
 {
     uint8_t hdr[4 + CAST_ENC_HDR_SIZE];
     uint64_t pts = now_us();
@@ -241,22 +298,32 @@ static void send_record(struct viewer *v, uint8_t codec, const void *payload,
     for (i = 0; i < 8; i++) {
         hdr[6 + i] = (uint8_t)(pts >> (56 - 8 * i));
     }
-    SDL_LockMutex(v->send_lock);
-    if (v->video_fd >= 0) {
-        if (send_until(v->video_fd, hdr, sizeof(hdr), deadline, &started) < 0 ||
-            send_until(v->video_fd, payload, n, deadline, &started) < 0) {
-            if (started) {
-                fprintf(stderr, "cast-view: uplink write failed, reconnecting\n");
-                shutdown(v->video_fd, SHUT_RDWR);
-            } else if (!v->up_stalled) {
+    SDL_LockMutex(l->lock);
+    if (l->fd < 0 && l->self_dial && SDL_TICKS_PASSED(SDL_GetTicks(), l->retry_at)) {
+        l->fd = dial_handshake(v->host, l->port, l->proto, v->id);
+        l->retry_at = SDL_GetTicks() + 1000;
+    }
+    if (l->fd >= 0) {
+        if (send_until(l->fd, hdr, sizeof(hdr), deadline, &started) < 0 ||
+            send_until(l->fd, payload, n, deadline, &started) < 0) {
+            if (started || l->self_dial) {
+                fprintf(stderr, "cast-view: %s uplink failed, reconnecting\n",
+                        l->proto);
+                if (l->self_dial) {
+                    close(l->fd);
+                    l->fd = -1;
+                } else {
+                    shutdown(l->fd, SHUT_RDWR); /* its reader redials */
+                }
+            } else if (!l->stalled) {
                 fprintf(stderr, "cast-view: uplink stalled, dropping records\n");
             }
-            v->up_stalled = true;
+            l->stalled = true;
         } else {
-            v->up_stalled = false;
+            l->stalled = false;
         }
     }
-    SDL_UnlockMutex(v->send_lock);
+    SDL_UnlockMutex(l->lock);
 }
 
 /* AAC playback state, owned by the video thread. */
@@ -411,47 +478,21 @@ static int video_thread(void *opaque)
         goto out;
     }
     while (!v->quit) {
-        uint8_t lenbuf[4];
-        uint32_t length;
+        uint32_t length = read_record(v->video.fd, &body, &cap);
 
-        if (v->video_fd < 0 || read_full(v->video_fd, lenbuf, 4) <= 0) {
-            /* API or cast restarted: keep the last picture and reconnect. */
-            if (v->video_fd >= 0) {
-                set_video_fd(v, -1);
-                fprintf(stderr, "cast-view: video lost, reconnecting\n");
-            }
-            SDL_Delay(1000);
-            /* Uploads resume on the new socket once it is published. */
-            set_video_fd(v, dial_handshake(v->host, v->port, "TEBOX-CAST/1",
-                                           v->id));
+        if (!length) {
+            /* API or cast restarted: keep the last picture and reconnect.
+             * Bare-port uploads resume once the new socket is published. */
+            link_redial(v, &v->video, "video");
             avcodec_flush_buffers(ctx);
             if (audio.dec) {
                 avcodec_flush_buffers(audio.dec);
             }
             continue;
         }
-        length = r32be(lenbuf);
-        if (length < CAST_ENC_HDR_SIZE || length > 32u * 1024u * 1024u) {
-            fprintf(stderr, "cast-view: bad length %u\n", length);
-            set_video_fd(v, -1);
-            continue;
-        }
-        if (length + AV_INPUT_BUFFER_PADDING_SIZE > cap) {
-            uint8_t *nbuf = realloc(body, length + AV_INPUT_BUFFER_PADDING_SIZE);
-
-            if (!nbuf) {
-                break;
-            }
-            body = nbuf;
-            cap = length + AV_INPUT_BUFFER_PADDING_SIZE;
-        }
-        if (read_full(v->video_fd, body, length) <= 0) {
-            set_video_fd(v, -1);
-            continue;
-        }
-        memset(body + length, 0, AV_INPUT_BUFFER_PADDING_SIZE);
         if (body[0] == CAST_CODEC_AAC) {
-            if (v->audio) {
+            /* Bare tebox-cast port only; the API sends audio separately. */
+            if (v->audio && !v->id) {
                 play_aac(&audio, body + CAST_ENC_HDR_SIZE,
                          (int)(length - CAST_ENC_HDR_SIZE));
             }
@@ -492,6 +533,35 @@ out:
     return 0;
 }
 
+/* --id: the API's audio endpoint, AAC records down (the microphone goes
+ * up on the same connection). */
+static int audio_thread(void *opaque)
+{
+    struct viewer *v = opaque;
+    struct audio_out audio = {0};
+    uint8_t *body = NULL;
+    size_t cap = 0;
+
+    while (!v->quit) {
+        uint32_t length = read_record(v->audio_link.fd, &body, &cap);
+
+        if (!length) {
+            link_redial(v, &v->audio_link, "audio");
+            if (audio.dec) {
+                avcodec_flush_buffers(audio.dec);
+            }
+            continue;
+        }
+        if (body[0] == CAST_CODEC_AAC && v->audio) {
+            play_aac(&audio, body + CAST_ENC_HDR_SIZE,
+                     (int)(length - CAST_ENC_HDR_SIZE));
+        }
+    }
+    free(body);
+    audio_close(&audio);
+    return 0;
+}
+
 /* Microphone uplink: drains the SDL capture queue in 10-20 ms records. */
 static int mic_thread(void *opaque)
 {
@@ -514,7 +584,7 @@ static int mic_thread(void *opaque)
         n = SDL_DequeueAudio(v->mic_dev, buf,
                              avail < sizeof(buf) ? avail & ~1u : sizeof(buf));
         if (n) {
-            send_record(v, CAST_CODEC_PCM_S16LE, buf, n);
+            send_record(v, v->mic_up, CAST_CODEC_PCM_S16LE, buf, n);
         }
     }
     return 0;
@@ -711,7 +781,7 @@ static void camera_frame(struct camera *c, AVFrame *f)
         return;
     }
     while (avcodec_receive_packet(c->enc, c->jpeg) == 0) {
-        send_record(c->v, CAST_CODEC_MJPEG, c->jpeg->data,
+        send_record(c->v, c->v->camera_up, CAST_CODEC_MJPEG, c->jpeg->data,
                     (size_t)c->jpeg->size);
         av_packet_unref(c->last);
         av_packet_move_ref(c->last, c->jpeg);
@@ -804,7 +874,7 @@ static int camera_thread(void *opaque)
         if (frames == 1) {
             while (!v->quit && c.last->size) {
                 SDL_Delay(CAMERA_FRAME_US / 1000);
-                send_record(v, CAST_CODEC_MJPEG, c.last->data,
+                send_record(v, v->camera_up, CAST_CODEC_MJPEG, c.last->data,
                             (size_t)c.last->size);
             }
             break;
@@ -1164,15 +1234,18 @@ static int android_shortcut_for(SDL_Keycode sym)
 static void usage(const char *argv0)
 {
     fprintf(stderr,
-            "Usage: %s [--host H] [--port P] [--id INSTANCE] [--input-port U]\n"
+            "Usage: %s [--host H] [--port P] [--id INSTANCE]\n"
+            "          [--audio-port A] [--control-port C]\n"
             "          [--height PX] [--no-audio] [--mic] [--camera SRC]\n"
             "  --id          go through tebox-api: video on --port (9901),\n"
-            "                input as UDP to --input-port (9903); without it\n"
-            "                --port is a bare tebox-cast port (view only)\n"
+            "                audio + mic on --audio-port (9904), camera (TCP)\n"
+            "                and input (UDP) on --control-port (9905); without\n"
+            "                it --port is a bare tebox-cast port (video, audio\n"
+            "                and uplink in one)\n"
             "  --height      initial window height in points (default 900)\n"
             "  --no-audio    do not play the guest's audio (AAC records)\n"
             "  --mic         send the default microphone to the guest\n"
-            "                (48 kHz mono PCM, upstream on the video socket)\n"
+            "                (48 kHz mono PCM)\n"
             "  --camera SRC  send a camera to the guest as JPEG frames:\n"
             "                avfoundation:N (macOS camera N, e.g. avfoundation:0)\n"
             "                or a video/image file, looped (30 fps max)\n"
@@ -1188,14 +1261,15 @@ int main(int argc, char **argv)
     const char *host = "127.0.0.1";
     const char *id = NULL;
     int port = 9901;
-    int input_port = 9903;
+    int audio_port = 9904;
+    int control_port = 9905;
     int win_h = 900;
-    struct viewer v = { .video_fd = -1, .ctrl_fd = -1, .audio = true };
+    struct viewer v = { .ctrl_fd = -1, .audio = true };
     bool mic = false;
     SDL_Window *win;
     SDL_Renderer *ren;
     SDL_Texture *tex = NULL;
-    SDL_Thread *thread, *mic_thr = NULL, *camera_thr = NULL;
+    SDL_Thread *thread, *audio_thr = NULL, *mic_thr = NULL, *camera_thr = NULL;
     bool touching = false;
     float touch_x = 0, touch_y = 0;
     uint32_t touch_tick = 0, ping_tick = 0;
@@ -1212,8 +1286,10 @@ int main(int argc, char **argv)
             port = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--id") && i + 1 < argc) {
             id = argv[++i];
-        } else if (!strcmp(argv[i], "--input-port") && i + 1 < argc) {
-            input_port = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--audio-port") && i + 1 < argc) {
+            audio_port = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--control-port") && i + 1 < argc) {
+            control_port = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--height") && i + 1 < argc) {
             win_h = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--no-audio")) {
@@ -1229,18 +1305,28 @@ int main(int argc, char **argv)
     }
 
     v.host = host;
-    v.port = port;
     v.id = id;
-    v.video_fd = dial_handshake(host, port, "TEBOX-CAST/1", id);
-    if (v.video_fd < 0) {
+    v.video = (struct link){ .proto = "TEBOX-CAST/1", .port = port, .fd = -1 };
+    v.audio_link = (struct link){ .proto = "TEBOX-AUDIO/1", .port = audio_port,
+                                  .fd = -1 };
+    v.camera_link = (struct link){ .proto = "TEBOX-CAMERA/1",
+                                   .port = control_port, .fd = -1,
+                                   .self_dial = true };
+    v.video.lock = SDL_CreateMutex();
+    v.audio_link.lock = SDL_CreateMutex();
+    v.camera_link.lock = SDL_CreateMutex();
+    v.mic_up = id ? &v.audio_link : &v.video;
+    v.camera_up = id ? &v.camera_link : &v.video;
+    v.video.fd = dial_handshake(host, port, v.video.proto, id);
+    if (v.video.fd < 0) {
         fprintf(stderr, "cast-view: cannot connect %s:%d\n", host, port);
         return 1;
     }
     if (id) {
-        v.ctrl_fd = open_input_udp(host, input_port);
+        v.ctrl_fd = open_input_udp(host, control_port);
         if (v.ctrl_fd < 0) {
             fprintf(stderr, "cast-view: input UDP %s:%d unavailable\n", host,
-                    input_port);
+                    control_port);
         }
     }
 
@@ -1288,9 +1374,12 @@ int main(int argc, char **argv)
     }
 
     v.lock = SDL_CreateMutex();
-    v.send_lock = SDL_CreateMutex();
     v.latest = av_frame_alloc();
     thread = SDL_CreateThread(video_thread, "cast-video", &v);
+    if (id && (v.audio || v.mic_dev)) {
+        v.audio_link.fd = dial_handshake(host, audio_port, v.audio_link.proto, id);
+        audio_thr = SDL_CreateThread(audio_thread, "cast-audio", &v);
+    }
     if (v.mic_dev) {
         SDL_PauseAudioDevice(v.mic_dev, 0);
         mic_thr = SDL_CreateThread(mic_thread, "cast-mic", &v);
@@ -1493,26 +1582,32 @@ int main(int argc, char **argv)
         SDL_RenderPresent(ren);
     }
 
-    /* Uploaders first: they write to video_fd under send_lock. */
+    /* Uploaders first: they write to the links under their locks. */
     SDL_WaitThread(camera_thr, NULL);
     SDL_WaitThread(mic_thr, NULL);
     if (v.mic_dev) {
         SDL_CloseAudioDevice(v.mic_dev);
     }
-    if (v.video_fd >= 0) {
-        shutdown(v.video_fd, SHUT_RDWR);
+    if (v.video.fd >= 0) {
+        shutdown(v.video.fd, SHUT_RDWR);
+    }
+    if (v.audio_link.fd >= 0) {
+        shutdown(v.audio_link.fd, SHUT_RDWR);
     }
     SDL_WaitThread(thread, NULL);
-    if (v.video_fd >= 0) {
-        close(v.video_fd);
-    }
+    SDL_WaitThread(audio_thr, NULL);
+    set_link_fd(&v.video, -1);
+    set_link_fd(&v.audio_link, -1);
+    set_link_fd(&v.camera_link, -1);
     free(last_clip);
     if (tex) {
         SDL_DestroyTexture(tex);
     }
     av_frame_free(&v.latest);
     SDL_DestroyMutex(v.lock);
-    SDL_DestroyMutex(v.send_lock);
+    SDL_DestroyMutex(v.video.lock);
+    SDL_DestroyMutex(v.audio_link.lock);
+    SDL_DestroyMutex(v.camera_link.lock);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();

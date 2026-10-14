@@ -41,6 +41,7 @@ struct cast_v4l2 {
     int width, height;
     uint32_t fourcc;
     struct v4l2_format in_fmt;
+    uint32_t out_memory; /* MMAP, or DMABUF for frames already in a dma-buf */
     struct buf_map output[NUM_OUTPUT], capture[NUM_CAPTURE];
     unsigned num_output, num_capture, next_output;
     uint8_t *headers;
@@ -245,7 +246,8 @@ void cast_v4l2_close(struct cast_v4l2 *e)
 }
 
 struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
-                                 int64_t bitrate, int gop_frames)
+                                 int64_t bitrate, int gop_frames, bool dmabuf_input,
+                                 int stride)
 {
     struct cast_v4l2 *e = calloc(1, sizeof(*e));
     struct v4l2_format fmt;
@@ -285,6 +287,11 @@ struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
     e->in_fmt.fmt.pix_mp.width = width;
     e->in_fmt.fmt.pix_mp.height = height;
     e->in_fmt.fmt.pix_mp.num_planes = 1;
+    /* dma-buf frames keep their producer's pitch (gfxstream aligns rows to
+     * 64 bytes); the mvx encoder honours a requested bytesperline. */
+    if (dmabuf_input && stride > 0) {
+        e->in_fmt.fmt.pix_mp.plane_fmt[0].bytesperline = (uint32_t)stride;
+    }
     if (xioctl(e->fd, VIDIOC_S_FMT, &e->in_fmt) ||
         e->in_fmt.fmt.pix_mp.pixelformat != e->fourcc) {
         goto fail;
@@ -301,9 +308,22 @@ struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
     set_ctrl(e, V4L2_CID_MPEG_VIDEO_BITRATE_MODE, V4L2_MPEG_VIDEO_BITRATE_MODE_CBR);
     set_ctrl(e, V4L2_CID_MPEG_VIDEO_BITRATE, (int32_t)bitrate);
 
-    if (!map_buffers(e, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, e->output,
-                     &e->num_output, NUM_OUTPUT) ||
-        !map_buffers(e, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, e->capture,
+    e->out_memory = dmabuf_input ? V4L2_MEMORY_DMABUF : V4L2_MEMORY_MMAP;
+    if (dmabuf_input) {
+        struct v4l2_requestbuffers req = {
+            .count = NUM_OUTPUT, .type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+            .memory = V4L2_MEMORY_DMABUF,
+        };
+
+        if (xioctl(e->fd, VIDIOC_REQBUFS, &req) || !req.count) {
+            goto fail;
+        }
+        e->num_output = req.count < NUM_OUTPUT ? req.count : NUM_OUTPUT;
+    } else if (!map_buffers(e, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, e->output,
+                            &e->num_output, NUM_OUTPUT)) {
+        goto fail;
+    }
+    if (!map_buffers(e, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, e->capture,
                      &e->num_capture, NUM_CAPTURE)) {
         goto fail;
     }
@@ -320,9 +340,10 @@ struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
     if (xioctl(e->fd, VIDIOC_STREAMON, &type)) {
         goto fail;
     }
-    fprintf(stderr, "cast-v4l2: %s %dx%d input=%.4s stride=%u\n", e->path,
+    fprintf(stderr, "cast-v4l2: %s %dx%d input=%.4s stride=%u%s\n", e->path,
             width, height, (const char *)&e->fourcc,
-            e->in_fmt.fmt.pix_mp.plane_fmt[0].bytesperline);
+            e->in_fmt.fmt.pix_mp.plane_fmt[0].bytesperline,
+            dmabuf_input ? " dma-buf (zero-copy)" : "");
     return e;
 
 fail:
@@ -335,13 +356,15 @@ static void reclaim_outputs(struct cast_v4l2 *e)
 {
     struct v4l2_plane planes[VIDEO_MAX_PLANES];
     struct v4l2_buffer buf = {
-        .type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, .memory = V4L2_MEMORY_MMAP,
+        .type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, .memory = e->out_memory,
         .m.planes = planes, .length = VIDEO_MAX_PLANES,
     };
 
     while (!xioctl(e->fd, VIDIOC_DQBUF, &buf)) {
     }
 }
+
+static int collect(struct cast_v4l2 *e, const uint8_t **out, size_t *out_size, bool *key);
 
 int cast_v4l2_encode(struct cast_v4l2 *e, const uint8_t *pixels, int stride,
                      bool force_idr, const uint8_t **out, size_t *out_size,
@@ -354,13 +377,13 @@ int cast_v4l2_encode(struct cast_v4l2 *e, const uint8_t *pixels, int stride,
     size_t row = (size_t)e->width * 4;
     struct v4l2_plane planes[VIDEO_MAX_PLANES];
     struct v4l2_buffer buf;
-    uint8_t *frame = NULL;
-    size_t frame_size = 0, frame_cap = 0;
-    bool have_slice = false;
 
     *out = NULL;
     *out_size = 0;
     *key = false;
+    if (e->out_memory != V4L2_MEMORY_MMAP) {
+        return -1;
+    }
     reclaim_outputs(e);
     for (int y = 0; y < e->height; y++) {
         memcpy((uint8_t *)map->planes[0].ptr + (size_t)y * dst_stride,
@@ -385,6 +408,60 @@ int cast_v4l2_encode(struct cast_v4l2 *e, const uint8_t *pixels, int stride,
         return -1;
     }
     e->next_output = (index + 1) % e->num_output;
+    return collect(e, out, out_size, key);
+}
+
+int cast_v4l2_encode_dmabuf(struct cast_v4l2 *e, int fd, size_t length, bool force_idr,
+                            const uint8_t **out, size_t *out_size, bool *key)
+{
+    const struct v4l2_pix_format_mplane *pix = &e->in_fmt.fmt.pix_mp;
+    struct v4l2_plane planes[VIDEO_MAX_PLANES];
+    struct v4l2_buffer buf;
+
+    *out = NULL;
+    *out_size = 0;
+    *key = false;
+    if (e->out_memory != V4L2_MEMORY_DMABUF || length < pix->plane_fmt[0].sizeimage) {
+        return -1;
+    }
+    reclaim_outputs(e);
+    if (force_idr) {
+        set_ctrl(e, V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME, 1);
+    }
+    memset(planes, 0, sizeof(planes));
+    memset(&buf, 0, sizeof(buf));
+    buf.index = e->next_output;
+    buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+    buf.memory = V4L2_MEMORY_DMABUF;
+    buf.m.planes = planes;
+    buf.length = 1;
+    planes[0].m.fd = fd;
+    planes[0].length = (uint32_t)length;
+    planes[0].bytesused = pix->plane_fmt[0].sizeimage;
+    if (xioctl(e->fd, VIDIOC_QBUF, &buf)) {
+        fprintf(stderr, "cast-v4l2: QBUF dma-buf input: %s\n", strerror(errno));
+        return -1;
+    }
+    e->next_output = (e->next_output + 1) % e->num_output;
+    return collect(e, out, out_size, key);
+}
+
+int cast_v4l2_input_stride(const struct cast_v4l2 *e)
+{
+    return e ? (int)e->in_fmt.fmt.pix_mp.plane_fmt[0].bytesperline : 0;
+}
+
+bool cast_v4l2_dmabuf_input(const struct cast_v4l2 *e)
+{
+    return e && e->out_memory == V4L2_MEMORY_DMABUF;
+}
+
+/* Waits for the encoded slice of the frame just queued. */
+static int collect(struct cast_v4l2 *e, const uint8_t **out, size_t *out_size, bool *key)
+{
+    uint8_t *frame = NULL;
+    size_t frame_size = 0, frame_cap = 0;
+    bool have_slice = false;
 
     /* Parameter sets may arrive in a buffer of their own before the slice. */
     while (!have_slice) {
@@ -490,11 +567,32 @@ const char *cast_v4l2_device(const struct cast_v4l2 *e)
 #else /* !__linux__ */
 
 struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
-                                 int64_t bitrate, int gop_frames)
+                                 int64_t bitrate, int gop_frames, bool dmabuf_input,
+                                 int stride)
 {
     (void)width; (void)height; (void)rgba; (void)fps; (void)bitrate;
-    (void)gop_frames;
+    (void)gop_frames; (void)dmabuf_input; (void)stride;
     return NULL;
+}
+
+int cast_v4l2_encode_dmabuf(struct cast_v4l2 *e, int fd, size_t length, bool force_idr,
+                            const uint8_t **out, size_t *out_size, bool *key)
+{
+    (void)e; (void)fd; (void)length; (void)force_idr; (void)out; (void)out_size;
+    (void)key;
+    return -1;
+}
+
+int cast_v4l2_input_stride(const struct cast_v4l2 *e)
+{
+    (void)e;
+    return 0;
+}
+
+bool cast_v4l2_dmabuf_input(const struct cast_v4l2 *e)
+{
+    (void)e;
+    return false;
 }
 
 int cast_v4l2_encode(struct cast_v4l2 *e, const uint8_t *pixels, int stride,

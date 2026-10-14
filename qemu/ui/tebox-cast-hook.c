@@ -16,12 +16,27 @@
 #include <unistd.h>
 
 #include <epoxy/gl.h>
+#include <pixman.h>
 #include <glib.h>
+
+#ifdef CONFIG_GBM
+#include <linux/dma-heap.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include "ui/egl-helpers.h"
+#include "standard-headers/drm/drm_fourcc.h"
+#endif
 
 #define TEBOX_CAST_MAGIC   0x54434652u
 #define TEBOX_CAST_VERSION 1u
 #define TEBOX_CAST_BGRA    0u
 #define TEBOX_CAST_RGBA    1u
+/*
+ * Format flag: the pixels are in a dma-buf passed with SCM_RIGHTS (the GPU
+ * scaled the frame straight into it); tebox-cast acks with one byte once the
+ * encoder is done with it. Enabled by TEBOX_CAST_DMABUF_HEAP.
+ */
+#define TEBOX_CAST_DMABUF  0x100u
 
 typedef struct TeboxCastFrame {
     uint8_t *pixels;
@@ -30,6 +45,7 @@ typedef struct TeboxCastFrame {
     int height;
     uint32_t format;
     uint64_t pts_us;
+    int dmabuf_fd;
 } TeboxCastFrame;
 
 typedef struct TeboxCastState {
@@ -49,6 +65,15 @@ typedef struct TeboxCastState {
     uint64_t last_us;
     bool logged;
 
+    /* GPU -> dma-buf capture target (TEBOX_CAST_DMABUF). */
+    int dma_fd;
+    int dma_w;
+    int dma_h;
+    GLuint dma_tex;
+    GLuint dma_fbo;
+    void *dma_img;
+    bool dma_off;
+
     GMutex lock;
     GCond cond;
     GThread *sender;
@@ -62,6 +87,7 @@ typedef struct TeboxCastState {
 
 static TeboxCastState tebox_cast = {
     .fd = -1,
+    .dma_fd = -1,
 };
 
 bool tebox_cast_enabled(void)
@@ -289,7 +315,7 @@ static bool tebox_ensure_scale_fbo(int w, int h)
     return tebox_cast.readback != NULL;
 }
 
-static void tebox_queue_frame(uint8_t *pixels, size_t nbytes,
+static void tebox_queue_frame(uint8_t *pixels, size_t nbytes, int dmabuf_fd,
                               int w, int h, uint32_t format, uint64_t pts)
 {
     g_mutex_lock(&tebox_cast.lock);
@@ -297,15 +323,22 @@ static void tebox_queue_frame(uint8_t *pixels, size_t nbytes,
         /* Keep newest frame only. */
         if (tebox_cast.has_pending) {
             g_free(tebox_cast.pending.pixels);
+            if (tebox_cast.pending.dmabuf_fd >= 0) {
+                close(tebox_cast.pending.dmabuf_fd);
+            }
         } else {
             tebox_cast.dropped++;
             g_mutex_unlock(&tebox_cast.lock);
             g_free(pixels);
+            if (dmabuf_fd >= 0) {
+                close(dmabuf_fd);
+            }
             return;
         }
         tebox_cast.dropped++;
     }
     tebox_cast.pending.pixels = pixels;
+    tebox_cast.pending.dmabuf_fd = dmabuf_fd;
     tebox_cast.pending.nbytes = nbytes;
     tebox_cast.pending.width = w;
     tebox_cast.pending.height = h;
@@ -315,6 +348,184 @@ static void tebox_queue_frame(uint8_t *pixels, size_t nbytes,
     g_cond_signal(&tebox_cast.cond);
     g_mutex_unlock(&tebox_cast.lock);
 }
+
+#ifdef CONFIG_GBM
+/* Header + 4-byte payload with the dma-buf attached; waits for the ack. */
+static bool tebox_send_dmabuf(int fd, const TeboxCastFrame *fr)
+{
+    uint8_t pkt[40] = { 0 };
+    char ctrl[CMSG_SPACE(sizeof(int))];
+    struct iovec iov = { pkt, sizeof(pkt) };
+    struct msghdr msg = { 0 };
+    struct cmsghdr *cmsg;
+    struct pollfd pfd = { .fd = fd, .events = POLLIN };
+    uint8_t ack;
+    ssize_t n;
+
+    tebox_w32be(pkt + 0, TEBOX_CAST_MAGIC);
+    tebox_w32be(pkt + 4, TEBOX_CAST_VERSION);
+    tebox_w32be(pkt + 8, (uint32_t)fr->width);
+    tebox_w32be(pkt + 12, (uint32_t)fr->height);
+    tebox_w32be(pkt + 16, (uint32_t)fr->width * 4);
+    tebox_w32be(pkt + 20, fr->format);
+    tebox_w64be(pkt + 24, fr->pts_us);
+    tebox_w32be(pkt + 32, 4);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = ctrl;
+    msg.msg_controllen = sizeof(ctrl);
+    cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &fr->dmabuf_fd, sizeof(int));
+    do {
+        n = sendmsg(fd, &msg, MSG_NOSIGNAL);
+    } while (n < 0 && errno == EINTR);
+    if (n != sizeof(pkt)) {
+        return false;
+    }
+    /* One frame in flight: the buffer is reused only after the ack. */
+    if (poll(&pfd, 1, 1000) <= 0) {
+        return false;
+    }
+    do {
+        n = recv(fd, &ack, 1, 0);
+    } while (n < 0 && errno == EINTR);
+    return n == 1;
+}
+
+static void tebox_dmabuf_target_free(void)
+{
+    if (tebox_cast.dma_fbo) {
+        glDeleteFramebuffers(1, &tebox_cast.dma_fbo);
+        tebox_cast.dma_fbo = 0;
+    }
+    if (tebox_cast.dma_tex) {
+        glDeleteTextures(1, &tebox_cast.dma_tex);
+        tebox_cast.dma_tex = 0;
+    }
+    if (tebox_cast.dma_img) {
+        eglDestroyImageKHR(qemu_egl_display, tebox_cast.dma_img);
+        tebox_cast.dma_img = NULL;
+    }
+    if (tebox_cast.dma_fd >= 0) {
+        close(tebox_cast.dma_fd);
+        tebox_cast.dma_fd = -1;
+    }
+}
+
+/* A linear RGBA dma-buf from the heap, rendered to through an EGLImage. */
+static bool tebox_ensure_dmabuf_target(int w, int h)
+{
+    const char *heap = getenv("TEBOX_CAST_DMABUF_HEAP");
+    struct dma_heap_allocation_data alloc = { 0 };
+    uint32_t stride = (uint32_t)w * 4;
+    GLint tex_binding, fb_binding;
+    EGLint attrs[13];
+    bool ok = false;
+    int heap_fd;
+
+    if (tebox_cast.dma_off || !heap || !heap[0]) {
+        return false;
+    }
+    if (tebox_cast.dma_fbo && tebox_cast.dma_w == w && tebox_cast.dma_h == h) {
+        return true;
+    }
+    tebox_dmabuf_target_free();
+
+    heap_fd = open(heap, O_RDWR | O_CLOEXEC);
+    alloc.len = QEMU_ALIGN_UP((uint64_t)stride * h, 4096);
+    alloc.fd_flags = O_RDWR | O_CLOEXEC;
+    if (heap_fd < 0 || ioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC, &alloc) < 0) {
+        error_report("tebox-cast: dma-heap %s: %s", heap, strerror(errno));
+        goto out;
+    }
+    tebox_cast.dma_fd = (int)alloc.fd;
+    attrs[0] = EGL_WIDTH;                     attrs[1] = w;
+    attrs[2] = EGL_HEIGHT;                    attrs[3] = h;
+    attrs[4] = EGL_LINUX_DRM_FOURCC_EXT;      attrs[5] = DRM_FORMAT_ABGR8888;
+    attrs[6] = EGL_DMA_BUF_PLANE0_FD_EXT;     attrs[7] = tebox_cast.dma_fd;
+    attrs[8] = EGL_DMA_BUF_PLANE0_OFFSET_EXT; attrs[9] = 0;
+    attrs[10] = EGL_DMA_BUF_PLANE0_PITCH_EXT; attrs[11] = (EGLint)stride;
+    attrs[12] = EGL_NONE;
+    tebox_cast.dma_img = eglCreateImageKHR(qemu_egl_display, EGL_NO_CONTEXT,
+                                           EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
+    if (tebox_cast.dma_img == EGL_NO_IMAGE_KHR) {
+        tebox_cast.dma_img = NULL;
+        error_report("tebox-cast: EGL dma-buf import failed (0x%x)", eglGetError());
+        goto out;
+    }
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex_binding);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb_binding);
+    glGenTextures(1, &tebox_cast.dma_tex);
+    glBindTexture(GL_TEXTURE_2D, tebox_cast.dma_tex);
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, (GLeglImageOES)tebox_cast.dma_img);
+    glGenFramebuffers(1, &tebox_cast.dma_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, tebox_cast.dma_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           tebox_cast.dma_tex, 0);
+    ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer(GL_FRAMEBUFFER, fb_binding);
+    glBindTexture(GL_TEXTURE_2D, tex_binding);
+    if (!ok) {
+        error_report("tebox-cast: dma-buf FBO incomplete");
+        goto out;
+    }
+    tebox_cast.dma_w = w;
+    tebox_cast.dma_h = h;
+    error_report("tebox-cast: GPU -> dma-buf capture %dx%d (no CPU readback)", w, h);
+out:
+    if (heap_fd >= 0) {
+        close(heap_fd);
+    }
+    if (!ok) {
+        tebox_dmabuf_target_free();
+        tebox_cast.dma_off = true;
+    }
+    return ok;
+}
+
+/* Scales the guest frame into the dma-buf; false if that path is off. */
+static bool tebox_cast_capture_dmabuf(unsigned int framebuffer, int src_w,
+                                      int src_h, int out_w, int out_h,
+                                      bool y0_top, uint64_t now)
+{
+    GLint draw_fb, read_fb;
+    int fd;
+
+    if (!tebox_ensure_dmabuf_target(out_w, out_h)) {
+        return false;
+    }
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw_fb);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, tebox_cast.dma_fbo);
+    /*
+     * The dma-buf's first row is GL row 0, so draw the picture top at y=0
+     * (the readback path gets the same result with a CPU flip).
+     */
+    if (y0_top) {
+        glBlitFramebuffer(0, 0, src_w, src_h, 0, out_h, out_w, 0,
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    } else {
+        glBlitFramebuffer(0, 0, src_w, src_h, 0, 0, out_w, out_h,
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    }
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_fb);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fb);
+    glFinish();  /* the encoder reads the buffer right after the hand-off */
+
+    fd = dup(tebox_cast.dma_fd);
+    if (fd < 0) {
+        return false;
+    }
+    tebox_queue_frame(NULL, 0, fd, out_w, out_h,
+                      TEBOX_CAST_RGBA | TEBOX_CAST_DMABUF, now);
+    tebox_cast.last_us = now;
+    return true;
+}
+#endif
 
 static gpointer tebox_sender_thread(gpointer opaque)
 {
@@ -342,11 +553,34 @@ static gpointer tebox_sender_thread(gpointer opaque)
 
         if (!tebox_cast_connect_locked()) {
             g_free(fr.pixels);
+            if (fr.dmabuf_fd >= 0) {
+                close(fr.dmabuf_fd);
+            }
             tebox_cast.busy = false;
             continue;
         }
         fd = tebox_cast.fd;
         g_mutex_unlock(&tebox_cast.lock);
+
+#ifdef CONFIG_GBM
+        if (fr.dmabuf_fd >= 0) {
+            bool ok = tebox_send_dmabuf(fd, &fr);
+
+            close(fr.dmabuf_fd);
+            g_mutex_lock(&tebox_cast.lock);
+            if (!ok) {
+                /* Old tebox-cast or a broken encoder path: read back again. */
+                tebox_cast.dma_off = true;
+                tebox_cast_close_locked();
+                error_report("tebox-cast: dma-buf frames not acknowledged; "
+                             "falling back to readback");
+            } else {
+                tebox_cast.sent++;
+            }
+            tebox_cast.busy = false;
+            continue;
+        }
+#endif
 
         pkt_len = 36 + fr.nbytes;
         pkt = g_try_malloc(pkt_len);
@@ -382,6 +616,9 @@ static gpointer tebox_sender_thread(gpointer opaque)
     if (tebox_cast.has_pending) {
         g_free(tebox_cast.pending.pixels);
         tebox_cast.pending.pixels = NULL;
+        if (tebox_cast.pending.dmabuf_fd >= 0) {
+            close(tebox_cast.pending.dmabuf_fd);
+        }
         tebox_cast.has_pending = false;
     }
     tebox_cast_close_locked();
@@ -453,6 +690,12 @@ void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
     }
 
     tebox_calc_out_size(src_w, src_h, &out_w, &out_h);
+#ifdef CONFIG_GBM
+    if (tebox_cast_capture_dmabuf(framebuffer, src_w, src_h, out_w, out_h,
+                                  y0_top, now)) {
+        return;
+    }
+#endif
     if (!tebox_ensure_scale_fbo(out_w, out_h)) {
         return;
     }
@@ -518,8 +761,66 @@ void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
         return;
     }
     memcpy(copy, tebox_cast.readback, nbytes);
-    tebox_queue_frame(copy, nbytes, out_w, out_h, format, now);
+    tebox_queue_frame(copy, nbytes, -1, out_w, out_h, format, now);
     tebox_cast.last_us = now;
+}
+
+void tebox_cast_capture_pixels(const void *pixels, int width, int height,
+                               int stride)
+{
+    int out_w, out_h, fps;
+    const char *fps_env;
+    uint64_t now;
+    bool sender_busy;
+    uint8_t *copy;
+    pixman_image_t *src, *dst;
+
+    if (!tebox_cast_enabled() || !pixels || width <= 0 || height <= 0) {
+        return;
+    }
+    fps_env = getenv("TEBOX_CAST_FPS");
+    fps = fps_env && fps_env[0] ? atoi(fps_env) : 60;
+    fps = MAX(1, MIN(fps, 60));
+    now = tebox_now_us();
+    if (tebox_cast.last_us &&
+        now - tebox_cast.last_us < 1000000ull / (uint64_t)fps) {
+        return;
+    }
+    tebox_cast_ensure_sender();
+    g_mutex_lock(&tebox_cast.lock);
+    sender_busy = tebox_cast.busy || tebox_cast.has_pending;
+    if (sender_busy) {
+        tebox_cast.dropped++;
+    }
+    g_mutex_unlock(&tebox_cast.lock);
+    if (sender_busy) {
+        return;
+    }
+    tebox_calc_out_size(width, height, &out_w, &out_h);
+    copy = g_try_malloc((size_t)out_w * out_h * 4);
+    if (!copy) {
+        return;
+    }
+    src = pixman_image_create_bits(PIXMAN_x8r8g8b8, width, height,
+                                   (uint32_t *)pixels, stride);
+    dst = pixman_image_create_bits(PIXMAN_x8r8g8b8, out_w, out_h,
+                                   (uint32_t *)copy, out_w * 4);
+    if (out_w != width || out_h != height) {
+        pixman_transform_t scale;
+
+        pixman_transform_init_scale(&scale,
+                                    pixman_double_to_fixed((double)width / out_w),
+                                    pixman_double_to_fixed((double)height / out_h));
+        pixman_image_set_transform(src, &scale);
+        pixman_image_set_filter(src, PIXMAN_FILTER_BILINEAR, NULL, 0);
+    }
+    pixman_image_composite(PIXMAN_OP_SRC, src, NULL, dst, 0, 0, 0, 0, 0, 0,
+                           out_w, out_h);
+    pixman_image_unref(src);
+    pixman_image_unref(dst);
+    tebox_cast.last_us = now;
+    tebox_queue_frame(copy, (size_t)out_w * out_h * 4, -1, out_w, out_h,
+                      0 /* CAST_FMT_BGRA8888 */, now);
 }
 
 void tebox_cast_shutdown(void)
@@ -567,6 +868,11 @@ uint64_t tebox_cast_refresh_interval_ms(void)
 
 void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
                         bool y0_top)
+{
+}
+
+void tebox_cast_capture_pixels(const void *pixels, int width, int height,
+                               int stride)
 {
 }
 

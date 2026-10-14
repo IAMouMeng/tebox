@@ -105,7 +105,16 @@ constexpr int64_t kPrimaryDisplay = 0;
 constexpr int32_t kConfigId = 0;
 constexpr int32_t kWidth = 1080;
 constexpr int32_t kHeight = 2400;
-constexpr int32_t kVsyncPeriodNs = 16666666;  // ~60 Hz
+// Display refresh rate from androidboot.tebox.refresh_hz (default 60, 30..240).
+// The vsync rate caps every app's frame rate (benchmarks render on screen), so
+// boot-qemu.sh raises it where the host GPU has headroom.
+static int32_t teboxVsyncPeriodNs() {
+    char value[PROP_VALUE_MAX] = {};
+    int hz = __system_property_get("ro.boot.tebox.refresh_hz", value) > 0 ? atoi(value) : 0;
+    if (hz < 30 || hz > 240) hz = 60;
+    return static_cast<int32_t>(1000000000LL / hz);
+}
+static const int32_t kVsyncPeriodNs = teboxVsyncPeriodNs();
 constexpr int32_t kDpiX = 420000;
 constexpr int32_t kDpiY = 420000;
 
@@ -214,6 +223,7 @@ DisplayConfiguration primaryConfig() {
 }
 
 #include "gpu_buffer.h"
+#include "buffer_handle.h"
 #include "kms_display.h"
 
 class StubComposerClient : public BnComposerClient {
@@ -583,20 +593,32 @@ class StubComposerClient : public BnComposerClient {
         bool expected = false;
         if (!vsync_running_.compare_exchange_strong(expected, true)) return;
         vsync_thread_ = std::thread([this] {
+            // A fixed CLOCK_MONOTONIC timeline: each vsync fires at an absolute
+            // deadline and reports that ideal time. Relative sleeps drifted
+            // (every period ran long by the wakeup latency) and leaked that
+            // jitter into the timestamps, so SurfaceFlinger's vsync predictor
+            // mis-scheduled frames ("Frame time is in the future").
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            int64_t next = int64_t(now.tv_sec) * 1000000000LL + now.tv_nsec + kVsyncPeriodNs;
             while (vsync_running_.load()) {
-                auto sleep_ns = std::chrono::nanoseconds(kVsyncPeriodNs);
-                std::this_thread::sleep_for(sleep_ns);
+                struct timespec deadline = {static_cast<time_t>(next / 1000000000LL),
+                                            static_cast<long>(next % 1000000000LL)};
+                while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &deadline, nullptr) == EINTR) {
+                }
+                const int64_t ts = next;
+                next += kVsyncPeriodNs;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                const int64_t nowNs = int64_t(now.tv_sec) * 1000000000LL + now.tv_nsec;
+                if (nowNs > next) {  // stalled (suspend, heavy load): skip missed vsyncs
+                    next += ((nowNs - next) / kVsyncPeriodNs + 1) * kVsyncPeriodNs;
+                }
                 std::shared_ptr<IComposerCallback> cb;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     cb = callback_;
                 }
-                if (!cb) continue;
-                using clock = std::chrono::steady_clock;
-                int64_t ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                     clock::now().time_since_epoch())
-                                     .count();
-                cb->onVsync(kPrimaryDisplay, ts, kVsyncPeriodNs);
+                if (cb) cb->onVsync(kPrimaryDisplay, ts, kVsyncPeriodNs);
             }
         });
     }
@@ -701,8 +723,16 @@ class StubAllocator : public BnAllocator {
             uint32_t drm_stride = 0, drm_size = 0;
             const bool cpuOnly = static_cast<int>(effective.format) == 35 ||
                                  static_cast<int>(effective.format) == 0x21;
-            const bool virgl = qemuGbmUsesVirgl() && !cpuOnly;
-            if (virgl) {
+            const bool gfx = qemuGpuIsGfxstream() && !cpuOnly &&
+                             virglFormat(static_cast<int>(effective.format));
+            const bool virgl = !gfx && qemuGbmUsesVirgl() && !cpuOnly;
+            if (gfx) {
+                fd = virtgpuCreate(effective.width, effective.height,
+                                   static_cast<int>(effective.format), bpp, &drm_stride, &drm_size);
+                if (fd < 0) return ScopedAStatus::fromServiceSpecificError(1);
+                drm_stride /= bpp;  // pixels, like the other backends
+                backend = "virtgpu-gfxstream";
+            } else if (virgl) {
                 // CPU writers: CPU_WRITE_* (0xf0) or a camera HAL (CAMERA_OUTPUT).
                 fd = gbmCreate(effective.width, effective.height, static_cast<int>(effective.format),
                                (static_cast<int64_t>(effective.usage) & (0xf0 | (1LL << 17))) != 0,
@@ -718,7 +748,7 @@ class StubAllocator : public BnAllocator {
                 stride = static_cast<int32_t>(drm_stride);
                 size = drm_size;
                 if (effective.layerCount > 1) size *= static_cast<size_t>(effective.layerCount);
-                if (!virgl) backend = "drm-dumb";
+                if (!virgl && !gfx) backend = "drm-dumb";
             }
             if (fd < 0) {
                 fd = ashmemCreate(size);
@@ -730,6 +760,28 @@ class StubAllocator : public BnAllocator {
             }
             NativeHandle h;
             h.fds.emplace_back(ndk::ScopedFileDescriptor(fd));
+            if (gfx) {
+                // minigbm layout: the gfxstream guest Vulkan driver reads it.
+                tebox_cros_handle cros = {};
+                cros.fds[0] = fd;
+                for (int p = 1; p < TEBOX_CROS_MAX_FDS; ++p) cros.fds[p] = -1;
+                cros.strides[0] = static_cast<uint32_t>(stride * bpp);
+                cros.sizes[0] = static_cast<uint32_t>(size);
+                cros.width = static_cast<uint32_t>(effective.width);
+                cros.height = static_cast<uint32_t>(effective.height);
+                cros.format = bufferFormat(static_cast<int>(effective.format)).fourcc;
+                cros.use_flags = static_cast<uint64_t>(effective.usage);
+                cros.magic = TEBOX_CROS_MAGIC;
+                cros.pixel_stride = static_cast<uint32_t>(stride);
+                cros.droid_format = static_cast<int32_t>(effective.format);
+                cros.usage = static_cast<int32_t>(static_cast<int64_t>(effective.usage));
+                cros.num_planes = 1;
+                cros.total_size = size;
+                const int* ints = reinterpret_cast<const int*>(&cros.fds[1]);
+                h.ints.assign(ints, ints + TEBOX_CROS_NUM_INTS);
+                out->buffers.push_back(std::move(h));
+                continue;
+            }
             // ints: width, height, stride, format, usage_lo, usage_hi (gralloc-ish)
             h.ints = {effective.width, effective.height, stride,
                       static_cast<int32_t>(effective.format),

@@ -1,0 +1,36 @@
+package {
+    default_applicable_licenses: ["hardware_google_gfxstream_license"],
+}
+
+cc_library_static {
+    name: "libgfxstream_host_native_window",
+    defaults: ["gfxstream_host_cc_defaults"],
+    srcs: [
+        "native_sub_window_stub.cpp",
+    ],
+    target: {
+        host: {
+            srcs: ["native_sub_window_x11.cpp"],
+            static_libs: [
+                "libgfxstream_host_decoder_common",
+            ],
+        },
+        android: {
+            srcs: ["native_sub_window_android.cpp"],
+            shared_libs: [
+                "libnativewindow",
+            ],
+        },
+        darwin: {
+            srcs: ["native_sub_window_cocoa.mm"],
+        },
+        windows: {
+            srcs: ["native_sub_window_win32.cpp"],
+        },
+    },
+    export_include_dirs: ["include"],
+    header_libs: [
+        "libgfxstream_backend_headers",
+        "libgfxstream_thirdparty_opengl_headers",
+    ],
+}

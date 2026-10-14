@@ -3,11 +3,9 @@
 set -euo pipefail
 source "$(dirname "$0")/../scripts/env.sh"
 
-RUTABAGA_REPO="${RUTABAGA_REPO:-https://github.com/magma-gpu/rutabaga_gfx.git}"
-RUTABAGA_REF="${RUTABAGA_REF:-main}"
+# rutabaga_gfx (upstream 9f22cc9) and gfxstream (upstream 07ee40e) are kept in
+# tree with local fixes marked "tebox (local)"; nothing is cloned or patched.
 RUTABAGA_SRC="${RUTABAGA_SRC:-$ROOT/thirdparty/rutabaga_gfx}"
-GFXSTREAM_REPO="${GFXSTREAM_REPO:-https://github.com/google/gfxstream.git}"
-GFXSTREAM_REF="${GFXSTREAM_REF:-main}"
 GFXSTREAM_SRC="${GFXSTREAM_SRC:-$ROOT/thirdparty/gfxstream}"
 FEATURES="${RUTABAGA_FEATURES:-gfxstream}"
 
@@ -28,26 +26,9 @@ if ! pkg-config --exists gbm 2>/dev/null; then
   echo "NOTE: no system gbm.pc; on Debian/Ubuntu: sudo apt install libdrm-dev libglm-dev libstb-dev mesa-common-dev" >&2
 fi
 
-clone_or_update() { # repo ref dest
-  # Pinned submodule (the default paths): build exactly the recorded commit.
-  local rel="${3#"$ROOT"/}"
-  if [[ "$rel" != "$3" && "$(git -C "$ROOT" ls-files -s -- "$rel" | cut -c1-6)" == 160000 ]]; then
-    git -C "$ROOT" submodule update --init --depth 1 -- "$rel"
-    return
-  fi
-  if [[ -d "$3/.git" ]]; then
-    echo "reusing $3"
-    git -C "$3" fetch --depth 1 origin "$2" 2>/dev/null || true
-    git -C "$3" checkout "$2" 2>/dev/null || true
-  else
-    mkdir -p "$(dirname "$3")"
-    echo "cloning $1 ($2) -> $3"
-    git clone --depth 1 --branch "$2" "$1" "$3"
-  fi
-}
-
-clone_or_update "$GFXSTREAM_REPO" "$GFXSTREAM_REF" "$GFXSTREAM_SRC"
-clone_or_update "$RUTABAGA_REPO" "$RUTABAGA_REF" "$RUTABAGA_SRC"
+for src in "$GFXSTREAM_SRC" "$RUTABAGA_SRC"; do
+  [[ -f "$src/meson.build" ]] || { echo "missing sources at $src" >&2; exit 1; }
+done
 
 export PATH="$HOME/.cargo/bin:${PATH:-/usr/bin:/bin}"
 export PKG_CONFIG_PATH="$RUTABAGA_PREFIX/lib/pkgconfig:$RUTABAGA_PREFIX/lib/aarch64-linux-gnu/pkgconfig:$VIRGL_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"

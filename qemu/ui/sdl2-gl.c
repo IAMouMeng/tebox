@@ -85,6 +85,13 @@ void sdl2_gl_update(DisplayChangeListener *dcl,
     SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
     surface_gl_update_texture(scon->gls, scon->surface, x, y, w, h);
     scon->updates++;
+    /* Local tebox cast: 2D scanouts (virtio-gpu-rutabaga) have no GL fb. */
+    if (surface_format(scon->surface) == PIXMAN_x8r8g8b8) {
+        tebox_cast_capture_pixels(surface_data(scon->surface),
+                                  surface_width(scon->surface),
+                                  surface_height(scon->surface),
+                                  surface_stride(scon->surface));
+    }
 }
 
 void sdl2_gl_switch(DisplayChangeListener *dcl,

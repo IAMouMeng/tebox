@@ -8,6 +8,8 @@
 #   VARIANT=... ./run
 #
 # Env (optional): FORCE_VIRGL SNAPSHOT QEMU_DEBUG QEMU MEM SMP GRAPHIC
+#   FORCE_RUTABAGA (1 = gfxstream, 0 = VirGL; default from src/aosp/<variant>/GPU)
+#   SYSTEM_IMG VENDOR_IMG INITRD_IMG (use these images instead of the variant's)
 #   TEBOX_CAST TEBOX_CAST_SOCK TEBOX_CAST_FPS (host cast → host/cast/) ...
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -55,9 +57,10 @@ if [[ -z "$pick" ]] || [[ "$pick" =~ ^[0-9]+$ ]]; then
   default=1
   for v in "${VARIANTS[@]}"; do
     kid="$(tr -d '[:space:]' < "$ROOT/src/aosp/$v/KERNEL" 2>/dev/null || echo '?')"
+    gpu="$(tr -d '[:space:]' < "$ROOT/src/aosp/$v/GPU" 2>/dev/null || echo gfxstream)"
     mark=
     (( i == default )) && mark=" (default)"
-    printf '     %d. %s%s\n         kernel: %s\n' "$i" "$v" "$mark" "$kid"
+    printf '     %d. %s%s\n         kernel: %s  gpu: %s\n' "$i" "$v" "$mark" "$kid" "$gpu"
     i=$((i + 1))
   done
   echo
@@ -97,6 +100,13 @@ fi
 export VARIANT="$pick"
 echo "==> lunch $VARIANT"
 
-bash "$ROOT/scripts/ensure-guest-downloads.sh" "$VARIANT"
-bash "$ROOT/scripts/ensure-runtime-imgs.sh" "$VARIANT"
+# SYSTEM_IMG / VENDOR_IMG / INITRD_IMG replace the variant's images. The
+# variant's own images are fetched and built only while one of them is used
+# (the default vendor.img is built from the variant's system.img).
+if [[ -n "${SYSTEM_IMG:-}" && -n "${VENDOR_IMG:-}" && -n "${INITRD_IMG:-}" ]]; then
+  GUEST_SKIP_SYSTEM=1 bash "$ROOT/scripts/ensure-guest-downloads.sh" "$VARIANT"
+else
+  bash "$ROOT/scripts/ensure-guest-downloads.sh" "$VARIANT"
+  bash "$ROOT/scripts/ensure-runtime-imgs.sh" "$VARIANT"
+fi
 exec bash "$ROOT/scripts/boot-qemu.sh" "$VARIANT"

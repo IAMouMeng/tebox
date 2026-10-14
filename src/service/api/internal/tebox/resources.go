@@ -51,7 +51,71 @@ func (o *CreateOptions) normalize() error {
 		return fmt.Errorf("%w: disk_mb must be 1024..1048576", ErrInvalidOptions)
 	}
 	o.Name = strings.TrimSpace(o.Name)
+	if o.InstanceDir = strings.TrimSpace(o.InstanceDir); o.InstanceDir != "" {
+		if err := checkInstanceDir(&o.InstanceDir); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidOptions, err)
+		}
+	}
+	for _, img := range []*string{&o.SystemImage, &o.VendorImage, &o.InitramfsImage} {
+		if *img = strings.TrimSpace(*img); *img == "" {
+			continue
+		}
+		if !filepath.IsAbs(*img) {
+			return fmt.Errorf("%w: image path must be absolute: %s", ErrInvalidOptions, *img)
+		}
+		*img = filepath.Clean(*img)
+		if err := checkImage(*img); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidOptions, err)
+		}
+	}
 	return nil
+}
+
+// Unix socket paths (sun_path) hold 104 bytes on macOS, 108 on Linux; the
+// longest socket in an instance directory is "/qmp-input.sock".
+const maxInstanceDirLen = 103 - len("/qmp-input.sock")
+
+// checkInstanceDir requires an absolute path whose sockets fit sun_path and
+// that is absent or an empty directory, so Delete only removes what the
+// instance created.
+func checkInstanceDir(dir *string) error {
+	if !filepath.IsAbs(*dir) {
+		return fmt.Errorf("instance_dir must be absolute: %s", *dir)
+	}
+	*dir = filepath.Clean(*dir)
+	if *dir == "/" {
+		return fmt.Errorf("instance_dir cannot be /")
+	}
+	if len(*dir) > maxInstanceDirLen {
+		return fmt.Errorf("instance_dir is %d bytes; at most %d fit the instance's Unix sockets", len(*dir), maxInstanceDirLen)
+	}
+	entries, err := os.ReadDir(*dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("instance_dir %s: %w", *dir, err)
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("instance_dir %s is not empty", *dir)
+	}
+	return nil
+}
+
+// checkImage requires a non-empty regular file the API can read.
+func checkImage(path string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("image %s: %w", path, err)
+	}
+	if !st.Mode().IsRegular() || st.Size() == 0 {
+		return fmt.Errorf("image %s is not a non-empty file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("image %s: %w", path, err)
+	}
+	return f.Close()
 }
 
 // fillResources applies defaults for old metadata and measures disk use.
@@ -71,11 +135,7 @@ func (item *Instance) fillResources() {
 		}
 	}
 	if err == nil {
-		used := st.Size()
-		if sys, ok := st.Sys().(*syscall.Stat_t); ok {
-			used = int64(sys.Blocks) * 512
-		}
-		item.DiskUsedMB = int((used + 1<<20 - 1) >> 20)
+		item.DiskUsedMB = usedMB(img)
 	}
 	if item.State == "" {
 		item.State = StateStopped
@@ -108,4 +168,17 @@ func (m *Manager) watchBoot(id string, cmd *exec.Cmd, target string) {
 			return
 		}
 	}
+}
+
+// usedMB is the host space a (sparse or cloned) file occupies.
+func usedMB(path string) int {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	used := st.Size()
+	if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+		used = int64(sys.Blocks) * 512
+	}
+	return int((used + 1<<20 - 1) >> 20)
 }

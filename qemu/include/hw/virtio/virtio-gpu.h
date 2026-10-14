@@ -297,6 +297,18 @@ struct VirtIOGPURutabaga {
     bool headless;
     uint32_t num_capsets;
     struct rutabaga *rutabaga;
+    /*
+     * tebox (local): host-native (x8r8g8b8) copy of a scanout whose resource
+     * format differs, e.g. gfxstream R8G8B8A8. UIs such as cocoa assume the
+     * native layout, so they would show RGBA with red and blue swapped.
+     */
+    pixman_image_t *shadow[VIRTIO_GPU_MAX_SCANOUTS];
+    /*
+     * tebox (local): zero-copy scanout. Resource id -> QemuDmaBuf of the
+     * exported gfxstream ColorBuffer; scanouts showing one skip readback.
+     */
+    GHashTable *tebox_dmabufs;
+    bool tebox_dmabuf_scanout[VIRTIO_GPU_MAX_SCANOUTS];
 };
 
 /*

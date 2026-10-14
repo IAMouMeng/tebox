@@ -1,0 +1,74 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "objc_library")
+load("//:build_variables.bzl", "GFXSTREAM_HOST_COPTS", "GFXSTREAM_HOST_DEFINES", "GFXSTREAM_HOST_LINKOPTS")
+
+package(
+    default_applicable_licenses = ["//:gfxstream_license"],
+    default_visibility = ["//:gfxstream"],
+)
+
+objc_library(
+    name = "gfxstream_host_native_window-darwin",
+    srcs = [
+        "native_sub_window_cocoa.mm",
+    ],
+    hdrs = [
+        "include/gfxstream/host/native_sub_window.h",
+    ],
+    copts = GFXSTREAM_HOST_COPTS + [
+        "-Wno-deprecated-declarations",
+        "-std=c++20",
+        "-fno-objc-arc",
+    ],
+    defines = GFXSTREAM_HOST_DEFINES,
+    includes = ["include"],
+    sdk_frameworks = [
+        "AppKit",
+        "QuartzCore",
+        "IOSurface",
+    ],
+    target_compatible_with = [
+        "@platforms//os:macos",
+    ],
+    deps = [
+        "//host:gfxstream_backend_headers",
+        "//third_party/opengl:gfxstream_egl_headers",
+    ],
+)
+
+cc_library(
+    name = "gfxstream_host_native_window",
+    srcs = select({
+        "@platforms//os:macos": [],
+        "@platforms//os:windows": [
+            "native_sub_window_win32.cpp",
+        ],
+        "@platforms//os:linux": [
+            "native_sub_window_x11.cpp",
+        ],
+        "//conditions:default": [
+            "native_sub_window_stub.cpp",
+        ],
+    }),
+    hdrs = [
+        "include/gfxstream/host/native_sub_window.h",
+    ],
+    copts = GFXSTREAM_HOST_COPTS,
+    defines = GFXSTREAM_HOST_DEFINES,
+    includes = ["include"],
+    linkopts = GFXSTREAM_HOST_LINKOPTS,
+    deps = select({
+        "@platforms//os:macos": [
+            ":gfxstream_host_native_window-darwin",
+        ],
+        "//conditions:default": [],
+    }) + [
+        "//common/base:gfxstream_common_base",
+        "//common/logging:gfxstream_common_logging",
+        "//host:gfxstream_backend_headers",
+        "//host/decoder_common:gfxstream_host_decoder_common",
+        "//third_party/opengl:gfxstream_egl_headers",
+        "//third_party/opengl:gfxstream_gles2_headers",
+        "//third_party/opengl:gfxstream_gles3_headers",
+        "//third_party/xcb",
+    ],
+)

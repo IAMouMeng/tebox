@@ -1,3 +1,4 @@
+#include "../../graphics/stub/buffer_handle.h"
 #include "MesaAvcComponent.h"
 
 #include "C2Params.h"
@@ -19,6 +20,7 @@
 #include <android/hardware/graphics/mapper/IMapper.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <dlfcn.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -479,10 +481,18 @@ bool getNativeGraphicInfo(const NativeHandle& handle, NativeGraphicInfo* out) {
         }
     }
     if (baseInts < 6) return false;
-    const int width = metadata ? metadata[0] : handle.ints[0];
-    const int height = metadata ? metadata[1] : handle.ints[1];
-    const int format = metadata ? metadata[2] : handle.ints[3];
-    const int stride = metadata ? metadata[5] : handle.ints[2];
+    int width = metadata ? metadata[0] : handle.ints[0];
+    int height = metadata ? metadata[1] : handle.ints[1];
+    int format = metadata ? metadata[2] : handle.ints[3];
+    int stride = metadata ? metadata[5] : handle.ints[2];
+    // gfxstream buffers carry the minigbm layout (graphics/stub/buffer_handle.h).
+    TeboxBufferInfo tb;
+    if (!metadata && teboxBufferInfoFromInts(handle.ints.data(), baseInts, &tb) && tb.gfxstream) {
+        width = tb.width;
+        height = tb.height;
+        format = tb.format;
+        stride = tb.stride;
+    }
     if (width <= 0 || height <= 0 || stride < width ||
         format != AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM)
         return false;
@@ -765,6 +775,20 @@ bool MesaAvcComponent::submitEncode(PendingWork* pending, mesa_video::EncodeTick
     // and encode on the host. Never fall back to mapper CPU readback.
     int rc = -ENOSYS;
     bool submitted = false;
+    // The producer (SurfaceFlinger composing a virtual display, a camera...)
+    // may still be drawing into the buffer: wait for its acquire fence before
+    // the host encoder reads the dma-buf, or it encodes stale content.
+    for (const auto& buffer : work->input.buffers) {
+        for (const auto& block : buffer.blocks) {
+            for (const auto& fd : block.fence.fds) {
+                if (fd.get() < 0) continue;
+                struct pollfd p = {fd.get(), POLLIN, 0};
+                int ret;
+                do { ret = poll(&p, 1, 1000); } while (ret < 0 && errno == EINTR);
+                if (ret <= 0) ALOGW("encode: input acquire fence did not signal (%d)", ret);
+            }
+        }
+    }
     for (const BaseBlock& bb : pending->baseBlocks) {
         if (bb.getTag() != BaseBlock::nativeBlock) continue;
         NativeGraphicInfo info;

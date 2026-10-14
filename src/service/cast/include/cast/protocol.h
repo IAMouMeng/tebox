@@ -13,6 +13,10 @@ extern "C" {
 
 #define CAST_FMT_BGRA8888 0u
 #define CAST_FMT_RGBA8888 1u /* GLES readback (egl-headless) */
+/* Format flag: the frame is in a dma-buf sent with SCM_RIGHTS alongside the
+ * header (QEMU's GPU scaled it there); the 4-byte body is unused. The
+ * receiver acks with one byte once the buffer may be reused. */
+#define CAST_FMT_DMABUF   0x100u
 
 enum cast_codec {
     CAST_CODEC_H264 = 0,
@@ -69,6 +73,56 @@ struct cast_camera_header {
     uint32_t size;
     uint32_t reserved;
     uint64_t pts_us;
+} __attribute__((packed));
+
+/* Host video encoder for the guest Codec2 HAL (gfxstream backend).
+ * virtio-serial port "tebox.venc" (socket venc.sock next to cast.sock).
+ * Messages both ways: struct cast_venc_hdr, then hdr.size payload bytes.
+ * The guest sends only virtio-gpu resource ids; tebox-cast reads the pixels
+ * from QEMU (res.sock, virtio-gpu-rutabaga.c) and encodes them on the host.
+ * Multi-byte fields are little-endian (both ends are ARM64). */
+#define CAST_VENC_MAGIC 0x434e4556u /* 'VENC' */
+
+enum cast_venc_type {
+    CAST_VENC_CONFIG = 1,     /* guest -> host: struct cast_venc_config */
+    CAST_VENC_FRAME = 2,      /* guest -> host: struct cast_venc_frame */
+    CAST_VENC_CLOSE = 3,      /* guest -> host: end the session */
+    CAST_VENC_BITSTREAM = 16, /* host -> guest: struct cast_venc_out + H.264 */
+};
+
+#define CAST_VENC_FLAG_KEY 0x01u /* FRAME: force IDR; BITSTREAM: is IDR */
+
+struct cast_venc_hdr {
+    uint32_t magic;
+    uint32_t type;
+    uint32_t size;
+} __attribute__((packed));
+
+struct cast_venc_config {
+    uint32_t width;
+    uint32_t height;
+    uint32_t bitrate;   /* bits/s */
+    uint32_t fps;
+    uint32_t gop_sec;
+} __attribute__((packed));
+
+struct cast_venc_frame {
+    uint64_t index;     /* submission order; echoed in the reply */
+    int64_t pts_us;
+    uint32_t resource_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;    /* Android PixelFormat: 1 RGBA, 2 RGBX, 5 BGRA */
+    uint32_t flags;
+} __attribute__((packed));
+
+/* One reply per frame, in order; size 0 = the encoder held the frame back
+ * or failed (status < 0). Annex-B with SPS/PPS before each IDR. */
+struct cast_venc_out {
+    uint64_t index;
+    int64_t pts_us;
+    int32_t status;
+    uint32_t flags;
 } __attribute__((packed));
 
 const char *cast_codec_name(enum cast_codec c);

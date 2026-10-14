@@ -17,15 +17,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libx11-dev \
       zlib1g-dev libzstd-dev libpng-dev libjpeg-dev linux-libc-dev \
       libavcodec-dev libavutil-dev libswscale-dev \
+      rustc cargo bindgen libclang-dev libvulkan-dev glslang-tools \
     && rm -rf /var/lib/apt/lists/*
 COPY .ci/requirements.txt /tmp/requirements.txt
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install -q -r /tmp/requirements.txt
 ENV PATH=/opt/venv/bin:$PATH
 
 FROM deps AS build
-# R1P renders through VirGL on Mali GLES; gfxstream/rutabaga (Vulkan) is
-# not built here. Only what the QEMU/VirGL build reads, so tebox-cast or launcher changes do
-# not rebuild QEMU.
+# Two GPU backends: VirGL on Mali GLES and gfxstream (rutabaga) on Mali
+# Vulkan, the default (boot-qemu.sh FORCE_RUTABAGA). Only what the QEMU
+# build reads, so tebox-cast or launcher changes do not rebuild QEMU.
 COPY .ci /src/.ci
 COPY scripts/env.sh /src/scripts/env.sh
 COPY thirdparty /src/thirdparty
@@ -33,14 +34,15 @@ COPY qemu /src/qemu
 WORKDIR /src
 RUN bash .ci/build-libepoxy.sh \
  && VIRGL_VIDEO=1 VIRGL_VIDEO_BACKEND=v4l2 bash .ci/build-virglrenderer.sh \
- && RUTABAGA=0 VIRGL_VIDEO=1 QEMU_INSTALL=1 bash .ci/build-qemu.sh
+ && bash .ci/build-rutabaga.sh \
+ && RUTABAGA=1 VIRGL_VIDEO=1 QEMU_INSTALL=1 bash .ci/build-qemu.sh
 # Host cast encoder: direct V4L2 (mvxenc), Debian's FFmpeg as fallback.
 COPY src/service/cast /src/src/service/cast
 RUN make -C src/service/cast CAST_SYSTEM_FFMPEG=1
 # Collect the shared libraries QEMU needs, except libc and the GL/EGL/GBM
 # stack, which must come from the CIX userspace driver at runtime.
 RUN set -e; P=/src/prebuilts/host/linux-arm64; mkdir -p /out/lib; \
-    LD_LIBRARY_PATH=$P/libepoxy/lib:$P/virglrenderer/lib \
+    LD_LIBRARY_PATH=$P/libepoxy/lib:$P/virglrenderer/lib:$P/rutabaga/lib \
       ldd $P/qemu/bin/qemu-system-aarch64 /src/out/service/tebox-cast \
       | awk '/=> \//{print $3}' | sort -u \
       | grep -vE '/(libc|libm|libdl|libpthread|librt|ld-linux[^/]*|libEGL[^/]*|libGL[^/]*|libGLES[^/]*|libgbm|libGLdispatch|libGLX)\.so' \
@@ -54,13 +56,18 @@ RUN echo 'Acquire::Retries "8";' > /etc/apt/apt.conf.d/80-retries \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-minimal e2fsprogs procps iproute2 adb \
       libdrm2 libwayland-client0 libwayland-server0 \
+      libvulkan1 vulkan-tools \
     && rm -rf /var/lib/apt/lists/*
 # Every package from thirdparty/host-drivers/<platform> (r1p-deploy.sh).
 COPY host-drivers/ /tmp/drivers/
 # Only /opt is needed: the debs also carry ./lib (would break usrmerge),
 # udev/systemd units and firmware that belong to the host, not the container.
+# Plus the Vulkan ICD manifest (gfxstream renders on Mali Vulkan).
 RUN for d in /tmp/drivers/*.deb; do dpkg -x "$d" /tmp/drivers/root; done \
- && cp -a /tmp/drivers/root/opt/. /opt/ && rm -rf /tmp/drivers
+ && cp -a /tmp/drivers/root/opt/. /opt/ \
+ && if [ -d /tmp/drivers/root/etc/vulkan/icd.d ]; then \
+      mkdir -p /etc/vulkan/icd.d && cp -a /tmp/drivers/root/etc/vulkan/icd.d/. /etc/vulkan/icd.d/; fi \
+ && rm -rf /tmp/drivers
 ARG VARIANT
 ARG KERNEL_ID
 ENV TEBOX=/opt/tebox VARIANT=${VARIANT} KERNEL_ID=${KERNEL_ID}

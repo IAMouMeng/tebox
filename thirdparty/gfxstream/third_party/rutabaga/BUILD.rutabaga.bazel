@@ -1,0 +1,94 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")  # @unused
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+package(
+    default_visibility = ["@//:gfxstream"],
+)
+
+rust_library(
+    name = "rutabaga_gfx",
+    srcs = glob([
+        "src/**/*.rs",
+    ]),
+    crate_features = [
+        "vulkano",
+    ],
+    edition = "2021",
+    proc_macro_deps = [
+        "@rutabaga_crate_deps//:remain",
+    ],
+    rustc_flags = [
+        "--cfg=fence_passing_option1",
+    ],
+    deps = [
+        "@mesa//:magma_gpu_rs",
+        "@rutabaga_crate_deps//:anyhow",
+        "@rutabaga_crate_deps//:cfg-if",
+        "@rutabaga_crate_deps//:libc",
+        "@rutabaga_crate_deps//:log",
+        "@rutabaga_crate_deps//:nix",
+        "@rutabaga_crate_deps//:serde",
+        "@rutabaga_crate_deps//:serde_json",
+        "@rutabaga_crate_deps//:thiserror",
+        "@rutabaga_crate_deps//:vulkano",
+        "@rutabaga_crate_deps//:zerocopy",
+    ],
+)
+
+rust_library(
+    name = "rutabaga_gfx_gfxstream",
+    srcs = glob([
+        "src/**/*.rs",
+    ]),
+    crate_features = [
+        "gfxstream",
+    ],
+    crate_name = "rutabaga_gfx",
+    edition = "2021",
+    proc_macro_deps = [
+        "@rutabaga_crate_deps//:remain",
+    ],
+    rustc_flags = [
+        "--cfg=fence_passing_option1",
+    ],
+    deps = [
+        "@//host:gfxstream_backend_shared",
+        "@mesa//:magma_gpu_rs",
+        "@rutabaga_crate_deps//:anyhow",
+        "@rutabaga_crate_deps//:cfg-if",
+        "@rutabaga_crate_deps//:libc",
+        "@rutabaga_crate_deps//:log",
+        "@rutabaga_crate_deps//:nix",
+        "@rutabaga_crate_deps//:serde",
+        "@rutabaga_crate_deps//:serde_json",
+        "@rutabaga_crate_deps//:thiserror",
+        "@rutabaga_crate_deps//:zerocopy",
+    ],
+)
+
+rust_binary(
+    name = "rutabaga_gfx_kumquat_server",
+    srcs = glob([
+        "kumquat/server/src/**/*.rs",
+    ]),
+    binary_name = "kumquat_virtio",
+    edition = "2021",
+    features = [
+        "gfxstream",
+    ],
+    proc_macro_deps = [
+        "@rutabaga_crate_deps//:remain",
+    ],
+    deps = [
+        ":rutabaga_gfx_gfxstream",
+        "@//host:gfxstream_backend_static",
+        "@mesa//:magma_gpu_rs",
+        "@rutabaga_crate_deps//:anyhow",
+        "@rutabaga_crate_deps//:clap",
+        "@rutabaga_crate_deps//:libc",
+        "@rutabaga_crate_deps//:log",
+        "@rutabaga_crate_deps//:nix",
+        "@rutabaga_crate_deps//:thiserror",
+        "@rutabaga_crate_deps//:zerocopy",
+    ],
+)

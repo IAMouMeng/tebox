@@ -15,7 +15,7 @@ import (
 // Guest input reaches an instance three ways, all sharing one QEMU input
 // monitor (see internal/tebox/input.go):
 //   - Instance.control_port: plain TCP, JSON lines (tebox.InputEvent)
-//   - "TEBOX-CTRL/1 <id>\n" on the multiplexed cast endpoint, then JSON lines
+//   - "TEBOX-CTRL/1 <id>\n" on the control endpoint (9905), then JSON lines
 //   - gRPC SendInput / StreamInput (and WatchClipboard for guest copies)
 
 func handleControl(conn net.Conn, reader *bufio.Reader, mgr *tebox.Manager, id string) {

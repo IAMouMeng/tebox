@@ -26,11 +26,21 @@ service AndroidService {
 message Empty {}
 message ListInstancesRequest {}
 // Zero fields take the defaults: 4 cores, 4096 MB memory, 8192 MB disk.
+// Empty image paths take the variant's images under src/aosp/<variant>/images.
 message CreateInstanceRequest {
   string name = 1;
   int32 cpu_cores = 2;   // 1..host cores
   int32 memory_mb = 3;   // 1024..65536
   int32 disk_mb = 4;     // userdata size, 1024..1048576
+  // Absolute paths on the API host. QEMU opens system and vendor read-only,
+  // so instances can share them.
+  string system_image = 5;     // ext4 system.img
+  string vendor_image = 6;     // ext4 vendor.img
+  string initramfs_image = 7;  // gzip cpio initramfs.img
+  // Instance directory on the API host: userdata.img, QMP/cast
+  // sockets. Absolute, absent or empty, at most 88 bytes (Unix socket
+  // paths); removed by DeleteInstance. Empty: <data root>/instances/<id>.
+  string instance_dir = 8;
 }
 
 message InstanceRequest {
@@ -53,7 +63,7 @@ message Instance {
   string id = 1;
   string name = 2;
   string variant = 3;
-  string dir = 4;
+  string dir = 4;  // instance directory (userdata, sockets)
   int32 adb_port = 5;
   int32 pid = 6;
   bool running = 7;
@@ -67,6 +77,10 @@ message Instance {
   int32 disk_mb = 13;       // userdata size
   int32 disk_used_mb = 14;  // host space userdata.img occupies
   InstanceState state = 15;
+  // Images the instance boots (the variant's unless set at creation).
+  string system_image = 16;
+  string vendor_image = 17;
+  string initramfs_image = 18;
 }
 
 enum InstanceState {

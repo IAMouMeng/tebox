@@ -48,6 +48,10 @@ int cast_encoder_push(struct cast_encoder *enc, uint32_t format,
                       const uint8_t *pixels, int width, int height,
                       int stride, uint64_t pts_us,
                       struct cast_packet **out, int *out_count);
+/* Same for a frame in a dma-buf; a V4L2 encoder reads it in place. */
+int cast_encoder_push_dmabuf(struct cast_encoder *enc, uint32_t format, int fd,
+                             int width, int height, int stride, uint64_t pts_us,
+                             struct cast_packet **out, int *out_count);
 
 void cast_encoder_free_packets(struct cast_packet *pkts, int count);
 
