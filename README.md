@@ -15,7 +15,7 @@
 
 <p align="center">
   <b>tebox — 桌面端 Android GSI 运行基座</b><br>
-  通用 GSI 镜像启动能力  VirGL 图形加速  Soft Vendor HAL 示例
+  通用 GSI 镜像启动能力  gfxstream / VirGL 图形加速  Soft Vendor HAL 示例
 </p>
 
 <p align="center">
@@ -27,14 +27,17 @@
 
 ## 项目简介
 
-**tebox** 是一套面向桌面端的 **Android GSI 运行基座**：在 QEMU 上提供通用的 ARM64 GSI 镜像启动能力，并内置 VirGL / Mesa 图形加速、GKI 内核与 soft vendor HAL 示例，方便你直接上手验证、二次开发和自动化。
+**tebox** 是一套面向桌面端的 **Android GSI 运行基座**：在 QEMU 上提供通用的 ARM64 GSI 镜像启动能力，并内置 gfxstream（ANGLE + Vulkan）与 VirGL（Mesa）两套图形加速、GKI 内核与 soft vendor HAL 示例，方便你直接上手验证、二次开发和自动化。
 
 仓库：[github.com/opencecs/tebox](https://github.com/opencecs/tebox)  官网：[www.opencecs.com](https://www.opencecs.com)
 
 ### 基座能力
 
 - **通用 GSI 运行**：以官方 aosp_arm64 GSI 为默认示例，也可替换为任意兼容的 ARM64 GSI（例如 Google、Samsung 等厂商发布的 GSI / Treble 镜像，或由 Pixel、Galaxy 等设备提取的 system 镜像）
-- **图形与输入**：VirGL GPU 加速、virtio 触摸屏
+- **图形与输入**：gfxstream（默认）与 VirGL 两种 GPU 加速可选，virtio 触摸屏
+  - 每个镜像目录下的 `GPU` 文件（与 `KERNEL` 同级）写 `gfxstream` 或 `virgl` 即可切换；单次启动也可用 `FORCE_RUTABAGA=1/0` 覆盖
+  - gfxstream：客体 GLES 经 ANGLE 转为 Vulkan，在宿主 GPU 上执行，显示 / 投屏 / 编码全程走 GPU（dma-buf 零拷贝）
+  - 性能：相较原生运行，目前 GPU 约有 20% 的损耗；与 VirGL 相比，因 GL 转 Vulkan 约多 5% 的损耗
 - **编解码**：Gallium video 直通到宿主后端（Linux VA-API / macOS VideoToolbox），Mesa 客体侧注册 `c2.mesa.*` 编解码组件（H.264 / H.265 / VP9 / AV1）
 - **开机所需 HAL 示例**：已内置 Graphics、KeyMint（soft）、Health、Power、Audio 等 soft / stub 实现，可按厂商需求裁剪或替换
 
@@ -54,7 +57,7 @@
 
 | 宿主 | 说明 |
 | --- | --- |
-| **macOS ARM64**（Apple Silicon，M1–M4） | 推荐；HVF + VirGL 已验证 |
+| **macOS ARM64**（Apple Silicon，M1–M4） | 推荐；HVF + gfxstream / VirGL 已验证 |
 | **Linux ARM64** | 支持原生构建与运行（KVM） |
 | **Linux x86_64** | 主要用于交叉编译 Android ARM64 客体 |
 | **Windows x86_64** | 原生 QEMU/VirGL PE 运行时 |
@@ -64,7 +67,13 @@
 ## 启动截图
 
 <p align="center">
-  <img src="docs/screenshots/launched.png" width="240" alt="tebox 启动界面">
+  <img src="docs/screenshots/launched.png" width="240" alt="AOSP GSI 启动界面">
+  <img src="docs/screenshots/coloros_launched.png" width="240" alt="厂商 ROM 示例：ColorOS GSI">
+  <img src="docs/screenshots/antutu_on_myt_r1p_cix8180.png" width="240" alt="安兔兔跑分：R1P（CIX 8180）">
+</p>
+
+<p align="center">
+  左：AOSP GSI　中：厂商 ROM 示例（ColorOS GSI）　右：安兔兔 V12 跑分（R1P / CIX 8180，gfxstream：ANGLE + Vulkan on Mali-G720）
 </p>
 
 ## 正确拉取源码
