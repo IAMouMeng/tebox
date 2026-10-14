@@ -67,6 +67,10 @@ elif ! grep -qE '#define CONFIG_OPENGL( 1)?$' "$BUILD/config-host.h" 2>/dev/null
 elif grep -qE '#define CONFIG_GTK( 1)?$' "$BUILD/config-host.h" 2>/dev/null; then
   # Homebrew GTK on macOS is not X11, so ui/gtk-egl.c does not compile.
   NEED_RECONF=1
+elif [[ "$RUTABAGA" == 1 ]] && ! "$BUILD/qemu-system-aarch64" -device help 2>/dev/null | grep -q 'virtio-gpu-rutabaga'; then
+  # Configured before rutabaga was built: meson keeps the old (not found)
+  # result until it reconfigures.
+  NEED_RECONF=1
 elif [[ "${QEMU_INSTALL:-0}" == 1 ]] && ! grep -Fq "\"value\": \"$QEMU_PREFIX\"" "$BUILD/meson-info/intro-buildoptions.json" 2>/dev/null; then
   NEED_RECONF=1
 elif [[ "$HOST_OS" != darwin ]] && grep -A1 '"name": "vhost_user"' "$BUILD/meson-info/intro-buildoptions.json" 2>/dev/null | grep -q '"value": "disabled"'; then

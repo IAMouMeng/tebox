@@ -1,0 +1,9 @@
+prefix=/Users/myt/Desktop/work/GKI/prebuilts/host/darwin-arm64/rutabaga
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: rutabaga_gfx_ffi
+Description: C FFI bindings to Rutabaga VGI
+Version: 0.1.85
+Libs: -L${libdir} -lrutabaga_gfx_ffi
+Cflags: -I${includedir}

@@ -1,0 +1,15 @@
+diff --git a/ffi/src/lib.rs b/ffi/src/lib.rs
+index b68e81f..3adf370 100644
+--- a/ffi/src/lib.rs
++++ b/ffi/src/lib.rs
+@@ -273,7 +273,9 @@ pub unsafe extern "C" fn rutabaga_init(builder: &rutabaga_builder, ptr: &mut *mu
+         let result = RutabagaBuilder::new(builder.capset_mask, fence_handler)
+             .set_default_component(component)
+             .set_use_external_blob(false)
+-            .set_use_egl(true)
++            // macOS has no EGL: gfxstream then uses its GLES translator on
++            // the system OpenGL (as the Android emulator does there).
++            .set_use_egl(!cfg!(target_os = "macos"))
+             .set_wsi(rutabaga_wsi)
+             .set_debug_handler(debug_handler_opt)
+             .set_rutabaga_paths(rutabaga_paths_opt)

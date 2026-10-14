@@ -6,8 +6,8 @@ source "$(dirname "$0")/../scripts/env.sh"
 RUTABAGA_REPO="${RUTABAGA_REPO:-https://github.com/magma-gpu/rutabaga_gfx.git}"
 RUTABAGA_REF="${RUTABAGA_REF:-main}"
 RUTABAGA_SRC="${RUTABAGA_SRC:-$ROOT/thirdparty/rutabaga_gfx}"
-GFXSTREAM_REPO="${GFXSTREAM_REPO:-https://github.com/google/gfxstream.git}"
-GFXSTREAM_REF="${GFXSTREAM_REF:-main}"
+# gfxstream is kept in tree (thirdparty/gfxstream, upstream 07ee40e plus local
+# fixes marked "tebox (local)"); it is not cloned or patched here.
 GFXSTREAM_SRC="${GFXSTREAM_SRC:-$ROOT/thirdparty/gfxstream}"
 FEATURES="${RUTABAGA_FEATURES:-gfxstream}"
 
@@ -35,6 +35,11 @@ clone_or_update() { # repo ref dest
     git -C "$ROOT" submodule update --init --depth 1 -- "$rel"
     return
   fi
+  # A source tree without git (e.g. a Docker build context): build it as is.
+  if [[ -n "$(ls -A "$3" 2>/dev/null)" && ! -e "$3/.git" ]]; then
+    echo "using $3"
+    return
+  fi
   if [[ -d "$3/.git" ]]; then
     echo "reusing $3"
     git -C "$3" fetch --depth 1 origin "$2" 2>/dev/null || true
@@ -46,8 +51,21 @@ clone_or_update() { # repo ref dest
   fi
 }
 
-clone_or_update "$GFXSTREAM_REPO" "$GFXSTREAM_REF" "$GFXSTREAM_SRC"
+[[ -f "$GFXSTREAM_SRC/meson.build" ]] || { echo "missing gfxstream sources at $GFXSTREAM_SRC" >&2; exit 1; }
 clone_or_update "$RUTABAGA_REPO" "$RUTABAGA_REF" "$RUTABAGA_SRC"
+
+# Local fixes on top of the pinned rutabaga submodule (.ci/patches/<project>-*.patch);
+# a patch that no longer applies cleanly is assumed to be applied already.
+apply_patches() { # project src
+  local p
+  for p in "$ROOT"/.ci/patches/"$1"-*.patch; do
+    [[ -f "$p" ]] || continue
+    if git -C "$2" apply --check "$p" 2>/dev/null; then
+      git -C "$2" apply "$p" && echo "applied $(basename "$p")"
+    fi
+  done
+}
+apply_patches rutabaga "$RUTABAGA_SRC"
 
 export PATH="$HOME/.cargo/bin:${PATH:-/usr/bin:/bin}"
 export PKG_CONFIG_PATH="$RUTABAGA_PREFIX/lib/pkgconfig:$RUTABAGA_PREFIX/lib/aarch64-linux-gnu/pkgconfig:$VIRGL_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
