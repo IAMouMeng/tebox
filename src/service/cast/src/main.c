@@ -2,6 +2,7 @@
 #include "cast/control.h"
 #include "cast/encoder.h"
 #include "cast/media.h"
+#include "cast/venc.h"
 #include "cast/transport.h"
 
 #include <getopt.h>
@@ -13,6 +14,8 @@
 #include <unistd.h>
 
 static volatile sig_atomic_t g_run = 1;
+
+static struct cast_venc *g_venc;
 
 struct app {
     struct cast_encoder *enc;
@@ -167,6 +170,17 @@ static void emit_packets(struct app *app, struct cast_packet *pkts, int n)
         }
     }
     cast_encoder_free_packets(pkts, n);
+}
+
+static int push_frame(struct app *app, const struct cast_frame *fr, uint64_t pts_us,
+                      struct cast_packet **pkts, int *n)
+{
+    if (fr->dmabuf) {
+        return cast_encoder_push_dmabuf(app->enc, fr->format, fr->dmabuf_fd, (int)fr->width,
+                                        (int)fr->height, (int)fr->stride, pts_us, pkts, n);
+    }
+    return cast_encoder_push(app->enc, fr->format, fr->data, (int)fr->width,
+                             (int)fr->height, (int)fr->stride, pts_us, pkts, n);
 }
 
 static int run_demo(struct app *app, int w, int h, int seconds)
@@ -373,7 +387,11 @@ int main(int argc, char **argv)
         char dir[sizeof(capture_sock)];
 
         snprintf(dir, sizeof(dir), "%s", capture_sock);
-        app.media = cast_media_open(dirname(dir));
+        const char *media_dir = dirname(dir);
+
+        app.media = cast_media_open(media_dir);
+        /* Host H.264 encoding for the guest Codec2 HAL (venc.sock/res.sock). */
+        g_venc = cast_venc_start(media_dir);
         cast_transport_set_uplink(app.tx, on_uplink, &app);
     }
 
@@ -390,13 +408,11 @@ int main(int argc, char **argv)
          * Re-encode the last frame at once: a static screen sends nothing. */
         if (cast_transport_try_accept(app.tx) == 2) {
             cast_encoder_force_idr(app.enc);
-            if (last.data) {
+            if (last.data || last.dmabuf) {
                 struct cast_packet *pkts = NULL;
                 int n = 0;
 
-                if (cast_encoder_push(app.enc, last.format, last.data,
-                                      (int)last.width, (int)last.height,
-                                      (int)last.stride, 0, &pkts, &n) == 0) {
+                if (push_frame(&app, &last, 0, &pkts, &n) == 0) {
                     emit_packets(&app, pkts, n);
                 }
             }
@@ -417,10 +433,12 @@ int main(int argc, char **argv)
             struct cast_packet *pkts = NULL;
             int n = 0;
 
-            if (cast_encoder_push(app.enc, fr.format, fr.data, (int)fr.width,
-                                  (int)fr.height, (int)fr.stride,
-                                  fr.pts_us, &pkts, &n) == 0) {
+            if (push_frame(&app, &fr, fr.pts_us, &pkts, &n) == 0) {
                 emit_packets(&app, pkts, n);
+            }
+            if (fr.dmabuf) {
+                /* The encoder is done with it: QEMU may render the next one. */
+                cast_capture_ack(cap);
             }
         }
         cast_frame_free(&last);
@@ -433,6 +451,7 @@ int main(int argc, char **argv)
             (unsigned long long)app.packets_out);
 
 out:
+    cast_venc_stop(g_venc);
     cast_media_close(app.media);
     cast_capture_destroy(cap);
     cast_control_destroy(app.ctrl);

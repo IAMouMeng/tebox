@@ -33,6 +33,15 @@ static void egl_refresh(DisplayChangeListener *dcl)
 static void egl_gfx_update(DisplayChangeListener *dcl,
                            int x, int y, int w, int h)
 {
+    egl_dpy *edpy = container_of(dcl, egl_dpy, dcl);
+
+    /* Local tebox cast: 2D scanouts (virtio-gpu-rutabaga) have no GL fb. */
+    if (edpy->ds && surface_format(edpy->ds) == PIXMAN_x8r8g8b8) {
+        tebox_cast_capture_pixels(surface_data(edpy->ds),
+                                  surface_width(edpy->ds),
+                                  surface_height(edpy->ds),
+                                  surface_stride(edpy->ds));
+    }
 }
 
 static void egl_gfx_switch(DisplayChangeListener *dcl,
@@ -177,7 +186,14 @@ static void egl_scanout_flush(DisplayChangeListener *dcl,
         egl_fb_blit(&edpy->blit_fb, &edpy->guest_fb, edpy->y_0_top);
     }
 
-    egl_fb_read(edpy->ds, &edpy->blit_fb);
+    /*
+     * Local tebox: TEBOX_EGL_READBACK=0 skips the full-frame CPU readback
+     * into the console surface when nothing (VNC, screendump) consumes it;
+     * cast gets the frame on the GPU below.
+     */
+    if (g_strcmp0(g_getenv("TEBOX_EGL_READBACK"), "0")) {
+        egl_fb_read(edpy->ds, &edpy->blit_fb);
+    }
     /* Local tebox cast: headless hosts (CIX R1P) have no SDL window. */
     tebox_cast_capture(edpy->guest_fb.framebuffer, edpy->guest_fb.width,
                        edpy->guest_fb.height, edpy->y_0_top);

@@ -9,6 +9,12 @@
  * Shared by the SDL and egl-headless displays. */
 void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
                         bool y0_top);
+/*
+ * CPU surfaces (2D scanouts, e.g. virtio-gpu-rutabaga/gfxstream): x8r8g8b8
+ * pixels, top-down. Same rate limit, size cap and drop policy as above.
+ */
+void tebox_cast_capture_pixels(const void *pixels, int width, int height,
+                               int stride);
 void tebox_cast_shutdown(void);
 
 /* True when TEBOX_CAST=1. */

@@ -21,6 +21,8 @@ struct cast_frame {
     uint64_t pts_us;
     uint8_t *data;
     size_t size;
+    bool dmabuf;    /* pixels are in dmabuf_fd (owned), data is NULL */
+    int dmabuf_fd;
 };
 
 /* Listen on a Unix domain socket for QEMU tebox-cast-hook frames. */
@@ -29,6 +31,8 @@ void cast_capture_destroy(struct cast_capture *cap);
 
 /* Non-blocking: 1 = frame, 0 = none, -1 = error/disconnect. */
 int cast_capture_poll_frame(struct cast_capture *cap, struct cast_frame *out);
+/* Lets QEMU reuse the dma-buf of the last frame (see CAST_FMT_DMABUF). */
+void cast_capture_ack(struct cast_capture *cap);
 void cast_frame_free(struct cast_frame *f);
 
 #ifdef __cplusplus

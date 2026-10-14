@@ -9,6 +9,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#ifdef __linux__
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
+#endif
 
 struct cast_encoder {
     struct cast_encoder_cfg cfg;
@@ -28,6 +33,7 @@ struct cast_encoder {
     int v4l2_w, v4l2_h;
     uint32_t v4l2_format;
     bool v4l2_failed;
+    bool v4l2_no_dmabuf; /* the encoder cannot read our dma-buf layout */
 };
 
 static void scale_dims(int src_w, int src_h, int max_w, int max_h,
@@ -406,9 +412,11 @@ int cast_encoder_push_bgra(struct cast_encoder *enc,
 
 /* 1 = not handled here (use FFmpeg), 0 = encoded, <0 = error. */
 static int push_v4l2(struct cast_encoder *enc, uint32_t format,
-                     const uint8_t *pixels, int width, int height, int stride,
+                     const uint8_t *pixels, int dmabuf_fd, size_t dmabuf_len,
+                     int width, int height, int stride,
                      uint64_t pts_us, struct cast_packet **out, int *out_count)
 {
+    const bool dmabuf = dmabuf_fd >= 0;
     const uint8_t *data;
     size_t size;
     bool key;
@@ -422,8 +430,12 @@ static int push_v4l2(struct cast_encoder *enc, uint32_t format,
         (width & 1) || (height & 1)) {
         return 1; /* FFmpeg scales and handles other codecs */
     }
+    if (dmabuf && enc->v4l2_no_dmabuf) {
+        return 1;
+    }
     if (!enc->v4l2 || enc->v4l2_w != width || enc->v4l2_h != height ||
-        enc->v4l2_format != format) {
+        enc->v4l2_format != format || cast_v4l2_dmabuf_input(enc->v4l2) != dmabuf ||
+        (dmabuf && cast_v4l2_input_stride(enc->v4l2) != stride)) {
         int fps = enc->cfg.fps > 0 ? enc->cfg.fps : 30;
         int gop_sec = enc->cfg.gop_sec > 0 ? enc->cfg.gop_sec : 2;
 
@@ -431,9 +443,13 @@ static int push_v4l2(struct cast_encoder *enc, uint32_t format,
         enc->v4l2 = cast_v4l2_open(width, height, format == CAST_FMT_RGBA8888,
                                    fps, enc->cfg.bitrate > 0 ? enc->cfg.bitrate
                                                              : 4000000,
-                                   fps * gop_sec);
+                                   fps * gop_sec, dmabuf, dmabuf ? stride : 0);
         if (!enc->v4l2) {
-            enc->v4l2_failed = true;
+            if (dmabuf) {
+                enc->v4l2_no_dmabuf = true;  /* retry with copies */
+            } else {
+                enc->v4l2_failed = true;
+            }
             return 1;
         }
         enc->v4l2_w = width;
@@ -443,8 +459,19 @@ static int push_v4l2(struct cast_encoder *enc, uint32_t format,
         snprintf(enc->encoder_name, sizeof(enc->encoder_name), "v4l2:%s",
                  cast_v4l2_device(enc->v4l2));
     }
-    if (cast_v4l2_encode(enc->v4l2, pixels, stride, enc->force_idr, &data,
-                         &size, &key) < 0) {
+    if (dmabuf) {
+        if (cast_v4l2_input_stride(enc->v4l2) != stride) {
+            enc->v4l2_no_dmabuf = true;
+            cast_v4l2_close(enc->v4l2);
+            enc->v4l2 = NULL;
+            return 1;
+        }
+        if (cast_v4l2_encode_dmabuf(enc->v4l2, dmabuf_fd, dmabuf_len, enc->force_idr,
+                                    &data, &size, &key) < 0) {
+            return -1;
+        }
+    } else if (cast_v4l2_encode(enc->v4l2, pixels, stride, enc->force_idr, &data,
+                                &size, &key) < 0) {
         return -1;
     }
     enc->force_idr = false;
@@ -481,7 +508,7 @@ int cast_encoder_push(struct cast_encoder *enc, uint32_t format,
     if (!enc || !bgra || width <= 0 || height <= 0) {
         return -1;
     }
-    ret = push_v4l2(enc, format, bgra, width, height, stride, pts_us, out,
+    ret = push_v4l2(enc, format, bgra, -1, 0, width, height, stride, pts_us, out,
                     out_count);
     if (ret <= 0) {
         return ret;
@@ -557,4 +584,47 @@ int cast_encoder_push(struct cast_encoder *enc, uint32_t format,
         return ret;
     }
     return collect_packets(enc, out, out_count);
+}
+
+int cast_encoder_push_dmabuf(struct cast_encoder *enc, uint32_t format, int fd,
+                             int width, int height, int stride, uint64_t pts_us,
+                             struct cast_packet **out, int *out_count)
+{
+    size_t len = (size_t)stride * (size_t)height;
+    uint8_t *pixels;
+    int ret;
+
+    *out = NULL;
+    *out_count = 0;
+    if (!enc || fd < 0 || width <= 0 || height <= 0 || stride < width * 4) {
+        return -1;
+    }
+    ret = push_v4l2(enc, format, NULL, fd, len, width, height, stride, pts_us, out,
+                    out_count);
+    if (ret <= 0) {
+        return ret;
+    }
+    /* No encoder reads the dma-buf in place: map it and copy as before. */
+    pixels = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+    if (pixels == MAP_FAILED) {
+        return -1;
+    }
+#ifdef __linux__
+    {
+        struct dma_buf_sync sync = { DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ };
+
+        ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+    }
+#endif
+    ret = cast_encoder_push(enc, format, pixels, width, height, stride, pts_us, out,
+                            out_count);
+#ifdef __linux__
+    {
+        struct dma_buf_sync sync = { DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ };
+
+        ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+    }
+#endif
+    munmap(pixels, len);
+    return ret;
 }

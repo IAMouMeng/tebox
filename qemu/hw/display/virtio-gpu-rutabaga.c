@@ -12,6 +12,13 @@
 #include "migration/blocker.h"
 
 #include <glib/gmem.h>
+#include <dlfcn.h>
+#include "ui/dmabuf.h"
+#include "standard-headers/drm/drm_fourcc.h"
+#include "qemu/main-loop.h"
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <rutabaga_gfx/rutabaga_gfx_ffi.h>
 
 #define CHECK(condition, cmd)                                                 \
@@ -140,6 +147,8 @@ rutabaga_cmd_create_resource_3d(VirtIOGPU *g,
     QTAILQ_INSERT_HEAD(&g->reslist, res, next);
 }
 
+static void tebox_dmabuf_drop(VirtIOGPU *g, uint32_t resource_id);
+
 static void
 virtio_gpu_rutabaga_resource_unref(VirtIOGPU *g,
                                    struct virtio_gpu_simple_resource *res,
@@ -149,6 +158,7 @@ virtio_gpu_rutabaga_resource_unref(VirtIOGPU *g,
     VirtIOGPURutabaga *vr = VIRTIO_GPU_RUTABAGA(g);
 
     virtio_gpu_disable_scanout_for_resource(g, res->resource_id);
+    tebox_dmabuf_drop(g, res->resource_id);
 
     result = rutabaga_resource_unref(vr->rutabaga, res->resource_id);
     if (result) {
@@ -227,6 +237,100 @@ rutabaga_cmd_context_destroy(VirtIOGPU *g,
     CHECK(!result, cmd);
 }
 
+/*
+ * tebox (local, not for upstream): zero-copy scanout (TEBOX_RUTABAGA_DMABUF=1).
+ * gfxstream exports the ColorBuffer as a dma-buf (linear, see
+ * GFXSTREAM_LINEAR_COLOR_BUFFERS) and a GL display imports it directly, so
+ * frames never pass through a CPU readback. stream_renderer_resource_layout()
+ * is a local gfxstream addition (.ci/patches/gfxstream-*.patch).
+ */
+typedef int (*tebox_layout_fn)(uint32_t res, uint64_t *offset, uint32_t *pitch);
+
+static bool tebox_dmabuf_wanted(void)
+{
+    const char *v = g_getenv("TEBOX_RUTABAGA_DMABUF");
+    return v && v[0] == '1';
+}
+
+static uint32_t tebox_virgl_to_drm(uint32_t virgl_format)
+{
+    switch (virgl_format) {
+    case 67:  return DRM_FORMAT_ABGR8888;  /* R8G8B8A8_UNORM */
+    case 134: return DRM_FORMAT_XBGR8888;  /* R8G8B8X8_UNORM */
+    case 1:   return DRM_FORMAT_ARGB8888;  /* B8G8R8A8_UNORM */
+    case 2:   return DRM_FORMAT_XRGB8888;  /* B8G8R8X8_UNORM */
+    default:  return 0;
+    }
+}
+
+static tebox_layout_fn tebox_layout_lookup(void)
+{
+    static tebox_layout_fn layout;
+    static bool looked_up;
+
+    if (!looked_up) {
+        layout = (tebox_layout_fn)dlsym(RTLD_DEFAULT,
+                                        "stream_renderer_resource_layout");
+        looked_up = true;
+    }
+    return layout;
+}
+
+static QemuDmaBuf *tebox_dmabuf_get(VirtIOGPURutabaga *vr,
+                                    struct virtio_gpu_simple_resource *res)
+{
+    tebox_layout_fn layout = tebox_layout_lookup();
+    QemuDmaBuf *dmabuf;
+    struct rutabaga_handle handle = { 0 };
+    uint64_t offset;
+    uint32_t offset32, pitch, fourcc;
+    int32_t fd;
+
+    if (!vr->tebox_dmabufs) {
+        vr->tebox_dmabufs = g_hash_table_new(NULL, NULL);
+    }
+    dmabuf = g_hash_table_lookup(vr->tebox_dmabufs,
+                                 GUINT_TO_POINTER(res->resource_id));
+    if (dmabuf) {
+        return dmabuf;
+    }
+    fourcc = tebox_virgl_to_drm(res->format);
+    if (!layout || !fourcc || layout(res->resource_id, &offset, &pitch)) {
+        return NULL;  /* not a linear ColorBuffer: keep the readback path */
+    }
+    if (rutabaga_resource_export_blob(vr->rutabaga, res->resource_id, &handle)) {
+        return NULL;
+    }
+    if (handle.handle_type != RUTABAGA_HANDLE_TYPE_MEM_DMABUF) {
+        close((int)handle.os_handle);
+        return NULL;
+    }
+    offset32 = (uint32_t)offset;
+    fd = (int32_t)handle.os_handle;
+    dmabuf = qemu_dmabuf_new(res->width, res->height, &offset32, &pitch,
+                             0, 0, res->width, res->height, fourcc,
+                             DRM_FORMAT_MOD_LINEAR, &fd, 1, false, false);
+    g_hash_table_insert(vr->tebox_dmabufs, GUINT_TO_POINTER(res->resource_id),
+                        dmabuf);
+    return dmabuf;
+}
+
+static void tebox_dmabuf_drop(VirtIOGPU *g, uint32_t resource_id)
+{
+    VirtIOGPURutabaga *vr = VIRTIO_GPU_RUTABAGA(g);
+    QemuDmaBuf *dmabuf;
+
+    if (!vr->tebox_dmabufs) {
+        return;
+    }
+    dmabuf = g_hash_table_lookup(vr->tebox_dmabufs, GUINT_TO_POINTER(resource_id));
+    if (dmabuf) {
+        g_hash_table_remove(vr->tebox_dmabufs, GUINT_TO_POINTER(resource_id));
+        qemu_console_gl_release_dmabuf(VIRTIO_GPU_BASE(g)->scanout[0].con, dmabuf);
+        qemu_dmabuf_free(dmabuf);
+    }
+}
+
 static void
 rutabaga_cmd_resource_flush(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
 {
@@ -263,6 +367,17 @@ rutabaga_cmd_resource_flush(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
         return;
     }
 
+    /* tebox (local): zero-copy scanouts only need the GL display to redraw. */
+    if (vr->tebox_dmabuf_scanout[i]) {
+        for (i = 0; i < vb->conf.max_outputs; i++) {
+            scanout = &vb->scanout[i];
+            if (scanout->resource_id == res->resource_id) {
+                qemu_console_gl_update(scanout->con, 0, 0, res->width, res->height);
+            }
+        }
+        return;
+    }
+
     transfer.x = 0;
     transfer.y = 0;
     transfer.z = 0;
@@ -281,6 +396,11 @@ rutabaga_cmd_resource_flush(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
     for (i = 0; i < vb->conf.max_outputs; i++) {
         scanout = &vb->scanout[i];
         if (scanout->resource_id == res->resource_id) {
+            if (vr->shadow[i]) {
+                pixman_image_composite(PIXMAN_OP_SRC, res->image, NULL,
+                                       vr->shadow[i], 0, 0, 0, 0, 0, 0,
+                                       res->width, res->height);
+            }
             qemu_console_update_full(scanout->con);
         }
     }
@@ -320,6 +440,21 @@ rutabaga_cmd_set_scanout(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
         return;
     }
 
+    /* tebox (local): hand the ColorBuffer to a GL display as a dma-buf. */
+    if (tebox_dmabuf_wanted() && qemu_console_has_gl(scanout->con)) {
+        QemuDmaBuf *dmabuf = tebox_dmabuf_get(vr, res);
+
+        if (dmabuf) {
+            vb->enable = 1;
+            qemu_console_resize(scanout->con, res->width, res->height);
+            qemu_console_gl_scanout_dmabuf(scanout->con, dmabuf);
+            scanout->resource_id = ss.resource_id;
+            vr->tebox_dmabuf_scanout[ss.scanout_id] = true;
+            return;
+        }
+    }
+    vr->tebox_dmabuf_scanout[ss.scanout_id] = false;
+
     if (!res->image) {
         pixman_format_code_t pformat;
         pformat = virtio_gpu_get_pixman_format(res->format);
@@ -335,8 +470,33 @@ rutabaga_cmd_set_scanout(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
 
     vb->enable = 1;
 
+    if (vr->shadow[ss.scanout_id] && scanout->ds &&
+        pixman_image_get_width(vr->shadow[ss.scanout_id]) == res->width &&
+        pixman_image_get_height(vr->shadow[ss.scanout_id]) == res->height) {
+        /*
+         * Page flip between same-sized buffers: keep the shadow surface so
+         * the UI never sees a surface teardown (flicker); the next flush
+         * converts the new resource into it.
+         */
+        scanout->resource_id = ss.resource_id;
+        return;
+    }
+    if (vr->shadow[ss.scanout_id]) {
+        pixman_image_unref(vr->shadow[ss.scanout_id]);
+        vr->shadow[ss.scanout_id] = NULL;
+    }
+    if (pixman_image_get_format(res->image) != PIXMAN_x8r8g8b8 &&
+        pixman_image_get_format(res->image) != PIXMAN_a8r8g8b8) {
+        vr->shadow[ss.scanout_id] = pixman_image_create_bits(PIXMAN_x8r8g8b8,
+                                                             res->width,
+                                                             res->height,
+                                                             NULL, 0);
+        CHECK(vr->shadow[ss.scanout_id], cmd);
+    }
+
     /* realloc the surface ptr */
-    scanout->ds = qemu_create_displaysurface_pixman(res->image);
+    scanout->ds = qemu_create_displaysurface_pixman(
+        vr->shadow[ss.scanout_id] ? vr->shadow[ss.scanout_id] : res->image);
     qemu_console_set_surface(scanout->con, NULL);
     qemu_console_set_surface(scanout->con, scanout->ds);
     scanout->resource_id = ss.resource_id;
@@ -1091,6 +1251,214 @@ static void virtio_gpu_rutabaga_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
     virtio_gpu_process_cmdq(g);
 }
 
+/*
+ * tebox (local, not for upstream): resource readback service for the host
+ * video encoder (tebox-cast venc). A guest Codec2 encoder sends only the
+ * virtio-gpu resource id of each frame; tebox-cast asks this server to read
+ * that gfxstream ColorBuffer into a buffer it shared, and encodes it with the
+ * host hardware encoder. Runs on the main loop, like the virtio-gpu command
+ * processing, so rutabaga is never used from two threads.
+ *
+ * Protocol on the unix socket $TEBOX_RES_SOCK (one client at a time):
+ *   client -> server, once: u64 buffer size, with the buffer fd (SCM_RIGHTS)
+ *   client -> server: struct tebox_res_req     server -> client: struct tebox_res_rep
+ * With TEBOX_RES_DMABUF_MAGIC the reply instead carries the ColorBuffer's own
+ * dma-buf (SCM_RIGHTS, linear at rep.stride) so the encoder reads the frame in
+ * place; status -ENOTSUP when the resource has none (use TEBOX_RES_MAGIC).
+ */
+#define TEBOX_RES_MAGIC 0x53455254u        /* 'TRES' */
+#define TEBOX_RES_DMABUF_MAGIC 0x44455254u /* 'TRED' */
+
+struct tebox_res_req {
+    uint32_t magic;
+    uint32_t resource_id;
+    uint32_t width;
+    uint32_t height;
+};
+
+struct tebox_res_rep {
+    int32_t status;   /* 0 or a negative errno / rutabaga result */
+    uint32_t stride;  /* bytes per row written to the buffer */
+};
+
+static struct {
+    VirtIOGPURutabaga *vr;
+    int listen_fd;
+    int client_fd;
+    void *map;
+    size_t map_size;
+} tebox_res = { .listen_fd = -1, .client_fd = -1 };
+
+static void tebox_res_drop_client(void)
+{
+    if (tebox_res.client_fd >= 0) {
+        qemu_set_fd_handler(tebox_res.client_fd, NULL, NULL, NULL);
+        close(tebox_res.client_fd);
+        tebox_res.client_fd = -1;
+    }
+    if (tebox_res.map) {
+        munmap(tebox_res.map, tebox_res.map_size);
+        tebox_res.map = NULL;
+        tebox_res.map_size = 0;
+    }
+}
+
+static bool tebox_res_take_buffer(void)
+{
+    uint64_t size = 0;
+    char ctrl[CMSG_SPACE(sizeof(int))];
+    struct iovec iov = { &size, sizeof(size) };
+    struct msghdr msg = { 0 };
+    struct cmsghdr *cmsg;
+    int fd = -1;
+
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = ctrl;
+    msg.msg_controllen = sizeof(ctrl);
+    if (recvmsg(tebox_res.client_fd, &msg, MSG_WAITALL) != sizeof(size)) {
+        return false;
+    }
+    for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+            memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
+        }
+    }
+    if (fd < 0 || !size || size > (256u << 20)) {
+        if (fd >= 0) {
+            close(fd);
+        }
+        return false;
+    }
+    tebox_res.map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    if (tebox_res.map == MAP_FAILED) {
+        tebox_res.map = NULL;
+        return false;
+    }
+    tebox_res.map_size = size;
+    return true;
+}
+
+static void tebox_res_send_dmabuf(const struct tebox_res_req *req)
+{
+    struct tebox_res_rep rep = { -ENOTSUP, 0 };
+    struct rutabaga_handle handle = { 0 };
+    tebox_layout_fn layout = tebox_layout_lookup();
+    char ctrl[CMSG_SPACE(sizeof(int))];
+    struct iovec iov = { &rep, sizeof(rep) };
+    struct msghdr msg = { 0 };
+    uint64_t offset = 0;
+    uint32_t pitch = 0;
+    int fd = -1;
+
+    if (layout && !layout(req->resource_id, &offset, &pitch) && offset == 0 &&
+        !rutabaga_resource_export_blob(tebox_res.vr->rutabaga, req->resource_id,
+                                       &handle)) {
+        if (handle.handle_type == RUTABAGA_HANDLE_TYPE_MEM_DMABUF) {
+            fd = (int)handle.os_handle;
+            rep.status = 0;
+            rep.stride = pitch;
+        } else {
+            close((int)handle.os_handle);
+        }
+    }
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    if (fd >= 0) {
+        struct cmsghdr *cmsg;
+
+        msg.msg_control = ctrl;
+        msg.msg_controllen = sizeof(ctrl);
+        cmsg = CMSG_FIRSTHDR(&msg);
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_RIGHTS;
+        cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
+    }
+    if (sendmsg(tebox_res.client_fd, &msg, 0) != sizeof(rep)) {
+        tebox_res_drop_client();
+    }
+    if (fd >= 0) {
+        close(fd);
+    }
+}
+
+static void tebox_res_client_read(void *opaque)
+{
+    struct tebox_res_req req;
+    struct tebox_res_rep rep = { -EINVAL, 0 };
+
+    if (!tebox_res.map) {
+        if (!tebox_res_take_buffer()) {
+            tebox_res_drop_client();
+        }
+        return;
+    }
+    if (recv(tebox_res.client_fd, &req, sizeof(req), MSG_WAITALL) != sizeof(req) ||
+        (req.magic != TEBOX_RES_MAGIC && req.magic != TEBOX_RES_DMABUF_MAGIC)) {
+        tebox_res_drop_client();
+        return;
+    }
+    if (req.magic == TEBOX_RES_DMABUF_MAGIC) {
+        tebox_res_send_dmabuf(&req);
+        return;
+    }
+    if (req.width && req.height && req.width <= 16384 && req.height <= 16384 &&
+        (size_t)req.width * req.height * 4 <= tebox_res.map_size) {
+        struct rutabaga_transfer transfer = { 0 };
+        struct iovec iov = { tebox_res.map, (size_t)req.width * req.height * 4 };
+
+        transfer.w = req.width;
+        transfer.h = req.height;
+        transfer.d = 1;
+        rep.status = rutabaga_resource_transfer_read(tebox_res.vr->rutabaga, 0,
+                                                     req.resource_id, &transfer,
+                                                     &iov);
+        rep.stride = req.width * 4;
+    }
+    if (send(tebox_res.client_fd, &rep, sizeof(rep), 0) != sizeof(rep)) {
+        tebox_res_drop_client();
+    }
+}
+
+static void tebox_res_accept(void *opaque)
+{
+    int fd = accept(tebox_res.listen_fd, NULL, NULL);
+
+    if (fd < 0) {
+        return;
+    }
+    tebox_res_drop_client();  /* the newest client (a restarted tebox-cast) wins */
+    tebox_res.client_fd = fd;
+    qemu_set_fd_handler(fd, tebox_res_client_read, NULL, NULL);
+}
+
+static void tebox_res_server_start(VirtIOGPURutabaga *vr)
+{
+    const char *path = g_getenv("TEBOX_RES_SOCK");
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    int fd;
+
+    if (!path || !*path || strlen(path) >= sizeof(addr.sun_path)) {
+        return;
+    }
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return;
+    }
+    strcpy(addr.sun_path, path);
+    unlink(path);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) || listen(fd, 1)) {
+        warn_report("tebox: resource server %s: %s", path, strerror(errno));
+        close(fd);
+        return;
+    }
+    tebox_res.vr = vr;
+    tebox_res.listen_fd = fd;
+    qemu_set_fd_handler(fd, tebox_res_accept, NULL, NULL);
+}
+
 static void virtio_gpu_rutabaga_realize(DeviceState *qdev, Error **errp)
 {
     ERRP_GUARD();
@@ -1115,6 +1483,8 @@ static void virtio_gpu_rutabaga_realize(DeviceState *qdev, Error **errp)
     if (!virtio_gpu_rutabaga_get_num_capsets(gpudev, &num_capsets, errp)) {
         goto fail;
     }
+
+    tebox_res_server_start(VIRTIO_GPU_RUTABAGA(qdev));
 
     bdev->conf.flags |= (1 << VIRTIO_GPU_FLAG_RUTABAGA_ENABLED);
     bdev->conf.flags |= (1 << VIRTIO_GPU_FLAG_BLOB_ENABLED);
