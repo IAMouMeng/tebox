@@ -57,7 +57,9 @@ HealthInfo makeInfo() {
     info.chargerDockOnline = false;
     info.maxChargingCurrentMicroamps = 500000;
     info.maxChargingVoltageMicrovolts = 5000000;
-    info.batteryStatus = BatteryStatus::CHARGING;
+    // Plugged in at 100 %: FULL, as on a phone. CHARGING forever makes
+    // ColorOS suggest battery protection (charge limit 80 %).
+    info.batteryStatus = BatteryStatus::FULL;
     info.batteryHealth = BatteryHealth::GOOD;
     info.batteryPresent = true;
     info.batteryLevel = 100;
