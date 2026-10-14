@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Replaces /my_product/overlay/android_framework_res_overlay.display.product.25821.apk
+     (bind-mounted by the initramfs, system.img untouched): the same values,
+     except no rounded corners and no display cutout, which a QEMU window
+     does not have. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="android.frameworkres.overlay.display.product"
+    android:versionCode="33" android:versionName="33">
+    <uses-sdk android:minSdkVersion="36" android:targetSdkVersion="36" />
+    <application android:allowBackup="false" android:hasCode="false" />
+    <overlay android:targetPackage="android" android:priority="700" android:isStatic="true" />
+</manifest>
