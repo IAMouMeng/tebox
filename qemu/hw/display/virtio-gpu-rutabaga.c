@@ -1617,6 +1617,11 @@ static void tebox_blit_server_start(VirtIOGPURutabaga *vr)
     qemu_set_fd_handler(fd, tebox_blit_accept, NULL, NULL);
 }
 
+#ifdef CONFIG_DARWIN
+/* hw/display/tebox-vt-vdec.c: VideoToolbox for the guest's tebox.vdec port. */
+void tebox_vt_vdec_start(void);
+#endif
+
 static void virtio_gpu_rutabaga_realize(DeviceState *qdev, Error **errp)
 {
     ERRP_GUARD();
@@ -1644,6 +1649,9 @@ static void virtio_gpu_rutabaga_realize(DeviceState *qdev, Error **errp)
 
     tebox_res_server_start(VIRTIO_GPU_RUTABAGA(qdev));
     tebox_blit_server_start(VIRTIO_GPU_RUTABAGA(qdev));
+#ifdef CONFIG_DARWIN
+    tebox_vt_vdec_start();
+#endif
 
     bdev->conf.flags |= (1 << VIRTIO_GPU_FLAG_RUTABAGA_ENABLED);
     bdev->conf.flags |= (1 << VIRTIO_GPU_FLAG_BLOB_ENABLED);

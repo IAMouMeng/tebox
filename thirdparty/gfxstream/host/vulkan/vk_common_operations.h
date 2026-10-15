@@ -433,6 +433,10 @@ class VkEmulation {
         bool dedicatedAllocation = false;
     };
     std::optional<VkColorBufferMemoryExport> exportColorBufferMemory(uint32_t colorBufferHandle);
+    // tebox (local, macOS): draws an IOSurfaceRef (a decoded BGRA picture)
+    // into a ColorBuffer on the GPU, scaled to its size.
+    bool teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface);
+
     bool getColorBufferLinearLayout(uint32_t colorBufferHandle, uint64_t* offset,
                                     uint32_t* rowPitch);  // tebox (local)
 
@@ -571,6 +575,7 @@ class VkEmulation {
         bool supportsSwapchain = false;
         bool isLavapipe = false;
         bool hasSamplerYcbcrConversionExtension = false;
+        bool teboxMetalObjects = false;  // tebox (local): VK_EXT_metal_objects
         bool supportsSamplerYcbcrConversion = false;
         bool glInteropSupported = false;
         bool hasNvidiaDeviceDiagnosticCheckpointsExtension = false;
