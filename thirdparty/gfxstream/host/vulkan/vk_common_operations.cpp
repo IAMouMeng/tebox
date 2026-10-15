@@ -56,6 +56,12 @@
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #include <vulkan/vulkan_beta.h>  // for MoltenVK portability extensions
+#if defined(__APPLE__)
+#include <vulkan/vulkan_metal.h>  // tebox (local): IOSurface import (and IOSurfaceRef)
+// IOSurface/IOSurfaceRef.h would bring <machine/param.h>'s one-argument ALIGN.
+extern "C" size_t IOSurfaceGetWidth(IOSurfaceRef buffer);
+extern "C" size_t IOSurfaceGetHeight(IOSurfaceRef buffer);
+#endif
 #endif
 
 #if defined(__QNX__)
@@ -1432,6 +1438,10 @@ std::unique_ptr<VkEmulation> VkEmulation::create(VulkanDispatch* gvk,
 
         deviceInfos[i].hasSamplerYcbcrConversionExtension =
             vk_util::extensionSupported(deviceExts, VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME);
+#if defined(__APPLE__)
+        deviceInfos[i].teboxMetalObjects =
+            vk_util::extensionSupported(deviceExts, VK_EXT_METAL_OBJECTS_EXTENSION_NAME);
+#endif
 
         deviceInfos[i].supportsSwapchain =
             vk_util::extensionSupported(deviceExts, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -1707,6 +1717,10 @@ std::unique_ptr<VkEmulation> VkEmulation::create(VulkanDispatch* gvk,
         for (auto extension : moltenVkDeviceExtNames) {
             selectedDeviceExtensionNames.emplace(extension);
         }
+    }
+    // tebox (local): IOSurface import for host-decoded video (teboxBlitIOSurface).
+    if (emulation->mDeviceInfo.teboxMetalObjects) {
+        selectedDeviceExtensionNames.emplace(VK_EXT_METAL_OBJECTS_EXTENSION_NAME);
     }
 #endif
 
@@ -3617,6 +3631,143 @@ bool VkEmulation::createVkColorBuffer(uint32_t width, uint32_t height, Gfxstream
 
 // tebox (local): memory offset and row pitch of a linear ColorBuffer, so the
 // VMM can import its exported dma-buf (DRM_FORMAT_MOD_LINEAR).
+bool VkEmulation::teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface) {
+#if defined(__APPLE__)
+    if (!mDeviceInfo.teboxMetalObjects || !ioSurface) return false;
+    std::lock_guard<std::mutex> lock(mMutex);
+    auto vk = mDvk;
+    auto* cb = gfxstream::base::find(mColorBuffers, colorBufferHandle);
+    if (!cb || !cb->image) return false;
+    const uint32_t width = static_cast<uint32_t>(IOSurfaceGetWidth(static_cast<IOSurfaceRef>(ioSurface)));
+    const uint32_t height = static_cast<uint32_t>(IOSurfaceGetHeight(static_cast<IOSurfaceRef>(ioSurface)));
+
+    // The picture: a BGRA image on the IOSurface itself (MoltenVK).
+    VkImportMetalIOSurfaceInfoEXT importInfo = {
+        .sType = VK_STRUCTURE_TYPE_IMPORT_METAL_IO_SURFACE_INFO_EXT,
+        .pNext = nullptr,
+        .ioSurface = static_cast<IOSurfaceRef>(ioSurface),
+    };
+    const VkImageCreateInfo srcCi = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = &importInfo,
+        .flags = 0,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_B8G8R8A8_UNORM,
+        .extent = {width, height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_LINEAR,
+        .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    VkImage src = VK_NULL_HANDLE;
+    if (vk->vkCreateImage(mDevice, &srcCi, nullptr, &src) != VK_SUCCESS) {
+        GFXSTREAM_ERROR("tebox: IOSurface image import failed");
+        return false;
+    }
+    VkMemoryRequirements reqs;
+    vk->vkGetImageMemoryRequirements(mDevice, src, &reqs);
+    const VkMemoryAllocateInfo allocInfo = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .allocationSize = reqs.size,
+        .memoryTypeIndex =
+            getValidMemoryTypeIndex(reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+    };
+    VkDeviceMemory srcMemory = VK_NULL_HANDLE;
+    if (vk->vkAllocateMemory(mDevice, &allocInfo, nullptr, &srcMemory) != VK_SUCCESS ||
+        vk->vkBindImageMemory(mDevice, src, srcMemory, 0) != VK_SUCCESS) {
+        if (srcMemory) vk->vkFreeMemory(mDevice, srcMemory, nullptr);
+        vk->vkDestroyImage(mDevice, src, nullptr);
+        return false;
+    }
+
+    const VkCommandBufferBeginInfo beginInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    VK_CHECK(vk->vkBeginCommandBuffer(mCommandBuffer, &beginInfo));
+    const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageMemoryBarrier barriers[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            // The decoder wrote the IOSurface outside Vulkan; on MoltenVK the
+            // layout is only bookkeeping and the contents stay.
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = src,
+            .subresourceRange = range,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            // The whole buffer is overwritten: its old contents do not matter.
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = cb->image,
+            .subresourceRange = range,
+        },
+    };
+    vk->vkCmdPipelineBarrier(mCommandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2,
+                             barriers);
+    const VkImageBlit blit = {
+        .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+        .srcOffsets = {{0, 0, 0}, {static_cast<int32_t>(width), static_cast<int32_t>(height), 1}},
+        .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+        .dstOffsets = {{0, 0, 0},
+                       {static_cast<int32_t>(cb->width), static_cast<int32_t>(cb->height), 1}},
+    };
+    // BGRA -> the ColorBuffer's RGBA, scaled: one GPU blit, no CPU copy.
+    vk->vkCmdBlitImage(mCommandBuffer, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, cb->image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    const VkImageLayout finalLayout = cb->currentLayout != VK_IMAGE_LAYOUT_UNDEFINED
+                                          ? cb->currentLayout
+                                          : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    if (finalLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        VkImageMemoryBarrier back = barriers[1];
+        back.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        back.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        back.newLayout = finalLayout;
+        vk->vkCmdPipelineBarrier(mCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                                 &back);
+    }
+    cb->currentLayout = finalLayout;
+    VK_CHECK(vk->vkEndCommandBuffer(mCommandBuffer));
+    const VkSubmitInfo submitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &mCommandBuffer,
+    };
+    {
+        gfxstream::base::AutoLock queueLock(*mQueueLock);
+        VK_CHECK(vk->vkQueueSubmit(mQueue, 1, &submitInfo, mCommandBufferFence));
+    }
+    // The guest samples the buffer as soon as it hears back.
+    VK_CHECK(vk->vkWaitForFences(mDevice, 1, &mCommandBufferFence, VK_TRUE, 5000000000ULL));
+    VK_CHECK(vk->vkResetFences(mDevice, 1, &mCommandBufferFence));
+    vk->vkDestroyImage(mDevice, src, nullptr);
+    vk->vkFreeMemory(mDevice, srcMemory, nullptr);
+    return true;
+#else
+    (void)colorBufferHandle;
+    (void)ioSurface;
+    return false;
+#endif
+}
+
 bool VkEmulation::getColorBufferLinearLayout(uint32_t colorBufferHandle, uint64_t* offset,
                                              uint32_t* rowPitch) {
     std::lock_guard<std::mutex> lock(mMutex);
