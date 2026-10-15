@@ -76,7 +76,8 @@ fi
 
 if [[ ! -f "$WORKDIR/userdata.img" ]]; then
   # Sparse: host space grows with guest data, not with the configured size.
-  dd if=/dev/zero of="$WORKDIR/userdata.img" bs=1048576 count=0 seek="${USERDATA_MB:-1024}" status=none
+  # Vendor ROMs install ~700 MB of apps on first boot; 1 GiB fills up.
+  dd if=/dev/zero of="$WORKDIR/userdata.img" bs=1048576 count=0 seek="${USERDATA_MB:-8192}" status=none
   "$E2/mke2fs" -t ext4 -F -L userdata -O quota,project \
     -E quotatype=usrquota:grpquota:prjquota "$WORKDIR/userdata.img"
 fi
