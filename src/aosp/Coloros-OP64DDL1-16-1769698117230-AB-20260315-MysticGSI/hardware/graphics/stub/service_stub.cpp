@@ -712,6 +712,12 @@ class StubAllocator : public BnAllocator {
                       static_cast<size_t>(bpp);
         if (static_cast<int>(effective.format) == 35)
             size = size * 3 / 2;
+        const bool yv12 = static_cast<int>(effective.format) == kYv12;
+        if (yv12) {
+            const Yv12Layout l = yv12Layout(effective.width, effective.height);
+            stride = static_cast<int32_t>(l.yStride);
+            size = l.size;
+        }
         if (effective.layerCount > 1) size *= static_cast<size_t>(effective.layerCount);
 
         out->stride = stride;
@@ -721,8 +727,10 @@ class StubAllocator : public BnAllocator {
         for (int32_t i = 0; i < count; ++i) {
             int fd = -1;
             uint32_t drm_stride = 0, drm_size = 0;
+            // YV12 is a GPU resource only on gfxstream (VirGL GBM is RGB only).
             const bool cpuOnly = static_cast<int>(effective.format) == 35 ||
-                                 static_cast<int>(effective.format) == 0x21;
+                                 static_cast<int>(effective.format) == 0x21 ||
+                                 (yv12 && !qemuGpuIsGfxstream());
             const bool gfx = qemuGpuIsGfxstream() && !cpuOnly &&
                              virglFormat(static_cast<int>(effective.format));
             const bool virgl = !gfx && qemuGbmUsesVirgl() && !cpuOnly;
@@ -767,6 +775,16 @@ class StubAllocator : public BnAllocator {
                 for (int p = 1; p < TEBOX_CROS_MAX_FDS; ++p) cros.fds[p] = -1;
                 cros.strides[0] = static_cast<uint32_t>(stride * bpp);
                 cros.sizes[0] = static_cast<uint32_t>(size);
+                cros.num_planes = 1;
+                if (yv12) {
+                    const Yv12Layout l = yv12Layout(effective.width, effective.height);
+                    cros.strides[1] = cros.strides[2] = l.cStride;
+                    cros.offsets[1] = l.ySize;
+                    cros.offsets[2] = l.ySize + l.cSize;
+                    cros.sizes[0] = l.ySize;
+                    cros.sizes[1] = cros.sizes[2] = l.cSize;
+                    cros.num_planes = 3;
+                }
                 cros.width = static_cast<uint32_t>(effective.width);
                 cros.height = static_cast<uint32_t>(effective.height);
                 cros.format = bufferFormat(static_cast<int>(effective.format)).fourcc;
@@ -775,7 +793,6 @@ class StubAllocator : public BnAllocator {
                 cros.pixel_stride = static_cast<uint32_t>(stride);
                 cros.droid_format = static_cast<int32_t>(effective.format);
                 cros.usage = static_cast<int32_t>(static_cast<int64_t>(effective.usage));
-                cros.num_planes = 1;
                 cros.total_size = size;
                 const int* ints = reinterpret_cast<const int*>(&cros.fds[1]);
                 h.ints.assign(ints, ints + TEBOX_CROS_NUM_INTS);
