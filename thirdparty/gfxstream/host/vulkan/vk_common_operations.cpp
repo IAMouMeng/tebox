@@ -4483,7 +4483,37 @@ bool VkEmulation::updateColorBufferFromBytesLocked(uint32_t colorBufferHandle, u
 
     // Copy the data into the staging memory first.
     void* stagingBufferPtr = mStaging.mMappedPtr;
-    if (colorBufferInfo->format != colorBufferInfo->internalFormat) {
+    if ((colorBufferInfo->format == GfxstreamFormat::YV12 ||
+         colorBufferInfo->format == GfxstreamFormat::YV21) &&
+        bufferImageCopies.size() == 3) {
+        // tebox (local): virtio-gpu guests hand over the Android layout that
+        // GetTransferSize() sizes: Y rows aligned to 32 bytes, chroma rows half
+        // of that, and YV12 stores Cr before Cb. The 3-plane image wants
+        // tightly packed Y, Cb, Cr (planes 0, 1, 2).
+        const uint32_t yStride = (w + 31) & ~31u;
+        const uint32_t cStride = yStride / 2;
+        const size_t ySize = size_t(yStride) * h;
+        const size_t cSize = size_t(cStride) * (h / 2);
+        if (inputPixelsSize != 0 && inputPixelsSize < ySize + 2 * cSize) {
+            GFXSTREAM_ERROR("Unexpected contents size when trying to update ColorBuffer:%d, "
+                            "provided:%zu expected at least:%zu",
+                            colorBufferHandle, inputPixelsSize, ySize + 2 * cSize);
+            return false;
+        }
+        const uint8_t* src = static_cast<const uint8_t*>(pixels);
+        const bool crFirst = colorBufferInfo->format == GfxstreamFormat::YV12;
+        const uint8_t* planes[3] = {src, src + ySize + (crFirst ? cSize : 0),
+                                    src + ySize + (crFirst ? 0 : cSize)};
+        const uint32_t strides[3] = {yStride, cStride, cStride};
+        for (int p = 0; p < 3; ++p) {
+            const VkBufferImageCopy& copy = bufferImageCopies[p];
+            uint8_t* dst = static_cast<uint8_t*>(stagingBufferPtr) + copy.bufferOffset;
+            for (uint32_t row = 0; row < copy.imageExtent.height; ++row) {
+                std::memcpy(dst + size_t(row) * copy.bufferRowLength,
+                            planes[p] + size_t(row) * strides[p], copy.imageExtent.width);
+            }
+        }
+    } else if (colorBufferInfo->format != colorBufferInfo->internalFormat) {
         if (colorBufferInfo->format == GfxstreamFormat::R4G4B4A4_UNORM &&
             colorBufferInfo->internalFormat == GfxstreamFormat::B4G4R4A4_UNORM) {
             const size_t expectedInputSize = dstBufferSize;
