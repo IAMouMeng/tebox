@@ -284,6 +284,22 @@ if [[ "${TEBOX_CAST:-0}" == 1 ]]; then
   done
 fi
 
+# macOS host decoding: QEMU itself serves tebox.vdec (hw/display/tebox-vt-vdec.c),
+# decoding on VideoToolbox and blitting each picture into the guest's output
+# buffer on the GPU. TEBOX_VDEC=0 leaves the guest on its software decoders.
+if [[ "$HOST_OS" == darwin && "$FORCE_RUTABAGA" == 1 && "${TEBOX_VDEC:-1}" == 1 ]]; then
+  if [[ -z "${MEDIA_DIR:-}" ]]; then
+    MEDIA_DIR="$WORKDIR"
+    EXTRA+=(-device virtio-serial-pci,id=media,addr=0x10)
+  fi
+  export TEBOX_VDEC_SOCK="$MEDIA_DIR/vdec.sock"
+  rm -f "$TEBOX_VDEC_SOCK"
+  EXTRA+=(-chardev "socket,id=vdec,path=$TEBOX_VDEC_SOCK,server=on,wait=off"
+    -device "virtserialport,bus=media.0,chardev=vdec,name=tebox.vdec")
+  APPEND+=(androidboot.tebox.video_decode=1)
+  echo "vdec:    VideoToolbox (tebox.vdec, $TEBOX_VDEC_SOCK)"
+fi
+
 echo "variant: $VARIANT"
 echo "kernel:  $KERNEL  ($KID)"
 echo "system:  $SYSTEM"
