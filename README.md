@@ -79,10 +79,11 @@
 <p align="center">
   <img src="docs/screenshots/originos_launched.png" width="240" alt="厂商 ROM 示例：OriginOS GSI">
   <img src="docs/screenshots/magicos_launched.png" width="240" alt="厂商 ROM 示例：MagicOS GSI">
+  <img src="docs/screenshots/oneui_tab_s9_launched.png" width="240" alt="厂商 ROM 示例：OneUI GSI">
 </p>
 
 <p align="center">
-  左：OriginOS GSI（vivo，Android 15）　右：MagicOS GSI（荣耀，Android 16）
+  左：OriginOS GSI（vivo，Android 15）　中：MagicOS GSI（荣耀，Android 16）　右：OneUI GSI（三星 Galaxy Tab S9，Android 16）
 </p>
 
 ## 正确拉取源码
