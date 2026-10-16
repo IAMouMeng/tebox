@@ -76,6 +76,15 @@
   左：AOSP GSI　中：厂商 ROM 示例（ColorOS GSI）　右：安兔兔 V12 跑分（R1P / CIX 8180，gfxstream：ANGLE + Vulkan on Mali-G720）
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/originos_launched.png" width="240" alt="厂商 ROM 示例：OriginOS GSI">
+  <img src="docs/screenshots/magicos_launched.png" width="240" alt="厂商 ROM 示例：MagicOS GSI">
+</p>
+
+<p align="center">
+  左：OriginOS GSI（vivo，Android 15）　右：MagicOS GSI（荣耀，Android 16）
+</p>
+
 ## 正确拉取源码
 
 先安装并初始化 Git LFS（macOS：`brew install git-lfs`；Ubuntu/Debian：`sudo apt-get install git-lfs`）：
