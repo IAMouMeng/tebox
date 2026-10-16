@@ -88,10 +88,11 @@
 
 <p align="center">
   <img src="docs/screenshots/flyme_launched.png" width="240" alt="厂商 ROM 示例：Flyme GSI">
+  <img src="docs/screenshots/oneui_s25ultra_launched.png" width="240" alt="厂商 ROM 示例：OneUI GSI（Galaxy S25 Ultra）">
 </p>
 
 <p align="center">
-  Flyme GSI（魅族 22，Android 15）
+  左：Flyme GSI（魅族 22，Android 15）　右：OneUI GSI（三星 Galaxy S25 Ultra，Android 16）
 </p>
 
 ## 正确拉取源码
