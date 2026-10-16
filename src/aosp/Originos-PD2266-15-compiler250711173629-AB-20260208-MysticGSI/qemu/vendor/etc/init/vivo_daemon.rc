@@ -1,0 +1,9 @@
+# OriginOS system services (com.vivo.pem, fonts, dumps) talk to
+# vivo_daemon.service; a vivo vendor partition starts the daemon, the GSI
+# only ships /system/bin/vivo_daemon. The vivo_daemon domain also comes from
+# vivo's vendor policy, so it runs as su here (SELinux is permissive).
+service vivo_daemon /system/bin/vivo_daemon
+    class main
+    user root
+    group root system log
+    seclabel u:r:su:s0
