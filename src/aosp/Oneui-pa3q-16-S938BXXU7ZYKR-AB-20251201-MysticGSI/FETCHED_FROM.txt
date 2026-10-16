@@ -1,0 +1,16 @@
+VARIANT=Oneui-pa3q-16-S938BXXU7ZYKR-AB-20251201-MysticGSI
+GSI=OneUI 16 pa3q, Galaxy S25 Ultra (MysticGSI, A/B, 2025-12-01 build S938BXXU7ZYKR; samsung/pa3qxxx/qssi_64:16/BP4A.251205.006)
+# system.img is a third-party OneUI GSI placed by hand under images/; it has
+# no pinned download in .ci/guest.lock.json. Digest: images/sha256sum.txt.
+# The vendor/HAL/runtime inputs below were copied from Oneui-gts9wifi-16-X710ZCS5DZA1-AB-20260211-MysticGSI
+# (itself from the ColorOS variant).
+
+# system.img / vendor.img / initramfs.img — under images/:
+IMAGES=src/aosp/Oneui-pa3q-16-S938BXXU7ZYKR-AB-20251201-MysticGSI/images
+# packing inputs (vendor, busybox, init) — under qemu/:
+QEMU_RT=src/aosp/Oneui-pa3q-16-S938BXXU7ZYKR-AB-20251201-MysticGSI/qemu
+# GSI link libs — under prebuilts/:
+GSI_LIBS=src/aosp/Oneui-pa3q-16-S938BXXU7ZYKR-AB-20251201-MysticGSI/prebuilts/gsi-lib64
+# Kernel used by this variant (see KERNEL file → src/kernel/<id>/):
+KERNEL_ID=gki-6.1-android14-gsi
+KERNEL_FETCHED_FROM=../../kernel/gki-6.1-android14-gsi/FETCHED_FROM.txt

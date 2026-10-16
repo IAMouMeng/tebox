@@ -1,0 +1,13 @@
+<!-- Samsung HALs served by vendor.samsung.stubs-service (see service.cpp). -->
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>vendor.samsung.hardware.hyper</name>
+        <version>2</version>
+        <fqname>ISehHyPer/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>vendor.samsung.hardware.keymint</name>
+        <version>1</version>
+        <fqname>ISehKeyMintExtension/default</fqname>
+    </hal>
+</manifest>

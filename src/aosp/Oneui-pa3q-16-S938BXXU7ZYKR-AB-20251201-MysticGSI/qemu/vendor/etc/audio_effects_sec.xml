@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- No vendor audio effects. AudioPolicyEffects in this OneUI build aborts
+     audioserver when neither the effects HAL nor a Samsung vendor's
+     audio_effects_sec.xml (the only name its libeffectsconfig looks for)
+     provides an effect configuration; an empty one is valid. -->
+<audio_effects_conf version="2.0" xmlns="http://schemas.android.com/audio/audio_effects_conf/v2_0">
+    <libraries>
+    </libraries>
+    <effects>
+    </effects>
+</audio_effects_conf>
