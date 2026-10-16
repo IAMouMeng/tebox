@@ -86,6 +86,14 @@
   左：OriginOS GSI（vivo，Android 15）　中：MagicOS GSI（荣耀，Android 16）　右：OneUI GSI（三星 Galaxy Tab S9，Android 16）
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/flyme_launched.png" width="240" alt="厂商 ROM 示例：Flyme GSI">
+</p>
+
+<p align="center">
+  Flyme GSI（魅族 22，Android 15）
+</p>
+
 ## 正确拉取源码
 
 先安装并初始化 Git LFS（macOS：`brew install git-lfs`；Ubuntu/Debian：`sudo apt-get install git-lfs`）：
