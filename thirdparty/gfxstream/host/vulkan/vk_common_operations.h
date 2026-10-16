@@ -436,6 +436,9 @@ class VkEmulation {
     // tebox (local, macOS): draws an IOSurfaceRef (a decoded BGRA picture)
     // into a ColorBuffer on the GPU, scaled to its size.
     bool teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface);
+    // tebox (local, macOS): the reverse, a ColorBuffer into a BGRA IOSurface
+    // (scaled to it) for the host video encoder.
+    bool teboxReadIntoIOSurface(uint32_t colorBufferHandle, void* ioSurface);
 
     bool getColorBufferLinearLayout(uint32_t colorBufferHandle, uint64_t* offset,
                                     uint32_t* rowPitch);  // tebox (local)
@@ -619,6 +622,8 @@ class VkEmulation {
     std::optional<GfxstreamFormat> GetInternalFormatLocked(GfxstreamFormat format)
         REQUIRES(mMutex);
 
+    // tebox (local, macOS): teboxBlitIOSurface / teboxReadIntoIOSurface.
+    bool teboxBlitIOSurfaceLocked(uint32_t colorBufferHandle, void* ioSurface, bool toColorBuffer);
     bool createVkColorBufferLocked(uint32_t width, uint32_t height, GfxstreamFormat format,
                                    uint32_t colorBufferHandle,
                                    bool vulkanOnly, uint32_t memoryProperty, uint32_t mipLevels)

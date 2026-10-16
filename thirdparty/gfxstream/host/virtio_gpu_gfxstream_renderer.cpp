@@ -486,6 +486,16 @@ VG_EXPORT int stream_renderer_tebox_blit_iosurface(uint32_t res_handle, void* io
                : -EIO;
 }
 
+// tebox (local, macOS): the reverse of stream_renderer_tebox_blit_iosurface:
+// the ColorBuffer of |res_handle| into |io_surface| (BGRA, scaled to it) on
+// the GPU, for the host video encoder. 0 on success.
+VG_EXPORT int stream_renderer_tebox_read_iosurface(uint32_t res_handle, void* io_surface) {
+    if (!io_surface || !gfxstream::host::FrameBuffer::getFB()) return -EINVAL;
+    return gfxstream::host::FrameBuffer::getFB()->teboxReadIntoIOSurface(res_handle, io_surface)
+               ? 0
+               : -EIO;
+}
+
 VG_EXPORT int stream_renderer_resource_map(uint32_t res_handle, void** hvaOut, uint64_t* sizeOut) {
     GFXSTREAM_TRACE_EVENT(GFXSTREAM_TRACE_STREAM_RENDERER_CATEGORY,
                           "stream_renderer_resource_map()");
