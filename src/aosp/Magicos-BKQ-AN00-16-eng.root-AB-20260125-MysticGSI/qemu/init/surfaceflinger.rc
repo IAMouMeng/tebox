@@ -1,0 +1,18 @@
+on early-boot
+    setprop debug.renderengine.backend skiaglthreaded
+    setprop debug.renderengine.graphite 0
+    setprop debug.renderengine.vulkan 0
+
+service surfaceflinger /system/bin/surfaceflinger
+    class core animation
+    user system
+    group graphics drmrpc readproc system
+    capabilities SYS_NICE
+    onrestart restart --only-if-running zygote
+    task_profiles HighPerformance
+    console
+    setenv LIBGL_DRIVERS_PATH /vendor/lib64/dri
+    setenv EGL_PLATFORM android
+
+on property:vendor.debug.sf.restart=1
+     restart surfaceflinger

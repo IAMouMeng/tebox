@@ -1,0 +1,15 @@
+VARIANT=Magicos-BKQ-AN00-16-eng.root-AB-20260125-MysticGSI
+GSI=MagicOS BKQ-AN00 16 (MysticGSI, A/B, 2026-01-25 build eng.root; Honor/magic/magic:16/BP2A.250605.031.A2)
+# system.img is a third-party MagicOS GSI placed by hand under images/; it has
+# no pinned download in .ci/guest.lock.json. Digest: images/sha256sum.txt.
+# The vendor/HAL/runtime inputs below were copied from Coloros-OP64DDL1-16-1769698117230-AB-20260315-MysticGSI.
+
+# system.img / vendor.img / initramfs.img — under images/:
+IMAGES=src/aosp/Magicos-BKQ-AN00-16-eng.root-AB-20260125-MysticGSI/images
+# packing inputs (vendor, busybox, init) — under qemu/:
+QEMU_RT=src/aosp/Magicos-BKQ-AN00-16-eng.root-AB-20260125-MysticGSI/qemu
+# GSI link libs — under prebuilts/:
+GSI_LIBS=src/aosp/Magicos-BKQ-AN00-16-eng.root-AB-20260125-MysticGSI/prebuilts/gsi-lib64
+# Kernel used by this variant (see KERNEL file → src/kernel/<id>/):
+KERNEL_ID=gki-6.1-android14-gsi
+KERNEL_FETCHED_FROM=../../kernel/gki-6.1-android14-gsi/FETCHED_FROM.txt

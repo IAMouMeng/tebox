@@ -1,0 +1,7 @@
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>vendor.honor.hardware.hwfactoryinterface</name>
+        <version>1</version>
+        <fqname>IHwFactoryInterface/hwfactoryinterface_hal</fqname>
+    </hal>
+</manifest>
