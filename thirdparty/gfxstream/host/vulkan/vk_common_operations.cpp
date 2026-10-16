@@ -3629,25 +3629,26 @@ bool VkEmulation::createVkColorBuffer(uint32_t width, uint32_t height, Gfxstream
                                      colorBufferHandle, vulkanOnly, memoryProperty, mipLevels);
 }
 
-// tebox (local): memory offset and row pitch of a linear ColorBuffer, so the
-// VMM can import its exported dma-buf (DRM_FORMAT_MOD_LINEAR).
-bool VkEmulation::teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface) {
+// tebox (local, macOS): one GPU blit between a ColorBuffer and an IOSurface
+// (BGRA), scaled to the destination. |toColorBuffer|: a decoded picture into
+// the guest's buffer; otherwise the guest's buffer into a picture to encode.
+bool VkEmulation::teboxBlitIOSurfaceLocked(uint32_t colorBufferHandle, void* ioSurface,
+                                           bool toColorBuffer) {
 #if defined(__APPLE__)
     if (!mDeviceInfo.teboxMetalObjects || !ioSurface) return false;
-    std::lock_guard<std::mutex> lock(mMutex);
     auto vk = mDvk;
     auto* cb = gfxstream::base::find(mColorBuffers, colorBufferHandle);
     if (!cb || !cb->image) return false;
     const uint32_t width = static_cast<uint32_t>(IOSurfaceGetWidth(static_cast<IOSurfaceRef>(ioSurface)));
     const uint32_t height = static_cast<uint32_t>(IOSurfaceGetHeight(static_cast<IOSurfaceRef>(ioSurface)));
 
-    // The picture: a BGRA image on the IOSurface itself (MoltenVK).
+    // A BGRA image on the IOSurface itself (MoltenVK).
     VkImportMetalIOSurfaceInfoEXT importInfo = {
         .sType = VK_STRUCTURE_TYPE_IMPORT_METAL_IO_SURFACE_INFO_EXT,
         .pNext = nullptr,
         .ioSurface = static_cast<IOSurfaceRef>(ioSurface),
     };
-    const VkImageCreateInfo srcCi = {
+    const VkImageCreateInfo surfaceCi = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = &importInfo,
         .flags = 0,
@@ -3658,17 +3659,17 @@ bool VkEmulation::teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_LINEAR,
-        .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        .usage = toColorBuffer ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
-    VkImage src = VK_NULL_HANDLE;
-    if (vk->vkCreateImage(mDevice, &srcCi, nullptr, &src) != VK_SUCCESS) {
+    VkImage surface = VK_NULL_HANDLE;
+    if (vk->vkCreateImage(mDevice, &surfaceCi, nullptr, &surface) != VK_SUCCESS) {
         GFXSTREAM_ERROR("tebox: IOSurface image import failed");
         return false;
     }
     VkMemoryRequirements reqs;
-    vk->vkGetImageMemoryRequirements(mDevice, src, &reqs);
+    vk->vkGetImageMemoryRequirements(mDevice, surface, &reqs);
     const VkMemoryAllocateInfo allocInfo = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .pNext = nullptr,
@@ -3676,11 +3677,11 @@ bool VkEmulation::teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface
         .memoryTypeIndex =
             getValidMemoryTypeIndex(reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
     };
-    VkDeviceMemory srcMemory = VK_NULL_HANDLE;
-    if (vk->vkAllocateMemory(mDevice, &allocInfo, nullptr, &srcMemory) != VK_SUCCESS ||
-        vk->vkBindImageMemory(mDevice, src, srcMemory, 0) != VK_SUCCESS) {
-        if (srcMemory) vk->vkFreeMemory(mDevice, srcMemory, nullptr);
-        vk->vkDestroyImage(mDevice, src, nullptr);
+    VkDeviceMemory surfaceMemory = VK_NULL_HANDLE;
+    if (vk->vkAllocateMemory(mDevice, &allocInfo, nullptr, &surfaceMemory) != VK_SUCCESS ||
+        vk->vkBindImageMemory(mDevice, surface, surfaceMemory, 0) != VK_SUCCESS) {
+        if (surfaceMemory) vk->vkFreeMemory(mDevice, surfaceMemory, nullptr);
+        vk->vkDestroyImage(mDevice, surface, nullptr);
         return false;
     }
 
@@ -3691,27 +3692,34 @@ bool VkEmulation::teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface
     };
     VK_CHECK(vk->vkBeginCommandBuffer(mCommandBuffer, &beginInfo));
     const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const VkImageLayout cbLayout = cb->currentLayout;
+    const VkImageLayout cbBlitLayout = toColorBuffer ? VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                                                     : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    const VkImageLayout surfaceBlitLayout = toColorBuffer ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+                                                          : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     VkImageMemoryBarrier barriers[2] = {
         {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .srcAccessMask = 0,
-            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-            // The decoder wrote the IOSurface outside Vulkan; on MoltenVK the
+            .dstAccessMask = toColorBuffer ? VK_ACCESS_TRANSFER_READ_BIT
+                                           : VK_ACCESS_TRANSFER_WRITE_BIT,
+            // The IOSurface is written or read outside Vulkan; on MoltenVK the
             // layout is only bookkeeping and the contents stay.
             .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .newLayout = surfaceBlitLayout,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = src,
+            .image = surface,
             .subresourceRange = range,
         },
         {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-            // The whole buffer is overwritten: its old contents do not matter.
-            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .dstAccessMask = toColorBuffer ? VK_ACCESS_TRANSFER_WRITE_BIT
+                                           : VK_ACCESS_TRANSFER_READ_BIT,
+            // Overwritten whole as a destination; kept as a source.
+            .oldLayout = toColorBuffer ? VK_IMAGE_LAYOUT_UNDEFINED : cbLayout,
+            .newLayout = cbBlitLayout,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .image = cb->image,
@@ -3721,24 +3729,30 @@ bool VkEmulation::teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface
     vk->vkCmdPipelineBarrier(mCommandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2,
                              barriers);
+    const VkOffset3D surfaceEnd = {static_cast<int32_t>(width), static_cast<int32_t>(height), 1};
+    const VkOffset3D cbEnd = {static_cast<int32_t>(cb->width), static_cast<int32_t>(cb->height), 1};
     const VkImageBlit blit = {
         .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-        .srcOffsets = {{0, 0, 0}, {static_cast<int32_t>(width), static_cast<int32_t>(height), 1}},
+        .srcOffsets = {{0, 0, 0}, toColorBuffer ? surfaceEnd : cbEnd},
         .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-        .dstOffsets = {{0, 0, 0},
-                       {static_cast<int32_t>(cb->width), static_cast<int32_t>(cb->height), 1}},
+        .dstOffsets = {{0, 0, 0}, toColorBuffer ? cbEnd : surfaceEnd},
     };
-    // BGRA -> the ColorBuffer's RGBA, scaled: one GPU blit, no CPU copy.
-    vk->vkCmdBlitImage(mCommandBuffer, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, cb->image,
-                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-    const VkImageLayout finalLayout = cb->currentLayout != VK_IMAGE_LAYOUT_UNDEFINED
-                                          ? cb->currentLayout
-                                          : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    if (finalLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+    // BGRA <-> the ColorBuffer's RGBA, scaled: one GPU blit, no CPU copy.
+    if (toColorBuffer) {
+        vk->vkCmdBlitImage(mCommandBuffer, surface, surfaceBlitLayout, cb->image, cbBlitLayout, 1,
+                           &blit, VK_FILTER_LINEAR);
+    } else {
+        vk->vkCmdBlitImage(mCommandBuffer, cb->image, cbBlitLayout, surface, surfaceBlitLayout, 1,
+                           &blit, VK_FILTER_LINEAR);
+    }
+    const VkImageLayout finalLayout =
+        cbLayout != VK_IMAGE_LAYOUT_UNDEFINED ? cbLayout : cbBlitLayout;
+    if (finalLayout != cbBlitLayout) {
         VkImageMemoryBarrier back = barriers[1];
-        back.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        back.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-        back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        back.srcAccessMask = toColorBuffer ? VK_ACCESS_TRANSFER_WRITE_BIT
+                                           : VK_ACCESS_TRANSFER_READ_BIT;
+        back.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        back.oldLayout = cbBlitLayout;
         back.newLayout = finalLayout;
         vk->vkCmdPipelineBarrier(mCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1,
@@ -3755,19 +3769,33 @@ bool VkEmulation::teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface
         gfxstream::base::AutoLock queueLock(*mQueueLock);
         VK_CHECK(vk->vkQueueSubmit(mQueue, 1, &submitInfo, mCommandBufferFence));
     }
-    // The guest samples the buffer as soon as it hears back.
+    // The guest samples the buffer, or the encoder reads the IOSurface, as soon
+    // as this returns.
     VK_CHECK(vk->vkWaitForFences(mDevice, 1, &mCommandBufferFence, VK_TRUE, 5000000000ULL));
     VK_CHECK(vk->vkResetFences(mDevice, 1, &mCommandBufferFence));
-    vk->vkDestroyImage(mDevice, src, nullptr);
-    vk->vkFreeMemory(mDevice, srcMemory, nullptr);
+    vk->vkDestroyImage(mDevice, surface, nullptr);
+    vk->vkFreeMemory(mDevice, surfaceMemory, nullptr);
     return true;
 #else
     (void)colorBufferHandle;
     (void)ioSurface;
+    (void)toColorBuffer;
     return false;
 #endif
 }
 
+bool VkEmulation::teboxBlitIOSurface(uint32_t colorBufferHandle, void* ioSurface) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    return teboxBlitIOSurfaceLocked(colorBufferHandle, ioSurface, true);
+}
+
+bool VkEmulation::teboxReadIntoIOSurface(uint32_t colorBufferHandle, void* ioSurface) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    return teboxBlitIOSurfaceLocked(colorBufferHandle, ioSurface, false);
+}
+
+// tebox (local): memory offset and row pitch of a linear ColorBuffer, so the
+// VMM can import its exported dma-buf (DRM_FORMAT_MOD_LINEAR).
 bool VkEmulation::getColorBufferLinearLayout(uint32_t colorBufferHandle, uint64_t* offset,
                                              uint32_t* rowPitch) {
     std::lock_guard<std::mutex> lock(mMutex);

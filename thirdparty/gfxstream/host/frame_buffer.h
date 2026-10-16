@@ -435,6 +435,8 @@ class FrameBuffer : public gfxstream::base::EventNotificationSupport<FrameBuffer
     // tebox (local): layout of a linear, exportable ColorBuffer.
     // tebox (local, macOS): see VkEmulation::teboxBlitIOSurface.
     bool teboxBlitIOSurface(HandleType colorBufferHandle, void* ioSurface);
+    // tebox (local, macOS): see VkEmulation::teboxReadIntoIOSurface.
+    bool teboxReadIntoIOSurface(HandleType colorBufferHandle, void* ioSurface);
     bool getColorBufferLinearLayout(HandleType colorBufferHandle, uint64_t* offset,
                                     uint32_t* rowPitch);
     std::optional<BlobDescriptorInfo> exportBuffer(HandleType bufferHandle);
