@@ -3,7 +3,8 @@ name: gki-ci
 description: Maintain the project's Git ignore rules, pinned sources, ARM64 GitHub Actions builds and downloadable build artifacts.
 ---
 
-Locate the project and read `AGENTS.md`, `.ci/README.md` and `.github/workflows/build.yml`.
+Locate the project; read root `README.md`, then `.ai/AGENTS.md`, `.ci/README.md`
+and `.github/workflows/build.yml`.
 Keep the current build goal distinct from repository publication: authoring a
 workflow does not authorize creating a remote repository or uploading local data.
 

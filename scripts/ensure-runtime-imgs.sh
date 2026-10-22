@@ -18,6 +18,12 @@ K="$ROOT/src/kernel/$KID"
 # system.img and gki/Image are runtime inputs; download when absent.
 bash "$ROOT/scripts/ensure-guest-downloads.sh" "$VARIANT"
 
+# Variants that ship qemu/init/bake-overlays have their system overlays written
+# into system.img. The initramfs then does not bind-mount those paths.
+if [[ -f "$QEMU_RT/init/bake-overlays" ]]; then
+  bash "$ROOT/scripts/bake-system-overlays.sh" "$VARIANT"
+fi
+
 # Stale pointer files must never be packed as modules or boot images.
 python3 "$ROOT/scripts/check-runtime-inputs.py" \
   "$IMAGES/system.img" "$K/gki/Image" "$K/vendor_modules" "$QEMU_RT/busybox"

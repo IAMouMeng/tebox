@@ -12,10 +12,24 @@
 set -euo pipefail
 TEBOX="${TEBOX:-/opt/tebox}"
 # Binaries uploaded by `r1p-deploy.sh bin` (mounted at override/) replace the
-# ones baked into the image, so API, cast and boot script updates skip an image
-# rebuild.
+# ones baked into the image, so API, cast, boot script and QEMU updates skip
+# an image rebuild.
 for f in bin/tebox-api out/service/tebox-cast scripts/boot-qemu.sh; do
   [[ -x "$TEBOX/override/${f##*/}" ]] && cp "$TEBOX/override/${f##*/}" "$TEBOX/$f"
+done
+if [[ -x "$TEBOX/override/boot-qemu.sh.${VARIANT:?}" ]]; then
+  cp "$TEBOX/override/boot-qemu.sh.$VARIANT" "$TEBOX/scripts/boot-qemu.sh"
+fi
+# Keyed by variant: containers of different variants share override/.
+if [[ -f "$TEBOX/override/cmdline-boot.${VARIANT:?}" ]]; then
+  cp "$TEBOX/override/cmdline-boot.$VARIANT" "$TEBOX/src/aosp/$VARIANT/qemu/cmdline/boot"
+fi
+for q in "qemu-system-aarch64.$VARIANT" qemu-system-aarch64; do
+  if [[ -x "$TEBOX/override/$q" ]]; then
+    mkdir -p "$TEBOX/prebuilts/host/linux-arm64/qemu/bin"
+    cp "$TEBOX/override/$q" "$TEBOX/prebuilts/host/linux-arm64/qemu/bin/qemu-system-aarch64"
+    break
+  fi
 done
 source "$TEBOX/scripts/cix-mali-env.sh"
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$CIX_GPU_COMPAT/lib/aarch64-linux-gnu:$TEBOX/lib"

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Local manifest fragment: the repos that carry the CIX hardware Codec2 HAL
+     and its MVX VPU kernel driver.  Drop into .repo/local_manifests/ of a CIX
+     Android 14 tree (or merge into your device manifest).  Already present if
+     you sync the full radxa/cix-android-manifests BSP.
+
+     repo init -u https://github.com/radxa/cix-android-manifests.git \
+          -b cix_radxa_o6_rc2 -m cix_radxa_o6_release.xml -->
+<manifest>
+  <remote name="cix-android14" fetch="https://gitlab.com/cix-android14" />
+
+  <!-- Closed-source Codec2 HAL (c2.cix.*), libs, configs, VPU firmware. -->
+  <project name="cix_proprietary" path="vendor/cix_proprietary"
+           remote="cix-android14" revision="cix-radxa-o6" />
+
+  <!-- MVX / Linlon MVE v8 V4L2-M2M kernel driver (mvxdec / mvxenc). -->
+  <project name="vpu_driver" path="vendor/cix_opensource/vpu/vpu_driver"
+           remote="cix-android14" revision="cix-radxa-o6" />
+
+  <!-- device/cix: media_codecs_c2.xml, cix_codecs_register.xml, seccomp
+       (codec2.vendor.base/ext.policy), sepolicy, gralloc vpu.xml. -->
+  <project name="device/cix" path="device/cix"
+           remote="cix-android14" revision="cix-radxa-o6" />
+</manifest>

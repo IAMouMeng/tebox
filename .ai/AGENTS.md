@@ -1,8 +1,10 @@
 # GKI project instructions
 
-This project runs an ARM64 Android GSI on QEMU. Read `README.md` for layout and
-`.ci/README.md` for the reproducible build. Work within the user's requested scope;
-repository setup, commits, pushes and publication require an explicit request.
+Canonical agent policy for this repo (entry: root `README.md` → `.ai/README.md`).
+This project runs an ARM64 Android GSI on QEMU. Read root `README.md` for
+product layout and `.ci/README.md` for the reproducible build. Work within the
+user's requested scope; repository setup, commits, pushes and publication
+require an explicit request.
 
 ## Source and build boundaries
 
@@ -63,6 +65,6 @@ stale `vendor.img` / `initramfs.img`, kernel from each variant’s `KERNEL`, GPU
 backend from its `GPU` file: `gfxstream` (default) or `virgl`).
 
 Project skills live in `.ai/skills/` (`gki-build`, `gki-gsi`, `gki-hal`,
-`gki-ci`); prompts live in `.ai/prompts/`. Tool aliases are under
-`.agents/skills/`, `.claude/skills/` and `.cursor/skills/`. Use only the material
-relevant to the current task.
+`gki-ci`); prompts live in `.ai/prompts/` (see `.ai/README.md` for routing).
+Tool skill aliases are under `.agents/skills/`, `.claude/skills/` and
+`.cursor/skills/`. Use only the material relevant to the current task.

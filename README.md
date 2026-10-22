@@ -115,6 +115,10 @@ FORCE_VIRGL=1 SNAPSHOT=1 ./run
 
 默认会启动仓库内置的 AOSP GSI 示例变体。替换 `src/aosp/<variant>/images/system.img` 即可尝试其他 GSI。
 
+## AI 辅助开发
+
+Agent / 自动化请先读本 README，再进入 [`.ai/README.md`](.ai/README.md) 自取技能、提示词与开发流程（工程约束见 `.ai/AGENTS.md`）。根目录不再放置各工具专用的说明文件。
+
 ## 许可证
 
 本项目以 [Apache License 2.0](LICENSE) 开源。第三方源码与二进制仍遵循其各自许可证。

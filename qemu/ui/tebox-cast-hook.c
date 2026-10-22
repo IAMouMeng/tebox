@@ -525,6 +525,7 @@ static bool tebox_cast_capture_dmabuf(unsigned int framebuffer, int src_w,
     tebox_cast.last_us = now;
     return true;
 }
+
 #endif
 
 static gpointer tebox_sender_thread(gpointer opaque)
@@ -797,6 +798,8 @@ void tebox_cast_capture_pixels(const void *pixels, int width, int height,
         return;
     }
     tebox_calc_out_size(width, height, &out_w, &out_h);
+    /* mali virtio-gpu-pci is 2D: keep a private CPU copy per frame. A shared
+     * dma-buf fed to mvxenc caused heavy ghosting (VPU still mapped it). */
     copy = g_try_malloc((size_t)out_w * out_h * 4);
     if (!copy) {
         return;
@@ -852,6 +855,9 @@ void tebox_cast_shutdown(void)
     tebox_cast.out_h = 0;
     tebox_cast.logged = false;
     tebox_cast.pbo_pending = false;
+#ifdef CONFIG_GBM
+    tebox_dmabuf_target_free();
+#endif
 }
 
 #else /* !CONFIG_OPENGL */

@@ -200,6 +200,12 @@ const char *virtio_device_names[] = {
     [VIRTIO_ID_GPIO] = "virtio-gpio",
     [VIRTIO_ID_SPI] = "virtio-spi",
     [VIRTIO_ID_MEDIA] = "virtio-media",
+    /* tebox (local): MVX V4L2 passthrough, id 60 = tebox-v4l2-proto.h
+     * TEBOX_V4L2_VIRTIO_ID (kept out of the assigned range on purpose). */
+    [60] = "tebox-v4l2",
+    /* tebox (local): CIX Mali kbase passthrough, id 61 = tebox-mali-proto.h
+     * TEBOX_MALI_VIRTIO_ID. */
+    [61] = "tebox-mali",
 };
 
 static const char *virtio_id_to_name(uint16_t device_id)

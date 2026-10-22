@@ -3,8 +3,9 @@ name: gki-build
 description: Compile this project's ARM64 QEMU host and Android Mesa/HAL/vendor/initramfs images on macOS or Linux.
 ---
 
-Locate the GKI workspace and read `AGENTS.md` and `.ci/README.md`. Use the user's
-selected workspace as the root if this skill was imported elsewhere.
+Locate the GKI workspace; read root `README.md`, then `.ai/AGENTS.md` and
+`.ci/README.md`. Use the user's selected workspace as the root if this skill was
+imported elsewhere.
 
 ## Choose the target
 

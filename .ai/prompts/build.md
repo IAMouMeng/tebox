@@ -1,4 +1,4 @@
-先读取 AGENTS.md，使用 gki-build 技能完成编译。
+先读根目录 README.md，再读 .ai/AGENTS.md，使用 gki-build 技能完成编译。
 目标：按我的要求编译本项目 QEMU/VirGL 宿主，和/或 Android ARM64 的 Mesa、HAL、vendor.img、initramfs。
 使用 scripts/env.sh 与现有脚本入口（build-hals / build-vendor-img / build-initramfs 或 .ci/build-*.sh）。
 缺依赖时按 .ci/README.md 安装；不要重置已有源码树。

@@ -3,8 +3,8 @@ name: gki-hal
 description: Design, implement, install and pack soft Android vendor HALs for this QEMU GSI bring-up.
 ---
 
-Locate the GKI workspace and read `AGENTS.md`. HAL code lives under
-`src/aosp/<variant>/hardware/<name>/` and is installed into
+Locate the GKI workspace; read root `README.md`, then `.ai/AGENTS.md`. HAL code
+lives under `src/aosp/<variant>/hardware/<name>/` and is installed into
 `qemu/vendor` then packed by `scripts/build-vendor-img.sh`.
 
 ## Layout of an existing HAL

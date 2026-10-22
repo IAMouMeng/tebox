@@ -3,14 +3,28 @@ name: gki-gsi
 description: Adapt this project to a new Android GSI system.img (new build ID / fingerprint / FCM level).
 ---
 
-Locate the GKI workspace and read `AGENTS.md`, the active variant’s
-`FETCHED_FROM.txt`, `KERNEL`, and `.ci/guest.lock.json`.
+Locate the GKI workspace; read root `README.md`, then `.ai/AGENTS.md`, the
+active variant’s `FETCHED_FROM.txt`, `KERNEL`, and `.ci/guest.lock.json`.
 
 ## When this skill applies
 
 The user is swapping or upgrading `system.img` (new BP* / AP* ID, new SDK, new
-GSI zip). Goal: boot the new image on the existing QEMU + vendor stack with the
+GSI zip), **or** bringing up a manufacturer / MysticGSI image (OneUI, ColorOS,
+OriginOS, Flyme, …). Goal: boot on the existing QEMU + vendor stack with the
 smallest necessary changes.
+
+## OEM family matrix (prompts + goldens)
+
+| Family | Prompt | Living reference tree |
+| --- | --- | --- |
+| AOSP official | `.ai/prompts/gsi.md` | `src/aosp/aosp_arm64-BP4A.251205.006/` |
+| Any OEM (router) | `.ai/prompts/oem-adapt.md` | pick family below |
+| Samsung OneUI | `.ai/prompts/oem-oneui.md` | `src/aosp/Oneui-a25x-14-…/` |
+| ColorOS / OriginOS | `.ai/prompts/oem-coloros-originos.md` | `src/aosp/Originos-PD2266-15-…/` (ColorOS dirs may be empty donors) |
+| Flyme | `.ai/prompts/oem-flyme.md` | often images-only; do not invent HALs |
+
+OEM images are usually hand-placed (no `guest.lock.json` URL). Copy the closest
+populated donor, record it in `FETCHED_FROM.txt`, then diff against boot logs.
 
 ## Procedure
 

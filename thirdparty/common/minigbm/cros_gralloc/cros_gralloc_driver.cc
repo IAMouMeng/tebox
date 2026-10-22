@@ -364,27 +364,17 @@ destroy_hnd:
 	return ret;
 }
 
-int32_t cros_gralloc_driver::retain(buffer_handle_t handle)
+int32_t cros_gralloc_driver::import_handle_locked(cros_gralloc_handle_t hnd)
 {
-	std::lock_guard<std::mutex> lock(mutex_);
-
-	auto hnd = cros_gralloc_convert_handle(handle);
-	if (!hnd) {
-		ALOGE("Failed to import: invalid handle.");
-		return -EINVAL;
-	}
-
+	/* Assumes mutex_ held. hnd already validated by caller. */
 	if (hnd->reserved_region_size > 0 &&
 	    hnd->reserved_region_size < sizeof(struct cros_gralloc_buffer_metadata)) {
 		ALOGE("Failed to import: invalid reserved region size.");
 		return -EINVAL;
 	}
 
-	auto buffer_it = buffers_.find(hnd);
-	if (buffer_it != buffers_.end()) {
-		ALOGE("Failed to import: already registered handle.");
-		return -EINVAL;
-	}
+	if (buffers_.find(hnd) != buffers_.end())
+		return 0;
 
 	struct drv_import_fd_data data = {
 		.format_modifier = hnd->format_modifier,
@@ -411,6 +401,24 @@ int32_t cros_gralloc_driver::retain(buffer_handle_t handle)
 
 	buffers_.emplace(hnd, std::move(scoped_buffer));
 	return 0;
+}
+
+int32_t cros_gralloc_driver::retain(buffer_handle_t handle)
+{
+	std::lock_guard<std::mutex> lock(mutex_);
+
+	auto hnd = cros_gralloc_convert_handle(handle);
+	if (!hnd) {
+		ALOGE("Failed to import: invalid handle.");
+		return -EINVAL;
+	}
+
+	if (buffers_.find(hnd) != buffers_.end()) {
+		ALOGE("Failed to import: already registered handle.");
+		return -EINVAL;
+	}
+
+	return import_handle_locked(hnd);
 }
 
 int32_t cros_gralloc_driver::release(buffer_handle_t handle)
@@ -577,10 +585,16 @@ cros_gralloc_buffer *cros_gralloc_driver::get_buffer(cros_gralloc_handle_t hnd)
 {
 	/* Assumes driver mutex is held. */
 	auto buffer_it = buffers_.find(hnd);
-	if (buffer_it == buffers_.end()) {
-		return nullptr;
+	if (buffer_it != buffers_.end()) {
+		return buffer_it->second.get();
 	}
-	return buffer_it->second.get();
+	/* Cloned native_handle (same buffer id, different pointer) — common when
+	 * the handle crossed binder / allocator without a local importBuffer. */
+	for (const auto &pair : buffers_) {
+		if (pair.second && pair.second->get_id() == hnd->id)
+			return pair.second.get();
+	}
+	return nullptr;
 }
 
 void cros_gralloc_driver::with_buffer(cros_gralloc_handle_t hnd,
@@ -589,8 +603,18 @@ void cros_gralloc_driver::with_buffer(cros_gralloc_handle_t hnd,
 	std::lock_guard<std::mutex> lock(mutex_);
 
 	auto buffer = get_buffer(hnd);
+	int32_t import_ret = 1;
 	if (!buffer) {
-		ALOGE("Invalid reference (with_buffer() called on unregistered handle).");
+		/* Auto-import: CIX VideoHelpers / GraphicBufferMapper often query
+		 * metadata on a handle that was never retain()'d in this process
+		 * (remote allocator, or mapper dlopen'd in another namespace). */
+		import_ret = import_handle_locked(hnd);
+		if (import_ret == 0)
+			buffer = get_buffer(hnd);
+	}
+	if (!buffer) {
+		ALOGE("Invalid reference (with_buffer() called on unregistered handle, import=%d).",
+		      import_ret);
 		return;
 	}
 

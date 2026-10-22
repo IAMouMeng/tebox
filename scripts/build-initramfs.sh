@@ -98,6 +98,17 @@ load virtio_input.ko
 load virtio_balloon.ko
 load virtio-rng.ko
 load system_heap.ko
+# tebox MVX V4L2 passthrough (guest half); only present when built. Needs
+# virtio_pci (above) + the builtin V4L2 core. Harmless if the QEMU device is
+# absent (no tebox-v4l2 virtio device -> driver just never probes).
+load tebox_v4l2.ko
+# tebox Mali kbase passthrough (guest half): mali_kbase is a tiny stub that only
+# exposes /sys/module/mali_kbase/parameters/large_page_conf (the stock libmali
+# probes it); tebox_mali exposes /dev/mali0 + /sys/class/misc/mali0. Load the
+# stub first so the sysfs is present before libmali enumerates. Harmless if the
+# tebox-mali virtio device is absent (driver just never probes).
+load mali_kbase.ko
+load tebox_mali.ko
 mdev -s 2>/dev/null || true
 for name in vda vdb vdc; do
   if [ ! -e /dev/$name ]; then
@@ -132,10 +143,14 @@ else
 fi
 
 # Neutralize KeyMint stubs previously injected into shared_blocks system.img.
-if [ -f /overlays/init.rc ]; then
+# skip-rootfs-binds: those files are already in the images (no extra mounts).
+if [ -f /skip-rootfs-binds ]; then
+  echo "[init] overlays baked into images"
+elif [ -f /overlays/init.rc ]; then
   mount -o bind /overlays/init.rc /newroot/system/etc/init/hw/init.rc && \
     echo "[init] bound clean init.rc"
 fi
+if [ ! -f /skip-rootfs-binds ]; then
 if [ -f /overlays/init.ranchu.rc ]; then
   touch /newroot/init.ranchu.rc 2>/dev/null || true
   target=/newroot/init.ranchu.rc
@@ -193,10 +208,14 @@ if [ -f /system-overlay.list ]; then
     fi
   done < /system-overlay.list
 fi
+fi
 
 # GSI ships ro.adb.secure=1 (RSA dialog). For loopback TCP ADB, force insecure
 # adbd before second-stage init loads /system/build.prop.
-if grep -q 'androidboot.qemu_adb=1' /proc/cmdline 2>/dev/null && \
+# Baked images already contain ro.adb.secure=0; binding it would show up as a
+# second mount on /system/build.prop.
+if [ ! -f /skip-rootfs-binds ] && \
+   grep -q 'androidboot.qemu_adb=1' /proc/cmdline 2>/dev/null && \
    [ -f /newroot/system/build.prop ]; then
   awk '
     BEGIN { done=0 }
@@ -209,7 +228,14 @@ if grep -q 'androidboot.qemu_adb=1' /proc/cmdline 2>/dev/null && \
 fi
 
 mkdir -p /newroot/proc /newroot/sys /newroot/dev
-mount -o bind /proc /newroot/proc
+# hidepid=2,gid=3009 matches Android: apps cannot read other UIDs' /proc.
+# readproc (3009) is on zygote, system_server and adbd.
+if [ -f /skip-rootfs-binds ]; then
+  mount -t proc -o nosuid,nodev,noexec,hidepid=2,gid=3009 proc /newroot/proc || \
+    mount -o bind /proc /newroot/proc
+else
+  mount -o bind /proc /newroot/proc
+fi
 mount -o bind /sys /newroot/sys
 mount -o bind /dev /newroot/dev
 mount -o bind /dev/pts /newroot/dev/pts 2>/dev/null || true
@@ -222,6 +248,9 @@ echo "[init] exec selinux_setup"
 exec switch_root /newroot /system/bin/init selinux_setup
 INIT
 chmod +x "$STAGE/init"
+if [[ -f "$INIT_DIR/bake-overlays" ]]; then
+  : > "$STAGE/skip-rootfs-binds"
+fi
 
 mkdir -p "$(dirname "$OUT_IMG")"
 ( cd "$STAGE" && find . | cpio -o -H newc 2>/dev/null | gzip -9 ) > "$OUT_IMG"

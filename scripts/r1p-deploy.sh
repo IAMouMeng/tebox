@@ -6,7 +6,7 @@
 #
 # Usage: scripts/r1p-deploy.sh [build|push|images|start|stop|status|logs|all|bin]
 #   bin: rebuild only tebox-api, tebox-cast and VirGL, upload them,
-#        boot-qemu.sh and cix-r1p-start.sh to $R1P_DIR/bin (mounted over the image's copies) and
+#        boot-qemu.sh, cix-r1p-start.sh and the variant cmdline to $R1P_DIR/bin (mounted over the image's copies) and
 #        restart the container. Needs the tebox-r1p-builder image that
 #        `build` tags; no image transfer.
 # Env:   R1P_HOST (user@10.10.2.142)  R1P_DIR (/mmc/tebox)  R1P_NAME (tebox-1)
@@ -69,6 +69,11 @@ build() {
   cp "$AOSP/KERNEL" "$CONTEXT/runtime-src/aosp/$VARIANT/"
   [[ ! -f "$AOSP/GPU" ]] || cp "$AOSP/GPU" "$CONTEXT/runtime-src/aosp/$VARIANT/"
   cp "$AOSP/qemu/cmdline/boot" "$CONTEXT/runtime-src/aosp/$VARIANT/qemu/cmdline/"
+  # boot-qemu.sh reads qemu/vulkan-hal at runtime to name the Vulkan HAL
+  # (androidboot.hardware.vulkan); without it the default "ranchu" mismatches a
+  # vendor.img that renamed vulkan.ranchu.so (e.g. OriginOS -> vulkan.qcom.so)
+  # and ANGLE's Vulkan init fails, crash-looping SurfaceFlinger.
+  [[ ! -f "$AOSP/qemu/vulkan-hal" ]] || cp "$AOSP/qemu/vulkan-hal" "$CONTEXT/runtime-src/aosp/$VARIANT/qemu/"
   docker build --platform linux/arm64 -f "$ROOT/.ci/cix-r1p/Dockerfile" --build-arg APT_MIRROR="$R1P_APT_MIRROR" \
     --build-arg VARIANT="$VARIANT" --build-arg KERNEL_ID="$KID" -t "$R1P_IMAGE" "$CONTEXT"
   # Tag the compiler stage as an image so pruning the build cache keeps it.
@@ -104,6 +109,9 @@ bin() {
     gzip -1 -c "$f" | remote "gunzip | sudo -A tee $R1P_DIR/bin/$name.part >/dev/null \
       && sudo -A chmod 755 $R1P_DIR/bin/$name.part && sudo -A mv $R1P_DIR/bin/$name.part $R1P_DIR/bin/$name"
   done
+  # cix-r1p-start.sh installs it over the image's (possibly older) cmdline.
+  remote "sudo -A tee $R1P_DIR/bin/cmdline-boot.$VARIANT.part >/dev/null \
+    && sudo -A mv $R1P_DIR/bin/cmdline-boot.$VARIANT.part $R1P_DIR/bin/cmdline-boot.$VARIANT" < "$AOSP/qemu/cmdline/boot"
   # Recreating reboots the guests (tebox-api owns the QEMU processes) and
   # picks up the VirGL mount below.
   start >/dev/null
@@ -141,11 +149,11 @@ start() {
   # A VirGL uploaded by `bin` replaces the image's library (docker resolves
   # the .so.1 symlink inside the image to the real file).
   local virgl=
-  remote "test -f $R1P_DIR/bin/libvirglrenderer.so.1" && \
+  remote "sudo -A test -f $R1P_DIR/bin/libvirglrenderer.so.1" && \
     virgl="-v $R1P_DIR/bin/libvirglrenderer.so.1:/opt/tebox/prebuilts/host/linux-arm64/virglrenderer/lib/libvirglrenderer.so.1:ro"
   # boot-qemu.sh, tebox-api and tebox-cast are copied from the override dir
   # by cix-r1p-start.sh; mounting one over its target too makes that cp fail.
-  remote "test -f $R1P_DIR/bin/cix-r1p-start.sh" && \
+  remote "sudo -A test -f $R1P_DIR/bin/cix-r1p-start.sh" && \
     virgl+=" -v $R1P_DIR/bin/cix-r1p-start.sh:/opt/tebox/scripts/cix-r1p-start.sh:ro"
   remote "sudo -A mkdir -p $R1P_USER_IMAGES $R1P_INSTANCE_ROOT"
   # Host networking lets QEMU's user-mode hostfwd publish adb on the LAN.

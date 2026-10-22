@@ -24,6 +24,10 @@ for c in "${MESA_PRE_CANDIDATES[@]}"; do
   fi
 done
 SIZE_MB="${VENDOR_IMG_MB:-128}"
+# src/aosp/<variant>/GPU, as read by boot-qemu.sh. mali renders with the stock
+# CIX libGLES_mali + Arm gralloc from the template, so the Mesa and gfxstream
+# render stacks stay out of the image.
+GPU_BACKEND="$(tr -d '[:space:]' < "$AOSP/GPU" 2>/dev/null || true)"
 
 [[ -d "$STUB" ]] || { echo "missing $STUB" >&2; exit 1; }
 [[ -x "$E2/mke2fs" && -x "$E2/debugfs" ]] || { echo "need e2fsprogs" >&2; exit 1; }
@@ -32,8 +36,23 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -a "$STUB"/. "$STAGE"/
 
+# OriginOS publishes init as init.qcom.rc (androidboot.hardware=qcom) with the
+# real script inside the image, so the initramfs does not bind-mount it.
+if [[ -f "$AOSP/qemu/init/bake-overlays" ]]; then
+  install -m 0644 "$AOSP/qemu/init/init.ranchu.rc" "$STAGE/etc/init/hw/init.qcom.rc"
+  rm -f "$STAGE/etc/init/hw/init.ranchu.rc"
+fi
+
+if [[ "$GPU_BACKEND" == mali ]]; then
+  # The composer and Arm gralloc still link libdrm, and the composer links
+  # libgbm_mesa for its stub-allocator paths.
+  [[ -n "$MESA_PRE" ]] || { echo "mali vendor needs libdrm/libgbm_mesa from Mesa prebuilts" >&2; exit 1; }
+  echo "gpu: mali (no Mesa/gfxstream render stack)"
+  for lib in libdrm.so libgbm_mesa.so; do
+    cp -fL "$MESA_PRE/$lib" "$STAGE/lib64/$lib"
+  done
 # Inject Mesa guest stack if prebuilts exist.
-if [[ -n "$MESA_PRE" ]]; then
+elif [[ -n "$MESA_PRE" ]]; then
   echo "injecting Mesa from $MESA_PRE"
   mkdir -p "$STAGE/lib64/egl" "$STAGE/lib64/dri" "$STAGE/lib64/hw" "$STAGE/lib64/gbm"
   copy_tree() {
@@ -76,27 +95,70 @@ if [[ -n "$MESA_PRE" ]]; then
     echo "missing libgbm_mesa.so after Mesa inject from $MESA_PRE" >&2
     exit 1
   }
-  SYSTEM_IMG="$AOSP/images/system.img"
-  [[ -f "$SYSTEM_IMG" ]] || { echo "missing $SYSTEM_IMG" >&2; exit 1; }
-  for lib in libcutils.so libhardware.so libbase.so libutils.so libc++.so libz.so; do
-    "$E2/debugfs" -R "dump /system/lib64/$lib $STAGE/lib64/$lib" "$SYSTEM_IMG" >/dev/null 2>&1
-    [[ -s "$STAGE/lib64/$lib" ]] || { echo "failed to extract $lib from GSI" >&2; exit 1; }
-  done
   ls -la "$STAGE/lib64" "$STAGE/lib64/egl" "$STAGE/lib64/dri" "$STAGE/lib64/gbm" | head -60
 else
   echo "note: no Mesa prebuilts under ${MESA_PRE_CANDIDATES[*]} (props already mesa/virtio)"
+fi
+if [[ "$GPU_BACKEND" == mali || -n "$MESA_PRE" ]]; then
+  SYSTEM_IMG="$AOSP/images/system.img"
+  [[ -f "$SYSTEM_IMG" ]] || { echo "missing $SYSTEM_IMG" >&2; exit 1; }
+  # libdmabufheap is not LLNDK, so a vendor process (the minigbm cros_gralloc
+  # allocator, which links it for the dma_heap backend) cannot see the
+  # /system/lib64 copy; bundle it into /vendor/lib64.
+  for lib in libcutils.so libhardware.so libbase.so libutils.so libc++.so libz.so libdmabufheap.so; do
+    "$E2/debugfs" -R "dump /system/lib64/$lib $STAGE/lib64/$lib" "$SYSTEM_IMG" >/dev/null 2>&1
+    [[ -s "$STAGE/lib64/$lib" ]] || { echo "failed to extract $lib from GSI" >&2; exit 1; }
+  done
+  # The stock libGLES_mali.so (ro.hardware.egl=mali) NEEDs these graphics
+  # HIDL/AIDL interface libs. This GSI has VNDK deprecated (no current vndk
+  # apex), so the vendor/sphal namespace sees only LLNDK + /vendor/lib64 — not
+  # the versioned vndk apexes. Without them the EGL loader's dlopen of
+  # libGLES_mali.so fails in SurfaceFlinger's namespace and it silently falls
+  # back to the Mesa libEGL.so -> softpipe (software) rendering. Bundle them
+  # (same files, so ABI stays identical to the framework's /system copies).
+  for lib in android.hardware.graphics.allocator-V2-ndk.so \
+             android.hardware.graphics.common-V5-ndk.so \
+             android.hardware.graphics.common-V7-ndk.so \
+             android.hardware.graphics.mapper@4.0.so \
+             libgralloctypes.so \
+             android.hardware.graphics.common@1.0.so \
+             android.hardware.graphics.common@1.1.so \
+             android.hardware.graphics.common@1.2.so \
+             android.hardware.common-V2-ndk.so; do
+    "$E2/debugfs" -R "dump /system/lib64/$lib $STAGE/lib64/$lib" "$SYSTEM_IMG" >/dev/null 2>&1
+    # V7 is required by BP4A+ allocator-V2-ndk in the sphal namespace; older
+    # GSIs may lack it — skip only that optional bump, fail on the rest.
+    if [[ ! -s "$STAGE/lib64/$lib" ]]; then
+      if [[ "$lib" == android.hardware.graphics.common-V7-ndk.so ]]; then
+        echo "note: $lib absent from GSI (ok on pre-V7 images)"
+        continue
+      fi
+      echo "failed to extract $lib from GSI" >&2
+      exit 1
+    fi
+  done
 fi
 # gfxstream guest stack (scripts/fetch-gfxstream-guest.sh), selected at boot
 # with androidboot.tebox.gpu=gfxstream. Never overwrite VirGL/Mesa files of
 # the same name (libdrm.so, ...): the VirGL path must stay as it was.
 GFX_PRE="${GFX_PRE:-$ANDROID_PRE/gfxstream}"
-if [[ -d "$GFX_PRE/lib64" ]]; then
+if [[ "$GPU_BACKEND" != mali && -d "$GFX_PRE/lib64" ]]; then
   echo "injecting gfxstream guest stack from $GFX_PRE"
   (cd "$GFX_PRE" && find . -type f | sed 's|^\./||') | while read -r f; do
     [[ -e "$STAGE/$f" ]] && continue
     mkdir -p "$STAGE/$(dirname "$f")"
     cp -p "$GFX_PRE/$f" "$STAGE/$f"
   done
+fi
+# gfxstream ships vulkan.ranchu.so. A variant qemu/vulkan-hal names the HAL
+# the loader opens (vulkan.${name}.so) so the ranchu filename is not installed.
+if [[ -f "$AOSP/qemu/vulkan-hal" && -f "$STAGE/lib64/hw/vulkan.ranchu.so" ]]; then
+  VULKAN_HAL=$(tr -d '[:space:]' < "$AOSP/qemu/vulkan-hal")
+  if [[ -n "$VULKAN_HAL" && "$VULKAN_HAL" != ranchu ]]; then
+    install -m 0644 "$STAGE/lib64/hw/vulkan.ranchu.so" "$STAGE/lib64/hw/vulkan.${VULKAN_HAL}.so"
+    rm -f "$STAGE/lib64/hw/vulkan.ranchu.so"
+    echo "vulkan HAL name: $VULKAN_HAL"
+  fi
 fi
 
 # Keep Android's stable mapper lookup and Mesa's explicit hw lookup identical.
@@ -141,6 +203,14 @@ CMD="$(mktemp)"
   fi
   if [[ -f bin/hw/android.hardware.graphics-service ]]; then
     echo "ea_set /bin/hw/android.hardware.graphics-service security.selinux u:object_r:hal_keymint_system_exec:s0"
+  fi
+  if [[ -f bin/hw/android.hardware.graphics.allocator-service.minigbm ]]; then
+    # minigbm cros_gralloc allocator: run in the permissive hal_keymint_system
+    # domain (via its _exec typetransition) so it can open /dev/dri + dma_heap.
+    echo "ea_set /bin/hw/android.hardware.graphics.allocator-service.minigbm security.selinux u:object_r:hal_keymint_system_exec:s0"
+  fi
+  if [[ -f bin/hw/android.hardware.graphics.allocator-service.arm ]]; then
+    echo "ea_set /bin/hw/android.hardware.graphics.allocator-service.arm security.selinux u:object_r:hal_keymint_system_exec:s0"
   fi
   if [[ -f bin/hw/android.hardware.health-service ]]; then
     echo "ea_set /bin/hw/android.hardware.health-service security.selinux u:object_r:hal_keymint_system_exec:s0"
@@ -187,6 +257,12 @@ CMD="$(mktemp)"
   fi
   if [[ -f bin/hw/android.hardware.media.c2-service ]]; then
     echo "ea_set /bin/hw/android.hardware.media.c2-service security.selinux u:object_r:hal_keymint_system_exec:s0"
+  fi
+  # CIX hardware Codec2 HAL (c2.cix.*, drives the MVX VPU over tebox-v4l2
+  # /dev/video0,1 directly -- no gfx).  Runs in the permissive hal_keymint_system
+  # domain like the other QEMU vendor HALs.
+  if [[ -f "bin/hw/android.hardware.media.c2@1.0-cix-service" ]]; then
+    echo "ea_set /bin/hw/android.hardware.media.c2@1.0-cix-service security.selinux u:object_r:hal_keymint_system_exec:s0"
   fi
   echo "ea_set / security.selinux u:object_r:vendor_file:s0"
 } > "$CMD"

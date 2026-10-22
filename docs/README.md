@@ -87,6 +87,10 @@ FORCE_VIRGL=1 SNAPSHOT=1 ./run
 
 This boots the built-in AOSP GSI example. Replace `src/aosp/<variant>/images/system.img` to try another GSI.
 
+## AI-assisted development
+
+Agents should start from the root [README](../README.md), then open [`.ai/README.md`](../.ai/README.md) for skills, prompts and workflow (policy in `.ai/AGENTS.md`). No per-tool instruction files at the repo root.
+
 ## License
 
 Released under the [Apache License 2.0](../LICENSE). Third-party sources and binaries remain under their own licenses.

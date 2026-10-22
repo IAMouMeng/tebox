@@ -36,6 +36,19 @@ system_ss.add(when: 'CONFIG_NEXTCUBE', if_true: files('next-fb.c'))
 
 system_ss.add(when: 'CONFIG_VGA', if_true: files('vga.c'))
 system_ss.add(when: 'CONFIG_VIRTIO', if_true: files('virtio-dmabuf.c'))
+
+# tebox (local, Linux/R1P): MVX V4L2 passthrough virtio device + its PCI proxy,
+# so the guest's stock CIX c2.cix HAL drives the host VPU. Needs linux V4L2
+# headers and the virtio-pci transport.
+if host_os == 'linux'
+  system_ss.add(when: ['CONFIG_VIRTIO', 'CONFIG_VIRTIO_PCI'],
+                if_true: files('tebox-v4l2.c'))
+  # tebox-mali (local, Linux/R1P): CIX Mali kbase /dev/mali0 passthrough virtio
+  # device + PCI proxy with a host-visible hostmem BAR, so the guest's Mali
+  # userspace drives the real GPU with no gfxstream/virgl translation.
+  system_ss.add(when: ['CONFIG_VIRTIO', 'CONFIG_VIRTIO_PCI'],
+                if_true: files('tebox-mali.c'))
+endif
 system_ss.add(when: 'CONFIG_DM163', if_true: files('dm163.c'))
 system_ss.add(when: 'CONFIG_VHOST_USER_MEDIA', if_true: files('vhost-user-media.c'))
 system_ss.add(when: ['CONFIG_VHOST_USER_MEDIA', 'CONFIG_VIRTIO_PCI'],
