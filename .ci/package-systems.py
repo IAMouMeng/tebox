@@ -54,10 +54,15 @@ def variants() -> list[str]:
     for entry in sorted(aosp.iterdir(), key=lambda item: item.name):
         if not entry.is_dir() or not (entry / 'KERNEL').is_file():
             continue
+        # Skip thin metadata-only trees on main (KERNEL + cmdline for R1P
+        # products). Full GSI branches have hardware/ and pack vendor/init.
+        if not (entry / 'hardware').is_dir():
+            continue
         if (entry / 'images').is_dir() or (entry / 'qemu').is_dir():
             found.append(entry.name)
     if not found:
-        raise SystemExit('no variants under src/aosp/*/ (need KERNEL + images|qemu)')
+        print('no full GSI variants under src/aosp/*/ — skip package-systems')
+        return []
     return found
 
 
@@ -222,6 +227,8 @@ def main() -> None:
     names = variants()
     (ROOT / 'out').mkdir(exist_ok=True)
     (ROOT / 'dist').mkdir(exist_ok=True)
+    if not names:
+        return
     build_images(names)
     with tempfile.TemporaryDirectory(prefix='qemu-pack-', dir=ROOT / 'out') as temp_name:
         qemu = qemu_tree(Path(temp_name), host)

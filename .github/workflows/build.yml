@@ -88,14 +88,15 @@ jobs:
         with:
           name: tebox-${{ matrix.host }}
           path: dist/tebox-*-${{ matrix.host }}.tar.gz
-          if-no-files-found: error
+          # main may only have thin variant metadata (no full GSI tree).
+          if-no-files-found: warn
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: matrix.host == 'linux-arm64'
         with:
           name: tebox-vendor-init
           path: dist/tebox-vendor-init.tar.gz
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -104,6 +105,45 @@ jobs:
           path: |
             out/*.log
             out/**/meson-logs/meson-log.txt
+          retention-days: 7
+
+  r1p:
+    needs: validate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    env:
+      R1P_APT_MIRROR: ''
+      R1P_SAVE_IMAGE: '1'
+      TEBOX_VERSION: '1.0.0'
+      JOBS: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: src/service/api/go.sum
+      - name: Install native build dependencies
+        run: bash .ci/install-deps.sh
+      - name: Build tebox products image
+        run: |
+          mkdir -p out
+          export PATH="$PWD/out/ci-venv/bin:$PATH"
+          set -o pipefail
+          bash .ci/build-r1p-image.sh 2>&1 | tee out/r1p-build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tebox-r1p-linux-arm64
+          path: dist/tebox-r1p-linux-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: logs-r1p-linux-arm64
+          path: out/r1p-build.log
+          if-no-files-found: warn
           retention-days: 7
 
   windows:

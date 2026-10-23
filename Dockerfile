@@ -1,8 +1,11 @@
 # tebox runtime base — products only (no sources, no AOSP *.img).
 # Image: tebox:<version>  (e.g. tebox:1.0.0)
-# Context: out/r1p-docker/  (assembled by out/r1p-deploy.sh)
+# Context: out/r1p-docker/  (assembled by scripts/r1p-deploy.sh)
 #   host-drivers/*.deb
 #   tebox/   → /opt/tebox
+#
+# No baked VARIANT / KERNEL_ID: CreateInstance supplies guest imgs; kernel
+# Image + *.ko and thin aosp/*/KERNEL metadata ship in the image.
 FROM debian:trixie-slim
 ARG APT_MIRROR=
 RUN echo 'Acquire::Retries "8";' > /etc/apt/apt.conf.d/80-retries \
@@ -24,16 +27,14 @@ RUN for d in /tmp/drivers/*.deb; do dpkg -x "$d" /tmp/drivers/root; done \
       mkdir -p /etc/vulkan/icd.d && cp -a /tmp/drivers/root/etc/vulkan/icd.d/. /etc/vulkan/icd.d/; fi \
  && rm -rf /tmp/drivers
 
-ARG VARIANT
-ARG KERNEL_ID
-ENV TEBOX=/opt/tebox VARIANT=${VARIANT} KERNEL_ID=${KERNEL_ID}
+ENV TEBOX=/opt/tebox
 COPY tebox/ /opt/tebox/
 RUN chmod +x /opt/tebox/bin/tebox-api /opt/tebox/out/service/tebox-cast \
       /opt/tebox/scripts/*.sh /opt/tebox/run \
       /opt/tebox/prebuilts/host/linux-arm64/qemu/bin/qemu-system-aarch64 \
- && test -f /opt/tebox/src/kernel/${KERNEL_ID}/gki/Image \
- && test -f /opt/tebox/src/aosp/${VARIANT}/KERNEL \
- && test ! -e /opt/tebox/src/aosp/${VARIANT}/images \
- && ! find /opt/tebox/src -name '*.img' | grep -q .
+ && test -n "$(ls /opt/tebox/src/kernel/*/gki/Image 2>/dev/null)" \
+ && test -n "$(ls /opt/tebox/src/aosp/*/KERNEL 2>/dev/null)" \
+ && test -n "$(ls /opt/tebox/src/kernel/*/vendor_modules/*.ko 2>/dev/null)" \
+ && ! find /opt/tebox -name '*.img' | grep -q .
 
 ENTRYPOINT ["/opt/tebox/scripts/cix-r1p-start.sh"]
