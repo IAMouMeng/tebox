@@ -217,17 +217,19 @@ elif [[ "$FORCE_RUTABAGA" == 1 ]]; then
   # Vulkan through the GSI's ANGLE. Blob memory carries the
   # address-space-graphics transport.
   GPU_DEV="virtio-gpu-rutabaga,gfxstream-vulkan=on,x-gfxstream-composer=on,blob=on,hostmem=${RUTABAGA_HOSTMEM:-512M}"
-  # Guest side: GLES through the GSI's ANGLE on the gfxstream Vulkan driver
-  # (prebuilts/android-arm64/gfxstream); our graphics HAL allocates virtio-gpu
-  # resources with minigbm-layout handles (ro.hardware.gralloc stays minigbm).
+  # Guest: ANGLE on gfxstream Vulkan (prebuilts/.../gfxstream). Stub
+  # IAllocator creates virtio-gpu resources with cros_gralloc-layout ints
+  # (gpu_buffer.h); ro.hardware.gralloc=minigbm so vulkan.ranchu parses them.
   APPEND+=(androidboot.tebox.gpu=gfxstream androidboot.hardwareegl=angle
     androidboot.hardware.vulkan=ranchu androidboot.opengles.version=196610
-    androidboot.hardware.gltransport=virtio-gpu-asg)
+    androidboot.hardware.gltransport=virtio-gpu-asg
+    androidboot.hardware.gralloc=minigbm)
   # HWUI renders with Vulkan (skiavk; HWUI_RENDERER=skiagl overrides): HWUI on
   # ANGLE's GLES misrenders some layers (CIX Mali: launcher scrim drawn
   # transparent; macOS: ColorOS clock dial). HWUI's Vulkan backend needs two
   # queues, so on macOS (MoltenVK has one) gfxstream adds a virtual one.
   APPEND+=(androidboot.hwui.renderer="${HWUI_RENDERER:-skiavk}")
+  echo "gpu:     gfxstream (rutabaga + stub alloc / minigbm layout; from GPU file)"
   if [[ "$HOST_OS" == darwin ]]; then
     export GFXSTREAM_RENDERER_FEATURES="${GFXSTREAM_RENDERER_FEATURES:-VulkanVirtualQueue:enabled}"
   fi
@@ -253,6 +255,17 @@ elif [[ "$FORCE_RUTABAGA" == 1 ]]; then
   if [[ "$HOST_OS" == darwin && -z "${ANDROID_EMU_VK_LOADER_PATH:-}" && -f /opt/homebrew/lib/libMoltenVK.dylib ]]; then
     export ANDROID_EMU_VK_LOADER_PATH=/opt/homebrew/lib/libMoltenVK.dylib
   fi
+else
+  # VirGL: selected when src/aosp/<variant>/GPU is "virgl" (or FORCE_RUTABAGA=0).
+  # video_encode selects media_codecs_tebox_video.xml so c2.mesa.* appears
+  # (host needs VIRGL_VIDEO=1). GPU_DEV is virtio-gpu-gl-pci when FORCE_VIRGL=1.
+  # stub allocator GBM handles match VirGL kms_display setTarget.
+  APPEND+=(androidboot.tebox.gpu=virgl androidboot.hardwareegl=mesa
+    androidboot.opengles.version=196610
+    androidboot.hwui.renderer="${HWUI_RENDERER:-skiagl}"
+    androidboot.hardware.gralloc=stub
+    androidboot.tebox.video_encode=1 androidboot.tebox.video_decode=1)
+  echo "gpu:     virgl (Mesa + stub gralloc + c2.mesa; from GPU file / FORCE_RUTABAGA=0)"
 fi
 # Display refresh rate (graphics HAL vsync). It caps every app's frame rate,
 # benchmarks included; 120 lets the GPU run past 60 fps.
@@ -378,6 +391,52 @@ if [[ "$HOST_OS" == darwin && "$FORCE_RUTABAGA" == 1 &&
     export TEBOX_VENC_SOCK="$MAC_VIDEO_SOCK"
     APPEND+=(androidboot.tebox.video_encode=1)
     echo "venc:    VideoToolbox (tebox.venc, $TEBOX_VENC_SOCK)"
+  fi
+fi
+
+# Audio HAL always looks up tebox.audio_out / tebox.audio_in by name. Cast
+# already added those ports; a local ./run still needs them or PCM is dropped.
+if [[ "${TEBOX_CAST:-0}" != 1 ]]; then
+  if [[ -z "${MEDIA_DIR:-}" ]]; then
+    MEDIA_DIR="$WORKDIR"
+    EXTRA+=(-device virtio-serial-pci,id=media,addr=0x10)
+  fi
+  add_audio_port() {  # <sock name> <port name>
+    local sock="$MEDIA_DIR/$1.sock"
+    if (( ${#sock} > 103 )); then
+      sock="/tmp/tebox-$1-$(printf '%s' "$MEDIA_DIR" | cksum | cut -d' ' -f1).sock"
+    fi
+    rm -f "$sock"
+    EXTRA+=(-chardev "socket,id=$1,path=$sock,server=on,wait=off"
+      -device "virtserialport,bus=media.0,chardev=$1,name=$2")
+    AUDIO_PORT_SOCK="$sock"
+  }
+  add_audio_port audio_out tebox.audio_out
+  AUDIO_OUT_SOCK="$AUDIO_PORT_SOCK"
+  add_audio_port audio_in tebox.audio_in
+  echo "audio:   virtio-serial tebox.audio_out ($AUDIO_OUT_SOCK)"
+  if [[ "${GRAPHIC:-1}" == 1 ]]; then
+    FFPLAY=""
+    for c in \
+        "$ROOT/prebuilts/host/${HOST_ID:-darwin-arm64}/ffmpeg/bin/ffplay" \
+        /opt/homebrew/bin/ffplay \
+        "$(command -v ffplay 2>/dev/null || true)"; do
+      [[ -n "$c" && -x "$c" ]] && { FFPLAY="$c"; break; }
+    done
+    if [[ -n "$FFPLAY" ]]; then
+      (
+        for _ in $(seq 1 80); do
+          [[ -S "$AUDIO_OUT_SOCK" ]] && break
+          sleep 0.1
+        done
+        while [[ -S "$AUDIO_OUT_SOCK" ]]; do
+          "$FFPLAY" -nodisp -loglevel quiet -fflags nobuffer -flags low_delay \
+            -f s16le -ar 48000 -ac 2 -i "unix:$AUDIO_OUT_SOCK" || true
+          sleep 1
+        done
+      ) >/dev/null 2>&1 &
+      echo "audio:   local ffplay $AUDIO_OUT_SOCK"
+    fi
   fi
 fi
 

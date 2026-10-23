@@ -1,0 +1,24 @@
+cc_binary {
+    name: "android.hardware.sensors-service",
+    relative_install_path: "hw",
+    vendor: true,
+    srcs: [
+        "Sensor.cpp",
+        "Sensors.cpp",
+        "main.cpp",
+    ],
+    local_include_dirs: [
+        "include",
+        "shim",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+        "android.hardware.common-V2-ndk",
+        "android.hardware.common.fmq-V1-ndk",
+        "android.hardware.sensors-V2-ndk",
+    ],
+    init_rc: ["android.hardware.sensors-service.rc"],
+    vintf_fragments: ["android.hardware.sensors-service.xml"],
+    cflags: ["-DLOG_TAG=\"sensors-default\""],
+}

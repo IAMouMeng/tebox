@@ -1,0 +1,10 @@
+HAL: android.hardware.camera.provider
+Upstream: CVD guest/hals/camera (HIDL 2.7 vsock) at android-16.0.0_r4.
+AIDL NDK port: getCameraIdList is empty; the external camera is announced
+via cameraDeviceStatusChange (device@3.4/external/0), matching
+vsock_camera_provider_2_7. Frozen provider v2 / device v3.
+
+This QEMU has no vsock camera host and no /dev/video*. Do not add a vsock
+device: the HAL simulates the vsock client (test-pattern frames). The
+existing tebox.camera virtio-serial port is used when a viewer is already
+attached. HAL1 stub/ is not built.

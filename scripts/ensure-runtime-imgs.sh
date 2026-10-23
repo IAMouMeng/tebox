@@ -48,6 +48,9 @@ img_stale() {
 
 VENDOR_INPUTS=(
   "$STUB"
+  "$AOSP/hardware"
+  "$AOSP/device.mk"
+  "$ROOT/src/common/hardware"
   "$ROOT/scripts/build-vendor-img.sh"
   "$IMAGES/system.img"
 )
@@ -59,6 +62,7 @@ INIT_INPUTS=(
   "$QEMU_RT/busybox"
   "$STUB"
   "$QEMU_RT/init"
+  "$QEMU_RT/overlay"
   "$AOSP/KERNEL"
   "$ROOT/scripts/build-initramfs.sh"
 )

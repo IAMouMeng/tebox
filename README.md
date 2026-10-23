@@ -69,11 +69,11 @@
 <p align="center">
   <img src="docs/screenshots/launched.png" width="240" alt="AOSP GSI 启动界面">
   <img src="docs/screenshots/coloros_launched.png" width="240" alt="厂商 ROM 示例：ColorOS GSI">
-  <img src="docs/screenshots/antutu_on_myt_r1p_cix8180.png" width="240" alt="安兔兔跑分：R1P（CIX 8180）">
+  <img src="docs/screenshots/antutu_on_myt_r1p_cix6187.png" width="240" alt="安兔兔跑分：R1P（CIX 6187）">
 </p>
 
 <p align="center">
-  左：AOSP GSI　中：厂商 ROM 示例（ColorOS GSI）　右：安兔兔 V12 跑分（R1P / CIX 8180，gfxstream：ANGLE + Vulkan on Mali-G720）
+  左：AOSP GSI　中：厂商 ROM 示例（ColorOS GSI）　右：安兔兔 V12 跑分（R1P / CIX 6187，gfxstream：ANGLE + Vulkan on Mali-G720）
 </p>
 
 <p align="center">
@@ -95,6 +95,16 @@
   左：Flyme GSI（魅族 22，Android 15）　右：OneUI GSI（三星 Galaxy S25 Ultra，Android 16）
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/Gigaset-13-1693462027-AB-20230918-MysticGSI.png" width="240" alt="厂商 ROM 示例：Gigaset GSI">
+  <img src="docs/screenshots/Oppo-lahaina-13-1694594759862-AB-20231007-MysticGSI.png" width="240" alt="厂商 ROM 示例：OPPO GSI">
+  <img src="docs/screenshots/RogUI-rogphone7-13-33.0820.0810.217-0-AB-20230907-MysticGSI.png" width="240" alt="厂商 ROM 示例：RogUI GSI">
+</p>
+
+<p align="center">
+  左：Gigaset GSI（Android 13）　中：OPPO GSI（lahaina，Android 13）　右：RogUI GSI（ROG Phone 7，Android 13）
+</p>
+
 ## 正确拉取源码
 
 先安装并初始化 Git LFS（macOS：`brew install git-lfs`；Ubuntu/Debian：`sudo apt-get install git-lfs`）：
@@ -110,10 +120,13 @@ git lfs pull
 
 ```bash
 bash .ci/install-deps.sh
-FORCE_VIRGL=1 SNAPSHOT=1 ./run
+source build/envsetup.sh
+lunch aosp_arm64-BP4A.251205.006
+m
+SNAPSHOT=1 ./run aosp_arm64-BP4A.251205.006
 ```
 
-默认会启动仓库内置的 AOSP GSI 示例变体。替换 `src/aosp/<variant>/images/system.img` 即可尝试其他 GSI。
+GSI 变体树在对应的 `GSI/...` 分支（AOSP 示例为 `GSI/AOSP/aosp_arm64-BP4A.251205.006`）。检出后替换 `src/aosp/<variant>/images/system.img` 即可尝试其他 GSI。
 
 ## AI 辅助开发
 

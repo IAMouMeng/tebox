@@ -3,8 +3,9 @@
 set -euo pipefail
 umask 022
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VARIANT="${1:-aosp_arm64-BP4A.251205.006}"
+VARIANT="${1:-${VARIANT:-${TARGET_PRODUCT:-aosp_arm64-BP4A.251205.006}}}"
 AOSP="$ROOT/src/aosp/$VARIANT"
+[[ -d "$AOSP" ]] || { echo "missing variant tree: $AOSP (VARIANT=$VARIANT)" >&2; exit 1; }
 [[ -d "$AOSP" ]] || { echo "missing $AOSP" >&2; exit 1; }
 KID="$(tr -d '[:space:]' < "$AOSP/KERNEL")"
 K="$ROOT/src/kernel/$KID"
@@ -31,27 +32,36 @@ cp -f "$K/vendor_modules/"*.ko "$STAGE/modules/"
 cp -a "$STUB" "$STAGE/vendor"
 chmod 0755 "$STAGE/vendor/bin/enable-camera-launcher.sh" 2>/dev/null || true
 INIT_DIR="$AOSP/qemu/init"
+OVERLAY_DIR="$AOSP/qemu/overlay"
+mkdir -p "$STAGE/overlays"
 if [[ -d "$INIT_DIR" ]]; then
   # Guest path cannot be /init — that is the busybox PID 1 script.
-  mkdir -p "$STAGE/overlays"
-  cp -f "$INIT_DIR/init.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/init.ranchu.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/android.hardware.security.keymint-service.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/keystore2.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/surfaceflinger.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/virtual_camera.hal.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/vndkcorevariant.libraries.txt" "$STAGE/overlays/" 2>/dev/null || true
-  # Soft wificond (fixed fake SSIDs) — replaces system binary, no kernel wifi.
-  if [[ -x "$INIT_DIR/wificond" ]]; then
-    cp -f "$INIT_DIR/wificond" "$STAGE/overlays/wificond"
+  # init/ is only .rc (system init overlays).
+  shopt -s nullglob
+  for f in "$INIT_DIR"/*.rc; do
+    cp -f "$f" "$STAGE/overlays/"
+  done
+  shopt -u nullglob
+  if [[ -d "$INIT_DIR/system-overlay" ]]; then
+    mkdir -p "$STAGE/system-overlay"
+    cp -a "$INIT_DIR/system-overlay"/. "$STAGE/system-overlay"/
+  fi
+fi
+# Non-rc system overlays (binaries, txt) live in qemu/overlay/<system path>.
+if [[ -d "$OVERLAY_DIR" ]]; then
+  mkdir -p "$STAGE/system-overlay"
+  cp -a "$OVERLAY_DIR"/. "$STAGE/system-overlay"/
+  if [[ -x "$OVERLAY_DIR/system/bin/wificond" ]]; then
+    cp -f "$OVERLAY_DIR/system/bin/wificond" "$STAGE/overlays/wificond"
     chmod 0755 "$STAGE/overlays/wificond"
   fi
-  # system-overlay/<path> replaces /<path> of the GSI by a bind mount, so
-  # system.img stays untouched. The guest busybox has no find: ship a list.
-  if [[ -d "$INIT_DIR/system-overlay" ]]; then
-    cp -a "$INIT_DIR/system-overlay" "$STAGE/system-overlay"
-    (cd "$INIT_DIR/system-overlay" && find . -type f | sed 's|^\./||' | sort) > "$STAGE/system-overlay.list"
+  if [[ -f "$OVERLAY_DIR/system/etc/vndkcorevariant.libraries.txt" ]]; then
+    cp -f "$OVERLAY_DIR/system/etc/vndkcorevariant.libraries.txt" \
+      "$STAGE/overlays/vndkcorevariant.libraries.txt"
   fi
+fi
+if [[ -d "$STAGE/system-overlay" ]]; then
+  (cd "$STAGE/system-overlay" && find . -type f | sed 's|^\./||' | sort) > "$STAGE/system-overlay.list"
 fi
 
 cat > "$STAGE/init" <<'INIT'
@@ -109,7 +119,16 @@ load tebox_v4l2.ko
 # tebox-mali virtio device is absent (driver just never probes).
 load mali_kbase.ko
 load tebox_mali.ko
+# Old tebox_mali.ko (count-only fire_batch, no fire_flush_us timer) deferred
+# doorbells until 32 piled up and hung CSF fences. Until that .ko is rebuilt
+# with the hrtimer flush, force fire_batch=1 (notify every doorbell).
+if [ ! -e /sys/module/tebox_mali/parameters/fire_flush_us ]; then
+  echo 1 > /sys/module/tebox_mali/parameters/fire_batch 2>/dev/null || true
+fi
 mdev -s 2>/dev/null || true
+# Force /dev/mali0 world-rw before switch_root (same devtmpfs instance persists
+# into Android).
+chmod 666 /dev/mali0 2>/dev/null || true
 for name in vda vdb vdc; do
   if [ ! -e /dev/$name ]; then
     maj=$(awk -v n="$name" '$4==n {print $1}' /proc/partitions)

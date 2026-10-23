@@ -1,0 +1,17 @@
+cc_binary {
+    name: "android.hardware.health.storage-service",
+    relative_install_path: "hw",
+    vendor: true,
+    srcs: [
+        "Storage.cpp",
+        "service.cpp",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+        "android.hardware.health.storage-V1-ndk",
+    ],
+    init_rc: ["android.hardware.health.storage-service.rc"],
+    vintf_fragments: ["android.hardware.health.storage-service.xml"],
+    cflags: ["-DLOG_TAG=\"android.hardware.health.storage-service.cuttlefish\""],
+}

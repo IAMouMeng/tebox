@@ -11,7 +11,7 @@ require an explicit request.
 - Tracked in git: `qemu/`, `thirdparty/`, `prebuilts/` (host + android-arm64),
   `toolchains/`, `src/` including each variant’s runtime GSI metadata and
   `images/` support files (the large `system.img` is downloaded on demand),
-  `qemu/vendor`, `prebuilts/gsi-lib64/`, `hardware/`, KeyMint `keybox.xml`,
+  `qemu/vendor`, `prebuilts/gsi-lib64/`, `src/common/hardware/`, KeyMint `keybox.xml`,
   `.ci/`, `.ai/`, scripts and docs. Kernel modules (`*.ko`) are tracked in Git;
   `system.img` and `gki/Image` download at runtime from mirror.opencecs.com.
   Do **not** commit rebuildable `images/vendor.img` or `images/initramfs.img`
@@ -22,11 +22,19 @@ require an explicit request.
 - Variant-specific GSI artifacts belong under `src/aosp/<variant>/images/`, not
   under shared `prebuilts/gsi/`. Host QEMU/VirGL and guest Mesa/libdrm installs
   stay in `prebuilts/host/` and `prebuilts/android-arm64/`.
-- `src/aosp/<variant>/hardware/` and `qemu/` (vendor + busybox + fixups) are
-  maintained project code. Keep intermediate objects out of `out/` only.
-- `scripts/env.sh` owns host, SDK/NDK and prebuilt paths. Support macOS ARM64 and
-  Linux ARM64 for host QEMU. Android ARM64 cross-compilation uses macOS or Linux
-  x86_64 because Google's Linux NDK host tools are x86_64.
+- Shared vendor HALs live in `src/common/hardware/interfaces/<hal>/aidl/default/`
+  (`Android.bp`), including graphics/audio/wifi/camera/codec2/radio/keymint.
+  A variant selects them with `$(call inherit-product, src/common/hardware/interfaces/common.mk)`
+  in `src/aosp/<variant>/device.mk`; OEM-only HALs may stay under that variant.
+  `qemu/init/` is system `.rc` overlays; `qemu/overlay/` is other GSI path
+  replacements; `qemu/vendor/` is the vendor image tree. Keep intermediate
+  objects out of `out/` only. Later AOSP projects (`frameworks/`, `packages/`)
+  sit next to `hardware/` under `src/common/`.
+- Guest compile: `source build/envsetup.sh`, `lunch`, `m`. Paths live in
+  `build/make/core/config.sh`. `scripts/env.sh` is a wrapper for QEMU launch.
+  Support macOS ARM64 and Linux ARM64 for host QEMU. Android ARM64
+  cross-compilation uses macOS or Linux x86_64 because Google's Linux NDK host
+  tools are x86_64.
 - `.ci/guest.lock.json` pins GSI/busybox download URLs and kernel/module digests
   for CI. Prefer editing the tracked trees in-place. Do not delete nested sources
   to “save space” without asking.

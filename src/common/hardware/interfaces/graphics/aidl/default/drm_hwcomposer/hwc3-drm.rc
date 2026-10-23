@@ -1,0 +1,9 @@
+# thirdparty/common/drm_hwcomposer/hwc3/hwc3-drm.rc
+service vendor.hwcomposer-3 /vendor/bin/hw/android.hardware.composer.hwc3-service.drm
+    class hal animation
+    interface aidl android.hardware.graphics.composer3.IComposer/default
+    user system
+    group graphics drmrpc
+    seclabel u:r:hal_keymint_system:s0
+    capabilities SYS_NICE
+    onrestart restart surfaceflinger

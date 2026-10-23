@@ -4,8 +4,10 @@ set -euo pipefail
 # Guest libraries must be readable independently of the launcher's host umask.
 umask 022
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VARIANT="${1:-aosp_arm64-BP4A.251205.006}"
+# Prefer explicit arg, then env (./run / lunch).
+VARIANT="${1:-${VARIANT:-${TARGET_PRODUCT:-aosp_arm64-BP4A.251205.006}}}"
 AOSP="$ROOT/src/aosp/$VARIANT"
+[[ -d "$AOSP" ]] || { echo "missing variant tree: $AOSP (VARIANT=$VARIANT)" >&2; exit 1; }
 STUB="$AOSP/qemu/vendor"
 IMG="$AOSP/images/vendor.img"
 STAGE="$ROOT/out/vendor-img-stage-$VARIANT"
@@ -31,6 +33,15 @@ GPU_BACKEND="$(tr -d '[:space:]' < "$AOSP/GPU" 2>/dev/null || true)"
 
 [[ -d "$STUB" ]] || { echo "missing $STUB" >&2; exit 1; }
 [[ -x "$E2/mke2fs" && -x "$E2/debugfs" ]] || { echo "need e2fsprogs" >&2; exit 1; }
+
+# Incremental HAL compile into qemu/vendor before packing.
+if [[ -f "$AOSP/device.mk" ]]; then
+  echo "HALs: soong --variant $VARIANT"
+  python3 "$ROOT/build/soong/soong.py" --variant "$VARIANT"
+elif [[ -f "$AOSP/hardware/Makefile" ]]; then
+  echo "HALs: make -C $AOSP/hardware VARIANT=$VARIANT"
+  make -C "$AOSP/hardware" VARIANT="$VARIANT"
+fi
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
@@ -102,9 +113,7 @@ fi
 if [[ "$GPU_BACKEND" == mali || -n "$MESA_PRE" ]]; then
   SYSTEM_IMG="$AOSP/images/system.img"
   [[ -f "$SYSTEM_IMG" ]] || { echo "missing $SYSTEM_IMG" >&2; exit 1; }
-  # libdmabufheap is not LLNDK, so a vendor process (the minigbm cros_gralloc
-  # allocator, which links it for the dma_heap backend) cannot see the
-  # /system/lib64 copy; bundle it into /vendor/lib64.
+  # libdmabufheap is not LLNDK; vendor processes need a /vendor/lib64 copy.
   for lib in libcutils.so libhardware.so libbase.so libutils.so libc++.so libz.so libdmabufheap.so; do
     "$E2/debugfs" -R "dump /system/lib64/$lib $STAGE/lib64/$lib" "$SYSTEM_IMG" >/dev/null 2>&1
     [[ -s "$STAGE/lib64/$lib" ]] || { echo "failed to extract $lib from GSI" >&2; exit 1; }
@@ -203,11 +212,6 @@ CMD="$(mktemp)"
   fi
   if [[ -f bin/hw/android.hardware.graphics-service ]]; then
     echo "ea_set /bin/hw/android.hardware.graphics-service security.selinux u:object_r:hal_keymint_system_exec:s0"
-  fi
-  if [[ -f bin/hw/android.hardware.graphics.allocator-service.minigbm ]]; then
-    # minigbm cros_gralloc allocator: run in the permissive hal_keymint_system
-    # domain (via its _exec typetransition) so it can open /dev/dri + dma_heap.
-    echo "ea_set /bin/hw/android.hardware.graphics.allocator-service.minigbm security.selinux u:object_r:hal_keymint_system_exec:s0"
   fi
   if [[ -f bin/hw/android.hardware.graphics.allocator-service.arm ]]; then
     echo "ea_set /bin/hw/android.hardware.graphics.allocator-service.arm security.selinux u:object_r:hal_keymint_system_exec:s0"

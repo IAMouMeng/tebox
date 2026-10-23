@@ -1,0 +1,17 @@
+cc_binary {
+    name: "android.hardware.gnss-service",
+    relative_install_path: "hw",
+    vendor: true,
+    srcs: ["**/*.cpp"],
+    shim_srcs: ["cutils/properties.cpp"],
+    local_include_dirs: ["include"],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+        "android.hardware.gnss-V2-ndk",
+    ],
+    init_rc: ["android.hardware.gnss-service.rc"],
+    vintf_fragments: ["android.hardware.gnss-service.xml"],
+    cflags: ["-DLOG_TAG=\"android.hardware.gnss-service.example\""],
+    gki_file_contexts: ["android.hardware.gnss-service"],
+}

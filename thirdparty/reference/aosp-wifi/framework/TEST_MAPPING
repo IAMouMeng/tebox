@@ -1,0 +1,40 @@
+{
+  "presubmit-large": [
+    {
+      // run service unit tests for API changes (since API changes can break service, but not the
+      // other way around)
+      "name": "FrameworksWifiTests"
+    }
+  ],
+  "presubmit": [
+    {
+      "name": "FrameworksWifiApiTests"
+    }
+  ],
+  "mainline-presubmit": [
+    {
+      "name": "FrameworksWifiApiTests[com.google.android.wifi.apex]"
+    },
+    {
+      "name": "FrameworksWifiTests[com.google.android.wifi.apex]"
+    }
+  ],
+  "wifi-mainline-presubmit": [
+    {
+      "name": "FrameworksWifiApiTests"
+    },
+    {
+      "name": "FrameworksWifiTests"
+    }
+  ],
+  "wear-cts-postsubmit": [
+    {
+      "name": "CtsWifiTestCases",
+      "options": [
+        {
+          "include-filter": "android.net.wifi.cts.WifiManagerTest"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+HAL: android.hardware.biometrics.fingerprint
+Upstream: platform/hardware/interfaces biometrics/fingerprint/aidl/default
+         (virtual HAL, android-16.0.0_r4) + biometrics/common/{thread,config,util}.
+CVD has no fingerprint HAL in guest/hals.
+VINTF stays IFingerprint/default v4. Sysprop VirtualProps is an in-process stand-in.

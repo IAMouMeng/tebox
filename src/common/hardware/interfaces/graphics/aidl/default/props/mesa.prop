@@ -1,0 +1,10 @@
+# Do NOT ship these as vendor build.prop. egl / gralloc / hwui are set at
+# early-init from androidboot.* (boot-qemu.sh ← src/aosp/<variant>/GPU).
+# Pinning ro.hardware.gralloc here would freeze VirGL↔gfxstream switching.
+# Reference only (VirGL / Mesa defaults):
+#   ro.hardware.egl=mesa
+#   ro.hardware.gralloc=stub
+#   ro.hardware.hwcomposer=drm_minigbm
+#   debug.hwui.renderer=skiagl
+ro.hardware.hwcomposer=drm_minigbm
+ro.sf.lcd_density=420

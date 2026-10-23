@@ -1,0 +1,8 @@
+<!-- thirdparty/common/drm_hwcomposer/hwc3/hwc3-drm.xml; GSI FCM on this tree is composer3 v3. -->
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.graphics.composer3</name>
+        <version>3</version>
+        <fqname>IComposer/default</fqname>
+    </hal>
+</manifest>

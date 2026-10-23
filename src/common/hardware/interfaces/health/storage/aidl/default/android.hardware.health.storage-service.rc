@@ -1,0 +1,7 @@
+# From cuttlefish/guest/hals/health/storage (path rewritten from APEX to /vendor/bin/hw).
+service vendor.health-storage-default /vendor/bin/hw/android.hardware.health.storage-service
+    class hal
+    user system
+    group system
+    seclabel u:r:hal_keymint_system:s0
+    interface aidl android.hardware.health.storage.IStorage/default

@@ -3,8 +3,9 @@
 # Expects /dev/kvm, /dev/mali0, /dev/dma_heap/*, /dev/dri and the V4L2
 # encoder, plus mounts:
 #   $TEBOX/src/aosp/$VARIANT/images  system.img vendor.img initramfs.img (ro)
-#   $TEBOX/src/kernel/$KERNEL_ID/gki Image (ro)
 #   /data                            instances (userdata, QMP, cast sockets)
+# Kernel Image is baked into the image at src/kernel/$KERNEL_ID/gki/; an
+# optional host bind-mount of that path can override it.
 #
 # tebox-api manages the instances and serves gRPC (50051), video (9901),
 # audio (9904) and control (9905, TCP + UDP input) on the LAN. R1P_INSTANCE is created on first start and
@@ -14,8 +15,8 @@ TEBOX="${TEBOX:-/opt/tebox}"
 # Binaries uploaded by `r1p-deploy.sh bin` (mounted at override/) replace the
 # ones baked into the image, so API, cast, boot script and QEMU updates skip
 # an image rebuild.
-for f in bin/tebox-api out/service/tebox-cast scripts/boot-qemu.sh; do
-  [[ -x "$TEBOX/override/${f##*/}" ]] && cp "$TEBOX/override/${f##*/}" "$TEBOX/$f"
+for f in bin/tebox-api out/service/tebox-cast scripts/boot-qemu.sh scripts/cix-mali-env.sh; do
+  [[ -e "$TEBOX/override/${f##*/}" ]] && cp "$TEBOX/override/${f##*/}" "$TEBOX/$f"
 done
 if [[ -x "$TEBOX/override/boot-qemu.sh.${VARIANT:?}" ]]; then
   cp "$TEBOX/override/boot-qemu.sh.$VARIANT" "$TEBOX/scripts/boot-qemu.sh"
@@ -23,6 +24,11 @@ fi
 # Keyed by variant: containers of different variants share override/.
 if [[ -f "$TEBOX/override/cmdline-boot.${VARIANT:?}" ]]; then
   cp "$TEBOX/override/cmdline-boot.$VARIANT" "$TEBOX/src/aosp/$VARIANT/qemu/cmdline/boot"
+fi
+# GPU file (gfxstream|virgl): same override pattern as cmdline.
+if [[ -f "$TEBOX/override/GPU.${VARIANT:?}" ]]; then
+  mkdir -p "$TEBOX/src/aosp/$VARIANT"
+  cp "$TEBOX/override/GPU.$VARIANT" "$TEBOX/src/aosp/$VARIANT/GPU"
 fi
 for q in "qemu-system-aarch64.$VARIANT" qemu-system-aarch64; do
   if [[ -x "$TEBOX/override/$q" ]]; then

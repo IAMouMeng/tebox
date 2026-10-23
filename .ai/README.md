@@ -34,7 +34,7 @@ python3 .ci/package-skills.py   # → dist/skills/*.zip
 | WorkBuddy 导入 zip 后开场 | 已导入的 skills | [prompts/workbuddy.md](prompts/workbuddy.md) |
 
 3. **改代码前**：确认 variant（`src/aosp/<variant>/`）、`KERNEL` / `GPU`、是否在跑 QEMU；停 VM 再换镜像。
-4. **构建入口**：`source scripts/env.sh`；宿主 `.ci/build-host.sh`；客体脚本见 `gki-build`；日常启动 `./run`（会重建过期的 `vendor.img` / `initramfs.img`）。
+4. **构建入口**：`source build/envsetup.sh && lunch && m`；宿主 `.ci/build-host.sh`；日常启动 `./run`（会重建过期的 `vendor.img` / `initramfs.img`）。
 5. **验证**：配置/锁变更跑 `python3 .ci/validate.py`。编译成功 ≠ 已开机；真机验证用 `FORCE_VIRGL=1`（或 variant 的 `GPU`）+ `SNAPSHOT=1`，并用 `scripts/qemu-console.py` 看 boot / renderer / 尺寸密度。
 6. **汇报**：写清执行过的命令、产物路径、实际测到什么；未测平台写明未测。不擅自 `git init` / push / 发 Release。
 
@@ -63,4 +63,4 @@ python3 .ci/package-skills.py   # → dist/skills/*.zip
 
 - Stay in the user’s scope; no surprise `git init` / push / publish.
 - Compile ≠ boot proof. Say what was actually tested.
-- Prefer existing HAL stub patterns under `src/aosp/<variant>/hardware/`.
+- Prefer existing HAL patterns under `src/common/hardware/interfaces/` (`Android.bp`) and variant `device.mk`.

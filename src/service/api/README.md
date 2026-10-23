@@ -35,15 +35,15 @@ g() { grpcurl -plaintext -d "${2:-{\}}" "$API" tebox.v1.AndroidService/$1; }
 | RPC | 请求 | 返回 | 说明 |
 |-----|------|------|------|
 | `ListInstances` | `{}` | `instances[]` | 列出所有实例和状态 |
+| `GetInstance` | `{id}` | `Instance` | 单个实例：adb 端口、磁盘占用、运行状态 |
 | `CreateInstance` | `CreateInstanceRequest` | `Instance` | 只创建实例，不启动 |
 | `DeleteInstance` | `{id}` | `{}` | 停止实例，删除元数据和运行目录（包括 userdata） |
 | `StartInstance` | `{id}` | `{}` | 启动 QEMU；Android 开机完成后状态变为 RUNNING |
 | `StopInstance` | `{id}` | `{}` | 先发 ACPI 关机，再结束 QEMU |
 | `ResetInstance` | `{id, wipe_data}` | `{}` | 重启；`wipe_data=true` 时恢复出厂（删除 userdata 后重新启动） |
 | `ConfigureInstance` | `{id, profile}` | `{}` | 设置位置、运营商、号码，以及是否 root |
-| `SendKey` / `PowerDown` | `{id, key}` / `{id}` | `{}` | QMP 按键 / 关机 |
-| `SendInput` / `StreamInput` | `InputRequest` | `{}` | 触摸、按键、文本、剪贴板（见下文“输入”） |
-| `WatchClipboard` | `{id}` | `stream ClipboardEvent` | 订阅客户机剪贴板变化 |
+| `SendKey` / `PowerDown` | `{id, key}` / `{id}` | `{}` | QMP 按键 / 关机（QEMU qcode） |
+| `GetPreview` | `{id, size, format, quality}` | `{image, format, mime_type, width, height}` | 当前画面截图；缩放与编码见下文 |
 
 ## 创建实例
 
@@ -101,7 +101,7 @@ g CreateInstance '{
 g StartInstance '{"id":"android-1791942209-289"}'
 ```
 
-返回的 `Instance`：
+返回的 `Instance`（`ListInstances` 与 `GetInstance` 相同）：
 
 | 字段 | 含义 |
 |------|------|
@@ -109,9 +109,42 @@ g StartInstance '{"id":"android-1791942209-289"}'
 | `state` | `STOPPED` / `STARTING`（QEMU 已起，Android 开机中）/ `RUNNING`（`sys.boot_completed=1`）/ `STOPPING` |
 | `adb_port` | `adb connect <host>:<adb_port>`（R1P 上对局域网开放） |
 | `cast_port`, `control_port` | 运行时才有：实例自己的 tebox-cast 端口，以及输入端口（只在本机 127.0.0.1 上监听） |
-| `cpu_cores`, `memory_mb`, `disk_mb`, `disk_used_mb` | 资源配置，以及 userdata 实际占用的宿主空间 |
+| `cpu_cores`, `memory_mb` | CPU 核数、内存 |
+| `disk_mb` | userdata 分配大小（MB） |
+| `disk_used_mb` | userdata.img 在宿主上实际占用的空间（稀疏文件按块计） |
+| `disk_free_mb` | `max(0, disk_mb - disk_used_mb)` |
 | `system_image`, `vendor_image`, `initramfs_image` | 实例实际启动用的镜像（未指定时是变体默认镜像的路径） |
 | `profile` | `ConfigureInstance` 设置的设备信息 |
+
+```bash
+g ListInstances
+g GetInstance '{"id":"android-1791942209-289"}'
+```
+
+## 预览画面
+
+`GetPreview` 抓当前客户机画面。实例必须已在运行（QEMU 进程在）。优先 `adb exec-out screencap -p`，失败则走 QMP `screendump`。
+
+```protobuf
+message GetPreviewRequest {
+  string id = 1;
+  int32 size = 2;      // 缩放后最长边像素；0 为原尺寸，上限 4096
+  string format = 3;   // jpeg（默认）或 png
+  int32 quality = 4;   // 1..100，仅 jpeg，默认 80
+}
+```
+
+`size` 是最长边：等比缩小或放大，使 `max(宽, 高) = size`。`image` 是编码后的字节（grpcurl JSON 里是 base64）。返回的 `width` / `height` 是缩放后的实际像素。
+
+```bash
+g GetPreview '{"id":"tebox-1"}'
+g GetPreview '{"id":"tebox-1","size":540,"format":"jpeg","quality":70}'
+g GetPreview '{"id":"tebox-1","format":"png"}'
+grpcurl -plaintext -d '{"id":"tebox-1","format":"jpeg","quality":80,"size":540}' \
+  "$API" tebox.v1.AndroidService/GetPreview | jq -r .image | base64 -d > preview.jpg
+```
+
+导航键、Android keycode、文本、剪贴板走 TCP/UDP 控制口（见下文）。
 
 ## 投屏、音频与输入
 
@@ -145,12 +178,15 @@ g StartInstance '{"id":"android-1791942209-289"}'
   - 想收到剪贴板推送，至少每 15 秒发一个包。空闲时发 `{"id":"...","type":"ping"}` 就行。
 
   例如：`{"id":"tebox-1","seq":1,"type":"touch","action":"down","x":0.5,"y":0.5}`
-- 输入也可以用 gRPC 的 `SendInput` / `StreamInput` 发送。
+
+导航键 / Android keycode / 文本 / 剪贴板只走这条 TCP/UDP 控制口（`Instance.control_port`，或 `TEBOX-CTRL/1 <id>`）。gRPC 没有 `SendInput`。
 
 ```bash
-g SendInput '{"id":"tebox-1","touch":{"action":"TOUCH_ACTION_DOWN","x":0.5,"y":0.5}}'
-g SendInput '{"id":"tebox-1","touch":{"action":"TOUCH_ACTION_UP","x":0.5,"y":0.5}}'
-g SendInput '{"id":"tebox-1","key":{"key":"home"}}'
+# 实例自己的输入口（ListInstances / GetInstance 里的 control_port）
+printf '%s\n' '{"type":"key","key":"home"}' | nc 127.0.0.1 "$CTRL"
+printf '%s\n' '{"type":"text","text":"hello"}' | nc 127.0.0.1 "$CTRL"
+# 或共享控制口 9905
+printf 'TEBOX-CTRL/1 tebox-1\n{"type":"key","key":"home"}\n' | nc 10.10.2.142 9905
 # 桌面查看器：视频 9901，音频 9904，摄像头和输入都走 9905（TCP / UDP）
 ./out/service/tebox-cast-view --host 10.10.2.142 --id tebox-1 \
     [--audio-port 9904] [--control-port 9905] [--mic] [--camera avfoundation:0]
@@ -160,9 +196,9 @@ g SendInput '{"id":"tebox-1","key":{"key":"home"}}'
 
 | gRPC code | 情况 |
 |-----------|------|
-| `InvalidArgument` | 参数超出范围；镜像路径或 `instance_dir` 不合法；实例 id 不合法 |
+| `InvalidArgument` | 参数超出范围；镜像路径或 `instance_dir` 不合法；实例 id 不合法；`GetPreview` 的 format 不是 jpeg/png |
 | `NotFound` | 实例不存在 |
-| `FailedPrecondition` | 实例没在运行（`SendInput`、`WatchClipboard`） |
+| `FailedPrecondition` | 实例没在运行（`GetPreview`） |
 | `Internal` | 其他错误（QMP、复制失败等），原因在 message 里 |
 
 ## 构建与部署

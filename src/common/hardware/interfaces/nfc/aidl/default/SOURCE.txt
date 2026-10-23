@@ -1,0 +1,7 @@
+HAL: android.hardware.nfc
+Upstream AIDL C++ default does not exist in hardware/interfaces/nfc/aidl
+at android-16.0.0_r4 (HIDL 1.0 Nfc.cpp only). CVD guest/hals/nfc is Rust
+INfc + virtio-console NCI (nfc.rs).
+google/ is a C++ NDK port of that CVD INfc: open/close/coreInitialized/
+getConfig/write, virtio-console when present, fallback so libnfc-nci
+does not hang. Frozen INfc v2.

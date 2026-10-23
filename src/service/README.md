@@ -82,7 +82,13 @@ so input never holds the lifecycle QMP socket:
 - `TEBOX-CTRL/1 <instance-id>\n` on the control endpoint (9905), then the same lines.
 - UDP datagrams to the control port number (9905), each event naming its
   instance with `"id"` (plus an increasing `"seq"`).
-- gRPC `SendInput` (one event) and `StreamInput` (client stream for gestures).
+
+Navigation keys, Android keycodes, text and clipboard use this TCP/UDP
+path (`Instance.control_port`, `TEBOX-CTRL/1`, UDP on the same port).
+gRPC `GetPreview` returns a still of the guest display (`size` / `format` /
+`quality`). `GetInstance` returns the same `Instance` as `ListInstances`,
+including `adb_port`, `disk_mb`, `disk_used_mb` and `disk_free_mb`.
+`SendKey` / `PowerDown` are QEMU QMP qcodes.
 
 One JSON object per line:
 
@@ -95,7 +101,7 @@ One JSON object per line:
 | clipboard | `{"type":"clipboard","text":"...","paste":false}` | guest agent |
 
 Guest clipboard changes come back on the same connection as
-`{"type":"clipboard","text":"..."}` (gRPC: `WatchClipboard`); text set from the
+`{"type":"clipboard","text":"..."}`; text set from the
 host is not echoed back. The guest agent is the unmodified scrcpy-server in
 `prebuilts/android-arm64/scrcpy/`, which tebox-api pushes and starts over adb on
 first use (video and audio off; only its control socket is used). Touch and

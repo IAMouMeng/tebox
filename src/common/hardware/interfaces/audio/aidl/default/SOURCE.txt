@@ -1,0 +1,10 @@
+HAL: android.hardware.audio
+Upstream: hardware/interfaces/audio/aidl/default (AOSP Module/Stream/stub
++ Configuration.cpp) at android-16.0.0_r4.
+google/ compiles ModuleStub for IModule/default (PRIMARY speaker with PCM16
+profiles + PRIMARY mix maxOpen=1, not STUB AFE_PROXY / IBluetoothA2dp) and
+IModule/r_submix, IConfig/default,
+IFactory/default. xsdc XML converters are skipped.
+DriverStubImpl::transfer writes s16le stereo / reads s16le mono on QEMU
+virtio-serial tebox.audio_out / tebox.audio_in for tebox-cast. Frozen audio
+core v1.

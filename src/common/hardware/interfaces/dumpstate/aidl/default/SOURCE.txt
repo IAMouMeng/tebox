@@ -1,0 +1,4 @@
+HAL: android.hardware.dumpstate
+Upstream: hardware/interfaces/dumpstate/aidl/default (android-16.0.0_r4)
+IDumpstateDevice v1. libdumpstateutil DumpFileToFd is a local NDK helper.
+QEMU starts from init class hal (addService) instead of lazy.
