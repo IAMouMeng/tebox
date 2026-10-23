@@ -98,13 +98,9 @@ def validate_ci_files() -> None:
         ROOT / '.ci/package-host.py',
         ROOT / '.ci/package-systems.py',
         ROOT / '.ci/package-android.py',
-        ROOT / '.ci/build-r1p-image.sh',
-        ROOT / '.ci/Dockerfile.tebox-builder',
-        ROOT / 'Dockerfile',
         ROOT / '.ci/fetch-guest-inputs.py',
         ROOT / '.ci/guest.lock.json',
         ROOT / 'scripts/ensure-guest-downloads.sh',
-        ROOT / 'scripts/r1p-deploy.sh',
         ROOT / 'scripts/README.md',
         ROOT / '.ci/requirements.txt',
         ROOT / '.ci/README.md',
@@ -126,8 +122,7 @@ def validate_ci_files() -> None:
         for needle in ('macos-26', 'ubuntu-24.04-arm', 'ubuntu-24.04',
                        '.ci/validate.py', '.ci/build-host.sh',
                        '.ci/package-systems.py', 'tebox-vendor-init',
-                       'project-ai-skills', 'qemu-gki-',
-                       '.ci/build-r1p-image.sh', 'tebox-r1p-linux-arm64'):
+                       'project-ai-skills', 'qemu-gki-'):
             if needle not in text:
                 fail(f'workflow missing reference: {needle}')
         if 'contents: write' in text or 'permissions:\n  contents: write' in text:
@@ -168,16 +163,9 @@ def validate_gitignore() -> None:
     guest = ROOT / '.ci/guest.lock.json'
     if guest.is_file():
         variant = json.loads(guest.read_text()).get('variant', '')
-        # Full GSI trees live on GSI/* branches. main may only ship thin
-        # KERNEL / cmdline metadata for the products R1P image.
-        aosp = ROOT / f'src/aosp/{variant}'
-        if (aosp / 'hardware').is_dir():
-            require(aosp / 'images/README.md', 'variant images/README.md')
-            require(aosp / 'prebuilts/gsi-lib64', 'variant prebuilts/gsi-lib64')
-            require(aosp / 'hardware', 'variant hardware/')
-        else:
-            require(aosp / 'KERNEL', 'thin variant KERNEL metadata')
-            require(aosp / 'qemu/cmdline/boot', 'thin variant qemu/cmdline/boot')
+        require(ROOT / f'src/aosp/{variant}/images/README.md', 'variant images/README.md')
+        require(ROOT / f'src/aosp/{variant}/prebuilts/gsi-lib64', 'variant prebuilts/gsi-lib64')
+        require(ROOT / f'src/aosp/{variant}/hardware', 'variant hardware/')
 
 
 def main() -> int:

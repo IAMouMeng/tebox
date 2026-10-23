@@ -15,14 +15,11 @@
 1. **validate** — `python .ci/validate.py` + `python .ci/package-skills.py`
 2. **host** matrix — `macos-26` and `ubuntu-24.04-arm`  
    build QEMU, then `.ci/package-systems.py` packs each `src/aosp/<variant>`
-3. **r1p** — `ubuntu-24.04-arm` builds the products image (root `Dockerfile`) via
-   `.ci/build-r1p-image.sh` / `scripts/r1p-deploy.sh` and uploads
-   `tebox-r1p-linux-arm64.tar.gz`
 
 `ubuntu-24.04` only runs validation. The host job does not recompile guest HALs,
 Mesa, or BusyBox. It downloads the runtime `rom.zip` (→ `system.img`) and GKI `Image` when
 needed, rebuilds `vendor.img` and `initramfs.img`, and packs the runtime without
-bundling those large inputs. The r1p job does not bake guest `*.img` either.
+bundling those large inputs.
 
 ## Local parity
 
@@ -32,7 +29,6 @@ export PATH="$PWD/out/ci-venv/bin:$PATH"
 python3 .ci/validate.py
 bash .ci/build-host.sh          # requires HOST_ARCH=arm64
 python3 .ci/package-systems.py  # vendor/init + bootable system archives
-bash .ci/build-r1p-image.sh     # products Docker image → dist/tebox-r1p-linux-arm64.tar.gz
 ```
 
 `scripts/env.sh` defines `HOST_ID`, NDK/SDK paths and prebuilt prefixes.
@@ -58,7 +54,6 @@ while packing.
 | `qemu-gki-<os>-arm64.tar.gz` | Relocatable `./qemu` wrapper; smoke-tests `--version` and `virtio-gpu-gl-pci` |
 | `tebox-<os>-arm64` | One `tebox-<variant>-<os>-arm64.tar.gz` per system, without `system.img`. `./run` downloads the branch `rom.zip` when needed, then starts the only system or shows the lunch menu. Extract another variant for the same host into the same directory to add it |
 | `tebox-vendor-init.tar.gz` | Every variant’s `vendor.img` and `initramfs.img` under `src/aosp/<variant>/images/`. No `system.img`. Uploaded from the Linux ARM64 job |
-| `tebox-r1p-linux-arm64.tar.gz` | Products R1P runtime (`docker load`). QEMU + VirGL/rutabaga + tebox-api/cast + Mali userspace + GKI Image/`*.ko`; no guest `system.img`. From the `r1p` job |
 | `project-ai-skills` | `dist/skills/*.zip` |
 
 Failure logs upload `out/*.log` and meson logs only.
