@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Container entrypoint for CIX Sky1 hosts (MYT R1P); see .ci/cix-r1p/Dockerfile.
+# Container entrypoint for CIX Sky1 hosts (MYT R1P); see root Dockerfile.
 # Expects /dev/kvm, /dev/mali0, /dev/dma_heap/*, /dev/dri and the V4L2
 # encoder, plus mounts:
 #   $TEBOX/src/aosp/$VARIANT/images  system.img vendor.img initramfs.img (ro)
