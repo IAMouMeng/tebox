@@ -15,16 +15,24 @@ smallest necessary changes.
 
 ## OEM family matrix (prompts + goldens)
 
-| Family | Prompt | Living reference tree |
+Variant trees live on `GSI/<vendor>/<id>` (AOSP:
+`GSI/AOSP/aosp_arm64-BP4A.251205.006`). Checkout that branch before editing
+`src/aosp/<variant>/`. `main` has no `src/aosp/`. Shared HALs stay in
+`src/common/hardware` on `main`. OEM trees that are not checked out locally
+are on `origin` / `iamoumeng` under the same `GSI/...` names.
+
+| Family | Prompt | Branch / tree |
 | --- | --- | --- |
-| AOSP official | `.ai/prompts/gsi.md` | `src/aosp/aosp_arm64-BP4A.251205.006/` |
+| AOSP official | `.ai/prompts/gsi.md` | `GSI/AOSP/aosp_arm64-BP4A.251205.006` |
 | Any OEM (router) | `.ai/prompts/oem-adapt.md` | pick family below |
-| Samsung OneUI | `.ai/prompts/oem-oneui.md` | `src/aosp/Oneui-a25x-14-…/` |
-| ColorOS / OriginOS | `.ai/prompts/oem-coloros-originos.md` | `src/aosp/Originos-PD2266-15-…/` (ColorOS dirs may be empty donors) |
-| Flyme | `.ai/prompts/oem-flyme.md` | often images-only; do not invent HALs |
+| Samsung OneUI | `.ai/prompts/oem-oneui.md` | remote `GSI/OneUI/...` |
+| ColorOS / OriginOS | `.ai/prompts/oem-coloros-originos.md` | remote `GSI/ColorOS/...` or `GSI/OriginOS/...` |
+| Flyme | `.ai/prompts/oem-flyme.md` | remote `GSI/Flyme/...`; often images-only; do not invent HALs |
 
 OEM images are usually hand-placed (no `guest.lock.json` URL). Copy the closest
 populated donor, record it in `FETCHED_FROM.txt`, then diff against boot logs.
+`device.mk` inherits `src/common/hardware/interfaces/common.mk`. OEM-only HALs
+go under that variant’s `hardware/` (see gki-hal / `.ai/prompts/hal.md`).
 
 ## Procedure
 
@@ -34,7 +42,7 @@ populated donor, record it in `FETCHED_FROM.txt`, then diff against boot logs.
    - Prefer official `aosp_arm64` user/userdebug GSI. Note sparse vs raw; convert
      with `simg2img` when needed.
    - Update `src/aosp/<variant>/FETCHED_FROM.txt` and
-     `.ci/guest.lock.json` (`system.url`, `system.sha256`, `variant` if renamed).
+     `.ci/guest.lock.json` (`system.url` → branch `rom.zip`, `system.sha256` of the zip, `variant` if renamed).
 
 2. **Place the image**
    - Install as `src/aosp/<variant>/images/system.img` for local testing; the
@@ -49,16 +57,19 @@ populated donor, record it in `FETCHED_FROM.txt`, then diff against boot logs.
      6.1 → 6.12), refresh prebuilts and digests in `.ci/guest.lock.json` /
      `FETCHED_FROM.txt` before debugging framework crashes.
 
-4. **VINTF / missing HALs**
+4. **VINTF / missing HALs** (playbook: `.ai/prompts/boot-issues.md`)
    - Boot once and collect `servicemanager` “Could not find … in the VINTF
      manifest” and `init:` restart loops.
-   - Map each missing interface to an existing soft HAL under
-     `src/aosp/<variant>/hardware/` or add a new one (use the `gki-hal` skill).
+   - Prefer an existing module in `src/common/hardware/interfaces/` listed by
+     `common.mk`. If common has no such HAL or this GSI cannot use it, add
+     `src/aosp/<variant>/hardware/…` and `PRODUCT_PACKAGES +=` in `device.mk`
+     (gki-hal).
    - Framework compatibility matrices under extracted GSI VINTF / `out/gsi-vintf`
      show allowed AIDL versions (e.g. health 1–3, audio.core 1–3).
 
 5. **Vendor / initramfs**
-   - After HAL or Mesa changes: stop QEMU → `scripts/build-hals.sh` (as needed) →
+   - After HAL or Mesa changes: stop QEMU →
+     `source build/envsetup.sh && lunch <variant> && m` →
      `scripts/build-vendor-img.sh` → `scripts/build-initramfs.sh`.
    - Keep SELinux permissive for bring-up unless the user asks otherwise
      (`androidboot.selinux=permissive` in `scripts/boot-qemu.sh`).

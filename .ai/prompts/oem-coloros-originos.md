@@ -1,7 +1,5 @@
 先读根目录 README.md、.ai/AGENTS.md，再读 .ai/prompts/oem-adapt.md。
-使用 gki-gsi（+ 需要时 gki-hal）。金标对照（ColorOS 系当前活树）：
-src/aosp/Originos-PD2266-15-compiler250711173629-AB-20260208-MysticGSI/
-Coloros-* 目录可能已空，仅作 FETCHED_FROM donor 记录；新 ColorOS 适配从 OriginOS 金标叉出再按日志改。
+使用 gki-gsi（+ 需要时 gki-hal）。检出远程 `GSI/OriginOS/...` 或 `GSI/ColorOS/...`。`device.mk` inherit common；oplus/vivo 私有 HAL 写在该变体 `hardware/`，不要写进 common。
 
 ColorOS / OriginOS（OPPO·一加·vivo）适配要点：
 1. 镜像：手置 MysticGSI；FETCHED_FROM 写产品名（ColorOS/OriginOS）、机型、指纹、Android 版本。

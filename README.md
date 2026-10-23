@@ -14,8 +14,8 @@
 </p>
 
 <p align="center">
-  <b>tebox — 桌面端 Android GSI 运行基座</b><br>
-  通用 GSI 镜像启动能力  gfxstream / VirGL 图形加速  Soft Vendor HAL 示例
+  <b>tebox — Android GSI 运行基座</b><br>
+  跨平台 通用 GSI 镜像启动能力
 </p>
 
 <p align="center">
@@ -27,19 +27,9 @@
 
 ## 项目简介
 
-**tebox** 是一套面向桌面端的 **Android GSI 运行基座**：在 QEMU 上提供通用的 ARM64 GSI 镜像启动能力，并内置 gfxstream（ANGLE + Vulkan）与 VirGL（Mesa）两套图形加速、GKI 内核与 soft vendor HAL 示例，方便你直接上手验证、二次开发和自动化。
+**tebox** 是一套面向全平台的 **Android GSI 运行基座**：在 QEMU 上提供通用的 ARM64 GSI 镜像启动能力，并内置 gfxstream（ANGLE + Vulkan）与 VirGL（Mesa）两套图形加速及 **自主研发的 ARM Mali GPU 直通技术**，方便你直接上手验证、二次开发和自动化。
 
 仓库：[github.com/opencecs/tebox](https://github.com/opencecs/tebox)  官网：[www.opencecs.com](https://www.opencecs.com)
-
-### 基座能力
-
-- **通用 GSI 运行**：以官方 aosp_arm64 GSI 为默认示例，也可替换为任意兼容的 ARM64 GSI（例如 Google、Samsung 等厂商发布的 GSI / Treble 镜像，或由 Pixel、Galaxy 等设备提取的 system 镜像）
-- **图形与输入**：gfxstream（默认）与 VirGL 两种 GPU 加速可选，virtio 触摸屏
-  - 每个镜像目录下的 `GPU` 文件（与 `KERNEL` 同级）写 `gfxstream` 或 `virgl` 即可切换；单次启动也可用 `FORCE_RUTABAGA=1/0` 覆盖
-  - gfxstream：客体 GLES 经 ANGLE 转为 Vulkan，在宿主 GPU 上执行，显示 / 投屏 / 编码全程走 GPU（dma-buf 零拷贝）
-  - 性能：相较原生运行，目前 GPU 约有 20% 的损耗；与 VirGL 相比，因 GL 转 Vulkan 约多 5% 的损耗
-- **编解码**：Gallium video 直通到宿主后端（Linux VA-API / macOS VideoToolbox），Mesa 客体侧注册 `c2.mesa.*` 编解码组件（H.264 / H.265 / VP9 / AV1）
-- **开机所需 HAL 示例**：已内置 Graphics、KeyMint（soft）、Health、Power、Audio 等 soft / stub 实现，可按厂商需求裁剪或替换
 
 > 说明：能否完整启动取决于目标 GSI 的 Treble / VINTF 要求；厂商专有分区与闭源服务需自行适配。基座提供的是可扩展的运行与 HAL 框架，而不是某一机型的一键刷机包。从设备提取或使用第三方 / 厂商镜像、固件与闭源组件时，请自行确认并遵守当地法律、厂商许可协议与版权要求；相关合规与法律风险由使用者自行承担。
 
@@ -51,7 +41,6 @@
 
 - 在桌面环境验证 / 对比不同 GSI 镜像
 - 开发与调试 vendor HAL、图形栈与系统服务
-- 搭建 CI，对 GSI + HAL 改动做自动化编译与冒烟
 
 ## 运行环境
 

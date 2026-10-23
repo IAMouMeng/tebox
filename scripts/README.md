@@ -5,7 +5,7 @@ Runtime and guest-image scripts used by `./run` and local HAL work.
 | Script | Purpose |
 | --- | --- |
 | `env.sh` | Shared paths (NDK, prebuilts, `HOST_ID`). Sourced by other scripts. |
-| `ensure-guest-downloads.sh` | Download `system.img` + GKI `Image` from mirror when missing. |
+| `ensure-guest-downloads.sh` | Download branch `rom.zip` (extract `system.img`) + GKI `Image` from mirror when missing. |
 | `ensure-runtime-imgs.sh` | Rebuild `vendor.img` / `initramfs.img` when inputs are newer. |
 | `boot-qemu.sh` | Launch QEMU for one variant. |
 | `build-vendor-img.sh` | Incremental Soong-lite (when the variant has `device.mk`), then pack `qemu/vendor` (+ Mesa) into `images/vendor.img`. |
