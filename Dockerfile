@@ -1,4 +1,5 @@
-# tebox R1P runtime — products only (no sources, no AOSP *.img).
+# tebox runtime base — products only (no sources, no AOSP *.img).
+# Image: tebox:<version>  (e.g. tebox:1.0.0)
 # Context: out/r1p-docker/  (assembled by out/r1p-deploy.sh)
 #   host-drivers/*.deb
 #   tebox/   → /opt/tebox

@@ -11,9 +11,10 @@ export LD_LIBRARY_PATH="$CIX_GPU_PREFIX/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+
 export __EGL_VENDOR_LIBRARY_DIRS="$CIX_GPU_COMPAT/share/glvnd/egl_vendor.d"
 export FORCE_VIRGL=1 QEMU_DISPLAY=egl-headless,gl=es
 export TEBOX_EGL_ALLOW_NO_DMABUF_EXPORT=1
-# Remaps GPU=gfxstream → mali in boot-qemu on this host. Override with
-# TEBOX_MALI=0 to keep gfxstream/virgl from the GPU file.
-export TEBOX_MALI="${TEBOX_MALI:-1}"
+# Host CIX userspace for egl-headless / Vulkan. Do NOT default TEBOX_MALI=1:
+# that remaps GPU=gfxstream → mali in boot-qemu. Follow the variant GPU file
+# (gfxstream/virgl/mali); set TEBOX_MALI=1 only for explicit Mali passthrough.
+export TEBOX_MALI="${TEBOX_MALI:-0}"
 export TEBOX_V4L2="${TEBOX_V4L2:-1}"
 export TEBOX_MALI_KICK_MS="${TEBOX_MALI_KICK_MS:-32}"
 # Stable: free-mmap SAME_VA at ~0x5f. WIN_IMPORT off (cookie SEGV). Device 64KiB.
