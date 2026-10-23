@@ -1,0 +1,7 @@
+# virtio-serial ports: tebox.camera is read by the camera HAL (user
+# cameraserver); tebox.audio_* by the audio HAL (root).
+/dev/vport*               0660   root       cameraserver
+# Mali GPU passthrough (tebox_mali). Keep mode/owner without seclabel —
+# a bad seclabel token can make ueventd skip the whole line, leaving the
+# misc node at 0600 and SF dead with EACCES / no suitable EGLConfig.
+/dev/mali0                0666   system     graphics

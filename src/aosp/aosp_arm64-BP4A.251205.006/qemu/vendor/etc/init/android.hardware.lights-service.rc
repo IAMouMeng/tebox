@@ -1,0 +1,7 @@
+# From hardware/interfaces/light/aidl/default/lights-default.rc
+service vendor.light-default /vendor/bin/hw/android.hardware.lights-service
+    class hal
+    user system
+    group system
+    seclabel u:r:hal_keymint_system:s0
+    interface aidl android.hardware.light.ILights/default
