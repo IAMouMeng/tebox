@@ -14,10 +14,11 @@ Runtime and guest-image scripts used by `./run` and local HAL work.
 | `extract-gsi-libs.sh` | Extract binder/NDK link libs from the variant GSI. |
 | `check-runtime-inputs.py` | Reject missing or stale pointer files before boot/pack. |
 | `qemu-console.py` | Run commands on the opt-in QEMU debug console. |
-| `r1p-deploy.sh` | Build the CIX Sky1 (MYT R1P) runtime image locally (`.ci/cix-r1p/Dockerfile`) and run it on a remote R1P: `build`, `push`, `images`, `start`, `stop`, `logs`, `all`. `bin` rebuilds only tebox-api / tebox-cast (in the `tebox-r1p-builder` image) and uploads them without a new image. Only binaries and images are uploaded. |
-| `fetch-host-drivers.sh <platform>` | Restore missing packages in `thirdparty/host-drivers/<platform>` from its `SOURCES` list and verify every checksum (run by `r1p-deploy.sh build`). |
-| `cix-r1p-start.sh` | Container entrypoint on the R1P: Mali GLES (`egl-headless,gl=es`), adb on `0.0.0.0:$ADB_PORT`, `androidboot.tebox.video_encode=1` (VirGL V4L2 `mvxenc` H.264). |
+| `fetch-host-drivers.sh <platform>` | Restore missing packages in `thirdparty/host-drivers/<platform>` from its `SOURCES` list and verify every checksum. |
+| `cix-r1p-start.sh` | Container entrypoint on the R1P: Mali GLES (`egl-headless,gl=es`), adb on `0.0.0.0:$ADB_PORT`, `androidboot.tebox.video_encode=1` (VirGL V4L2 `mvxenc` H.264). Used by the root `Dockerfile`. |
 | `cix-mali-env.sh` | CIX Mali userspace environment sourced by the R1P entrypoint. |
+
+R1P products image: root `Dockerfile` + local `out/r1p-deploy.sh` (under gitignored `out/`).
 
 `boot-qemu.sh` extras: `ADB_BIND` (default `127.0.0.1`) and `QEMU_EXTRA_APPEND`
 (extra kernel/androidboot tokens). `androidboot.tebox.video_encode=1` lists

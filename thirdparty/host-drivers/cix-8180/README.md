@@ -1,7 +1,7 @@
 # cix-8180: CIX Sky1 GPU userspace (MYT R1P)
 
-Unmodified Debian packages from Radxa's CIX repository, installed by
-`.ci/cix-r1p/Dockerfile` (only their `/opt` trees). Files, checksums and
+Unmodified Debian packages from Radxa's CIX repository, installed by the
+root `Dockerfile` (only their `/opt` trees). Files, checksums and
 download URLs are listed in `SOURCES`.
 
 | Package | Contents |

@@ -205,7 +205,7 @@ printf 'TEBOX-CTRL/1 tebox-1\n{"type":"key","key":"home"}\n' | nc 10.10.2.142 99
 
 ```bash
 make -C src/service/api                 # → out/service/tebox-api（本机）
-scripts/r1p-deploy.sh bin               # 交叉编译并上传到 R1P，然后重建 tebox-1 容器（实例会重启）
+out/r1p-deploy.sh bin                   # 交叉编译并上传到 R1P，然后重建容器（实例会重启）
 ```
 
 修改 `api/v1/tebox.proto` 后要重新生成代码（在 `api/v1/` 目录下执行）：
