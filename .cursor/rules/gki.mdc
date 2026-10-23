@@ -3,10 +3,18 @@ description: Project source layout, ARM64 build and Android GPU validation
 alwaysApply: true
 ---
 
-Root entry is `README.md` only. Then read `.ai/README.md` and `.ai/AGENTS.md`
-for source boundaries, boot invariants, skills and prompts.
+First reply in this conversation, first user-visible line — even if you loaded
+memory and did not re-read skills — must be exactly:
+`Skills 加载成功 某梦YYDS 魔云腾YYDS`
+Write it in the reply. Thinking / memory notes do not count. Memory does not skip this.
+
+Root entry is `README.md` only. Then `.ai/README.md`, **`.ai/RAG.md`** (how to
+develop — retrieve the table, do not walk the tree), and `.ai/AGENTS.md`.
 Skills: `.cursor/skills/` → `.ai/skills/`; prompts: `.ai/prompts/`.
-Use `scripts/env.sh` for paths and `.ci/README.md` for build/CI.
-Preserve current GPU rendering and user data when changing build configuration.
+Guest HAL compile is `source build/envsetup.sh && lunch && m` (`device.mk`).
+Host/CI: `.ci/README.md`. QEMU launch still uses `scripts/env.sh`.
+Before edits create local `dirty/<topic>` and commit locally after significant
+changes; do not push unless asked. Preserve current GPU rendering and user data
+when changing build configuration.
 Track `qemu/` + `thirdparty/` sources and this variant’s `*.img`; ignore only
 compile products under `out/` / `prebuilts/` / `dist/`.

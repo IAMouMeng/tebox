@@ -107,7 +107,7 @@ def boot_readme(host: str) -> str:
         f'same host ({host}) into this directory to add its system.\n'
         '\n'
         'Layout matches the repository: src/aosp/<variant>/ and src/kernel/<id>/.\n'
-        'system.img and gki/Image download from mirror.opencecs.com when missing.\n'
+        'rom.zip (→ system.img) and gki/Image download from mirror.opencecs.com when missing.\n'
         'The archive includes vendor.img and initramfs.img.\n'
         '\n'
         'The first boot creates out/test-<variant>/userdata.img and needs mke2fs\n'
