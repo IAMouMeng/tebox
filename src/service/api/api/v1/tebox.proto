@@ -6,6 +6,7 @@ option go_package = "tebox-client/api/v1;teboxv1";
 
 service AndroidService {
   rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse);
+  rpc GetInstance(InstanceRequest) returns (Instance);
   rpc CreateInstance(CreateInstanceRequest) returns (Instance);
   rpc DeleteInstance(InstanceRequest) returns (Empty);
   rpc StartInstance(InstanceRequest) returns (Empty);
@@ -14,13 +15,9 @@ service AndroidService {
   rpc ConfigureInstance(ConfigureInstanceRequest) returns (Empty);
   rpc SendKey(KeyRequest) returns (Empty);
   rpc PowerDown(InstanceRequest) returns (Empty);
-  // Guest input (touch / keys). StreamInput keeps one stream open for
-  // continuous gestures; Instance.control_port offers the same over plain TCP.
-  rpc SendInput(InputRequest) returns (Empty);
-  rpc StreamInput(stream InputRequest) returns (Empty);
-  // Guest clipboard changes, streamed until the client cancels or the
-  // instance stops. Set the guest clipboard with InputRequest.clipboard.
-  rpc WatchClipboard(InstanceRequest) returns (stream ClipboardEvent);
+  // Still frame of the guest display. Navigation keys, Android keycodes,
+  // text and clipboard stay on the TCP/UDP control port, not gRPC.
+  rpc GetPreview(GetPreviewRequest) returns (GetPreviewResponse);
 }
 
 message Empty {}
@@ -74,13 +71,14 @@ message Instance {
   int32 control_port = 10;
   int32 cpu_cores = 11;
   int32 memory_mb = 12;
-  int32 disk_mb = 13;       // userdata size
+  int32 disk_mb = 13;       // userdata size (allocated)
   int32 disk_used_mb = 14;  // host space userdata.img occupies
   InstanceState state = 15;
   // Images the instance boots (the variant's unless set at creation).
   string system_image = 16;
   string vendor_image = 17;
   string initramfs_image = 18;
+  int32 disk_free_mb = 19;  // max(0, disk_mb - disk_used_mb)
 }
 
 enum InstanceState {
@@ -89,6 +87,25 @@ enum InstanceState {
   INSTANCE_STATE_STARTING = 2;  // QEMU running, Android still booting
   INSTANCE_STATE_RUNNING = 3;   // sys.boot_completed=1
   INSTANCE_STATE_STOPPING = 4;
+}
+
+message GetPreviewRequest {
+  string id = 1;
+  // Longest side in pixels after scaling (up or down). 0 keeps native size.
+  // Capped at 4096.
+  int32 size = 2;
+  // jpeg (default) or png.
+  string format = 3;
+  // 1..100, jpeg only; default 80. Ignored for png.
+  int32 quality = 4;
+}
+
+message GetPreviewResponse {
+  bytes image = 1;
+  string format = 2;
+  string mime_type = 3;
+  int32 width = 4;
+  int32 height = 5;
 }
 
 message DeviceProfile {
@@ -100,57 +117,4 @@ message DeviceProfile {
   string cell_id = 6;
   string phone_number = 7;
   bool root = 8;
-}
-
-enum TouchAction {
-  TOUCH_ACTION_UNSPECIFIED = 0;
-  TOUCH_ACTION_DOWN = 1;
-  TOUCH_ACTION_MOVE = 2;
-  TOUCH_ACTION_UP = 3;
-}
-
-// x and y are normalised to the screen: 0..1 from the top-left corner.
-message TouchEvent {
-  TouchAction action = 1;
-  float x = 2;
-  float y = 3;
-}
-
-// Navigation key: home, back, menu, power, volume_up, volume_down, mute, or a
-// QEMU qcode. Pressed and released through the virtio keyboard.
-message KeyEvent { string key = 1; }
-
-// Text typed into the focused field. ASCII is typed as key events; other
-// text (CJK, emoji) is pasted through the guest clipboard.
-message TextEvent { string text = 1; }
-
-enum KeyAction {
-  KEY_ACTION_PRESS = 0; // down then up
-  KEY_ACTION_DOWN = 1;
-  KEY_ACTION_UP = 2;
-}
-
-// Android KeyEvent (android.view.KeyEvent KEYCODE_* / META_* values), e.g.
-// keycode 67 = DEL, 66 = ENTER, 29 + meta 0x3000 = Ctrl+A.
-message AndroidKeyEvent {
-  int32 keycode = 1;
-  KeyAction action = 2;
-  int32 meta = 3;
-}
-
-// Sets the guest clipboard; with paste it is also pasted into the focused field.
-message ClipboardEvent {
-  string text = 1;
-  bool paste = 2;
-}
-
-message InputRequest {
-  string id = 1;
-  oneof event {
-    TouchEvent touch = 2;
-    KeyEvent key = 3;
-    TextEvent text = 4;
-    AndroidKeyEvent keycode = 5;
-    ClipboardEvent clipboard = 6;
-  }
 }

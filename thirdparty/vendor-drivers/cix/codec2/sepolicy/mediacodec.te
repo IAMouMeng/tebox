@@ -1,0 +1,8 @@
+# Let the stock mediacodec domain drive the MVX V4L2-M2M codec nodes.
+#
+# The CIX c2.cix.* HAL runs in `mediacodec` (see its init .rc: user mediacodec)
+# and talks to the VPU through /dev/video* (labeled video_device).  These
+# allows are additive; if you already ship vendor/.../device/cix sepolicy
+# which grants the same, the duplicate allow rules are harmless.
+allow mediacodec video_device:chr_file rw_file_perms;
+allowxperm mediacodec video_device:chr_file ioctl { 0x5600-0x56ff };

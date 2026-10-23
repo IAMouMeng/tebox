@@ -1,0 +1,14 @@
+lorenzo@google.com
+larsberg@google.com #{LAST_RESORT_SUGGESTION}
+
+# For cherry-picks of CLs that are already merged in aosp/master, flaky test
+# fixes, or no-op refactors.
+jchalard@google.com #{LAST_RESORT_SUGGESTION}
+# In addition to cherry-picks, flaky test fixes and no-op refactors, also for
+# APF firmware tests (to verify correct behaviour of the wifi APF interpreter)
+maze@google.com #{LAST_RESORT_SUGGESTION}
+# In addition to cherry-picks, flaky test fixes and no-op refactors, also for
+# NsdManager tests
+reminv@google.com #{LAST_RESORT_SUGGESTION}
+# Only for APF firmware tests (to verify correct behaviour of the wifi APF interpreter)
+yuyanghuang@google.com #{LAST_RESORT_SUGGESTION}

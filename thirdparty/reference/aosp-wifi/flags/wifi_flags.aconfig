@@ -1,0 +1,448 @@
+package: "com.android.wifi.flags"
+container: "com.android.wifi"
+
+flag {
+    name: "test_flag_function"
+    namespace: "wifi"
+    description: "This flag aim to test the flag release for wifi stack"
+    bug: "301145404"
+}
+
+flag {
+    name: "delay_save_to_store"
+    namespace: "wifi"
+    description: "Control the feature delay the save to store in batch to reduce the blocking time"
+    bug: "302172794"
+}
+
+flag {
+    name: "single_wifi_thread"
+    namespace: "wifi"
+    description: "Control the feature that move all Wifi service to a single thread"
+    bug: "302593617"
+}
+
+flag {
+    name: "network_provider_battery_charging_status"
+    is_exported: true
+    namespace: "wifi"
+    description: "Control the API that allows setting / reading the NetworkProviderInfo's battery charging status"
+    bug: "305067231"
+}
+
+flag {
+    name: "shared_connectivity_broadcast_receiver_test_api"
+    is_exported: true
+    namespace: "wifi"
+    description: "Control the test API for SharedConnectivityManager's getBroadcastReceiver() method"
+    bug: "305067231"
+}
+
+flag {
+    name: "anqp_request_wait_for_response"
+    namespace: "wifi"
+    description: "Make the ANQP request in a queue and wait for the previous response before trigger the next request"
+    bug: "310037751"
+}
+
+flag {
+    name: "android_v_wifi_api"
+    is_exported: true
+    namespace: "wifi"
+    description: "For new API added to Android V"
+    bug: "319927407"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "d2d_when_infra_sta_off"
+    namespace: "wifi"
+    description: "Add new API to configure d2d when infra sta is off"
+    bug: "295792510"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "get_channel_width_api"
+    namespace: "wifi"
+    description: "Add new API to get channel width"
+    bug: "335358378"
+    is_fixed_read_only: true
+    is_exported: true
+}
+
+flag {
+    name: "voip_detection_bugfix"
+    namespace: "wifi"
+    description: "Detect VoIP over Wifi and execute optimization"
+    bug: "295885471"
+    is_fixed_read_only: true
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "get_bssid_blocklist_api"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add new API to get BSSID blocklist"
+    bug: "336109216"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "delayed_carrier_network_selection"
+    namespace: "wifi"
+    description: "Delay network selection for some carrier networks until a delay period has passed"
+    bug: "329142362"
+    is_fixed_read_only: true
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "local_only_connection_optimization"
+    namespace: "wifi"
+    description: "optimize local-only connection API"
+    bug: "347117408"
+    is_fixed_read_only: true
+    is_exported: true
+}
+
+flag {
+    name: "softap_config_store_max_channel_width"
+    namespace: "wifi"
+    description: "Store MaxChannelBandwidth to SoftAP config"
+    bug: "344450923"
+    is_fixed_read_only: true
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "autojoin_restriction_security_types_api"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add new API to set or get Autojoin Restriction security types"
+    bug: "340351634"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "rsn_overriding"
+    namespace: "wifi"
+    description: "Wi-Fi Alliance RSN Overriding feature"
+    bug: "348669010"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "new_uri_parsing_for_escape_character"
+    namespace: "wifi"
+    description: "New parsing logic for Zxing uri format which support escape character"
+    bug: "342706482"
+    is_fixed_read_only: true
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "aware_pairing"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add new API for Aware pairing"
+    bug: "354820259"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "wifi_scorer_new_stats_collection"
+    namespace: "wifi"
+    description: "Gate WiFi Scorer new stats collection"
+    bug: "367362809"
+}
+
+flag {
+    name: "softap_disconnect_reason"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add SoftAP disconnect reason code"
+    bug: "361651437"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "secure_ranging"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add secure ranging support"
+    bug: "364722301"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "mainline_supplicant"
+    namespace: "wifi"
+    description: "Use the secondary supplicant binary stored in the mainline module"
+    bug: "365585450"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "mlo_sap"
+    is_exported: true
+    namespace: "wifi"
+    description: "Mlo SoftAp"
+    bug: "362355566"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "wifi_direct_r2"
+    is_exported: true
+    namespace: "wifi"
+    description: "Wi-Fi Alliance Wi-Fi Direct R2 feature"
+    bug: "341971059"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "wep_disabled_in_apm"
+    is_exported: true
+    namespace: "wifi"
+    description: "Wep should be disabled in advanced protection mode"
+    bug: "362586268"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "bssid_blocklist_for_suggestion"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add BSSID to blocklist for network suggestion"
+    bug: "340263610"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "ap_isolate"
+    is_exported: true
+    namespace: "wifi"
+    description: "Supports Soft AP client isolation configuration"
+    bug: "364333929"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "public_bands_for_lohs"
+    is_exported: true
+    namespace: "wifi"
+    description: "Public bands api for local only hotspot from system api"
+    bug: "362355566"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "wifi_state_changed_listener"
+    is_exported: true
+    namespace: "wifi"
+    description: "Wifi state changed listener API"
+    bug: "349530934"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "p2p_dialog2"
+    is_exported: true
+    namespace: "wifi"
+    description: "Updated P2P dialogs"
+    bug: "349253691"
+    is_fixed_read_only: true
+}
+
+
+flag {
+    name: "multiple_mld_on_sap_supported"
+    is_exported: false
+    namespace: "wifi"
+    description: "Check driver capability when determining the number of supported MLD"
+    bug: "382023801"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "monitor_intent_for_all_users"
+    is_exported: false
+    namespace: "wifi"
+    description: "IntentReceiver should monitor intent from all users"
+    bug: "390257834"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "allow_override_max_ndp_session"
+    is_exported: true
+    namespace: "wifi"
+    description: "Allow override the NDP session number to avoid interrupt critical connection"
+    bug: "375552150"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "wifi_lock_activated_by_p2p_or_aware"
+    namespace: "wifi"
+    description: "Allow some apps to activate a WifiLock if a P2P or Aware connection is active"
+    bug: "404950833"
+}
+
+flag {
+    name: "updated_tofu_dialog"
+    namespace: "wifi"
+    description: "Update the TOFU dialog with more information"
+    bug: "276778134"
+}
+
+flag {
+    name: "un_deprecated_wificonfiguration"
+    is_exported: true
+    namespace: "wifi"
+    description: "un-deprecated wifi configurations."
+    bug: "412519144"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "multi_user_wifi_enhancement"
+    is_exported: true
+    namespace: "wifi"
+    description: "Giving each user control over their own Wi-Fi settings and configurations."
+    bug: "394417020"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "public_ssid_bssid_passphrase_for_do_carrier_tethering"
+    is_exported: true
+    namespace: "wifi"
+    description: "Public setSsid, setPassphrase, and setBssid for DO/Carrier app tethering"
+    bug: "399543884"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "icm_dialog_timeout"
+    namespace: "wifi"
+    description: "Timeout for InterfaceConflictManager dialogs."
+    bug: "416621831"
+}
+
+flag {
+    name: "improve_ranging_api"
+    is_exported: true
+    namespace: "wifi"
+    description: "Improve ranging APIs"
+    bug: "402768126"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "band_optimization_control"
+    is_exported: true
+    namespace: "wifi"
+    description: "Caller can force softap ap band to bypass the frameworks auto appends bands feature."
+    bug: "403649308"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "wifi_pno_scan_schedule_api"
+    is_exported: true
+    namespace: "wifi"
+    description: "For new API added to Android B for PNO scan interval modifications"
+    bug: "399014087"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "get_config_empty_reason"
+    is_exported: true
+    namespace: "wifi"
+    description: "provide a detail when getting configs, not just empty list in error case"
+    bug: "404558943"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "refresh_mac_randomization_api"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add new API to refresh random mac address"
+    bug: "395017801"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "external_approver_support_for_wfdr2_password_based_bootstrapping"
+    is_exported: true
+    namespace: "wifi"
+    description: "Enables the use of an external approver mechanism during the WFDR2 password-based pairing bootstrapping process"
+    bug: "409802099"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "feed_internal_score_to_external_scorer"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add new APIs to feed the internal score to external scorer for reference"
+    bug: "427546930"
+}
+
+flag {
+    name: "restrict_autojoin_callback_api"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add new callback API to listen on restrict autojoin to subscription ID state"
+    bug: "201143076"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "scan_optimization_with_mobility_change"
+    namespace: "wifi"
+    description: "Add new callback API to listen on restrict autojoin to subscription ID state"
+    bug: "422594154"
+}
+
+flag {
+    name: "nl80211_proxy_enabled"
+    namespace: "wifi"
+    description: "Allow the Nl80211 proxy to be initialized"
+    bug: "344891670"
+}
+
+flag {
+    name: "filter_carrier_networks_while_in_motion"
+    namespace: "wifi"
+    description: "Filters carrier networks from the connection candidate list while the device is in motion"
+    bug: "409851656"
+}
+
+flag {
+    name: "get_supported_interface_names"
+    is_exported: true
+    namespace: "wifi"
+    description: "Add new API to get supported interface names"
+    bug: "433370605"
+}
+
+flag {
+    name: "ml_scorer_in_wifi_fw"
+    namespace: "wifi"
+    description: "Add ML scorer into Wi-Fi framework"
+    bug: "412641160"
+}

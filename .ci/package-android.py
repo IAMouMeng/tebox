@@ -50,7 +50,7 @@ def main():
         (package / 'SHA256SUMS.json').write_text(json.dumps(checksums, indent=2) + '\n')
         (package / 'README.txt').write_text(
             'Android ARM64 guest runtime (GKI + vendor HAL/Mesa + initramfs).\n'
-            'system.img is not included; ./run downloads it on first boot when missing.\n'
+            'system.img is not included; ./run downloads rom.zip and extracts it on first boot when missing.\n'
             f"Runtime URL: {lock['system']['url']}\nSHA-256: {lock['system']['sha256']}\n"
             'From this directory, use the matching host package wrapper:\n'
             'QEMU=/absolute/path/to/qemu-gki-OS-arm64/qemu FORCE_VIRGL=1 SNAPSHOT=1 ./run\n'

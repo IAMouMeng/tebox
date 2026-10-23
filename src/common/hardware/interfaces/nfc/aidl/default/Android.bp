@@ -1,0 +1,15 @@
+cc_binary {
+    name: "android.hardware.nfc-service",
+    relative_install_path: "hw",
+    vendor: true,
+    srcs: ["nfc.cpp"],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+        "android.hardware.nfc-V2-ndk",
+    ],
+    init_rc: ["android.hardware.nfc-service.rc"],
+    vintf_fragments: ["android.hardware.nfc-service.xml"],
+    cflags: ["-DLOG_TAG=\"CfNfc\""],
+    gki_file_contexts: ["android.hardware.nfc-service"],
+}

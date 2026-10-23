@@ -1,0 +1,7 @@
+HAL: android.hardware.wifi (+ supplicant)
+Upstream: hardware/interfaces/wifi/aidl/default (AOSP) +
+wifi_legacy_hal_stubs + InterfaceTool (AOSPA uvite wifi_hal.h /
+interface_tool, because A16 libhardware_legacy dropped wifi_hal.h).
+google/ compiles that tree against frozen IWifi v2. Vendor HAL .so / XML
+is skipped; stubs fill the legacy func table. wpa_supplicant remains
+supplicant-stub/.

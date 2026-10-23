@@ -1,8 +1,8 @@
 {
   "variant": "aosp_arm64-BP4A.251205.006",
   "system": {
-    "url": "https://mirror.opencecs.com/f/GSI/aosp_arm64-BP4A.251205.006/system.img",
-    "sha256": "c89fee2aa00f0ab3e06221bcc915fdda2bb58aabcc4d007e3ac30044b5b76cb2"
+    "url": "https://mirror.opencecs.com/f/GSI/aosp_arm64-BP4A.251205.006/rom.zip",
+    "sha256": "6a151f4d95e76d27f9112917b4da46375bfb05d28c66409da3799743f4c81e12"
   },
   "kernel": {
     "url": "https://mirror.opencecs.com/f/GKI/gki-6.1-android14-gsi/Image",

@@ -36,6 +36,47 @@ func (s *server) ListInstances(ctx context.Context, _ *api.ListInstancesRequest)
 	return result, nil
 }
 
+func (s *server) GetInstance(_ context.Context, req *api.InstanceRequest) (*api.Instance, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "instance id is required")
+	}
+	id, err := requireID(req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	item, err := s.mgr.Get(id)
+	if err != nil {
+		return nil, internalError(err)
+	}
+	return instanceMessage(item), nil
+}
+
+func (s *server) GetPreview(_ context.Context, req *api.GetPreviewRequest) (*api.GetPreviewResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "instance id is required")
+	}
+	id, err := requireID(req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	preview, err := s.mgr.Preview(id, tebox.PreviewOptions{
+		Size: int(req.GetSize()), Format: req.GetFormat(), Quality: int(req.GetQuality()),
+	})
+	if err != nil {
+		if errors.Is(err, tebox.ErrInputNotRunning) {
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		}
+		if errors.Is(err, tebox.ErrInvalidOptions) {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		return nil, internalError(err)
+	}
+	return &api.GetPreviewResponse{
+		Image: preview.Data, Format: preview.Format, MimeType: preview.Mime,
+		Width: int32(preview.Width), Height: int32(preview.Height),
+	}, nil
+}
+
 func (s *server) CreateInstance(_ context.Context, req *api.CreateInstanceRequest) (*api.Instance, error) {
 	item, err := s.mgr.Create(tebox.CreateOptions{
 		Name: req.GetName(), CPUCores: int(req.GetCpuCores()),
@@ -178,6 +219,7 @@ func instanceMessage(item tebox.Instance) *api.Instance {
 		CastPort: int32(item.CastPort), ControlPort: int32(item.ControlPort),
 		CpuCores: int32(item.CPUCores), MemoryMb: int32(item.MemoryMB),
 		DiskMb: int32(item.DiskMB), DiskUsedMb: int32(item.DiskUsedMB),
+		DiskFreeMb: diskFreeMB(item.DiskMB, item.DiskUsedMB),
 		State:       instanceState(item.State),
 		SystemImage: item.SystemImage, VendorImage: item.VendorImage,
 		InitramfsImage: item.InitramfsImage,
@@ -188,6 +230,14 @@ func instanceMessage(item tebox.Instance) *api.Instance {
 			PhoneNumber: item.Profile.PhoneNumber, Root: item.Profile.Root,
 		},
 	}
+}
+
+func diskFreeMB(diskMB, usedMB int) int32 {
+	free := diskMB - usedMB
+	if free < 0 {
+		return 0
+	}
+	return int32(free)
 }
 
 func instanceState(state string) api.InstanceState {
@@ -233,7 +283,10 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.MaxSendMsgSize(16<<20),
+		grpc.MaxRecvMsgSize(16<<20),
+	)
 	api.RegisterAndroidServiceServer(grpcServer, &server{mgr: mgr})
 	// Lets grpcurl and other tools discover the service without tebox.proto.
 	reflection.Register(grpcServer)

@@ -1,0 +1,8 @@
+HAL: android.hardware.sensors
+Upstream: hardware/interfaces/sensors/aidl/default
+  Sensor.cpp / Sensor.h — AOSP example virtual accel/gyro/light/…
+  Sensors.cpp — AOSP ISensors; FMQ uses this tree's EventQueue (same ABI as
+  libfmq synchronized queues) because libfmq is not an NDK prebuilt here.
+
+Frozen: aidl_api/android.hardware.sensors/2 (GSI FCM on this variant).
+Cuttlefish has no C++ sensors HAL under guest/hals at android-16.0.0_r4.

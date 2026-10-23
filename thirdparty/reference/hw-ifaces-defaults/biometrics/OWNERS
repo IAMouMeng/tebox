@@ -1,0 +1,9 @@
+# Bug component: 879035
+
+include platform/frameworks/base:/services/core/java/com/android/server/biometrics/OWNERS
+
+jbolinger@google.com
+joshmccloskey@google.com
+diyab@google.com
+austindelgado@google.com
+spdonghao@google.com

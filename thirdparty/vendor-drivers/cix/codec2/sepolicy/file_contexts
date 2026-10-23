@@ -1,0 +1,17 @@
+# CIX Sky1 hardware Codec2 (c2.cix.*) — SELinux labels.
+#
+# The HAL runs in the stock `mediacodec` domain; only the service executable
+# and the MVX V4L2 codec device nodes need labels.  Keep these contexts
+# identical to vendor/.../device/cix if you ship both, or this file alone is
+# enough for a standalone vendor image.
+
+# Codec2 HIDL service (prebuilt from vendor/cix_proprietary).
+/vendor/bin/hw/android\.hardware\.media\.c2@1\.0-cix-service   u:object_r:mediacodec_exec:s0
+
+# MVX VPU V4L2-M2M nodes.  The closed HAL opens the decoder and encoder nodes
+# itself; on CIX Android they enumerate as video9 (decode) and video12
+# (encode).  They are labeled video_device (as CIX does) so the mediacodec
+# domain's existing V4L2 access applies.  Adjust the numbers if the VPU
+# enumerates elsewhere on your board.
+/dev/video9    u:object_r:video_device:s0
+/dev/video12   u:object_r:video_device:s0

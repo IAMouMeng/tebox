@@ -1,0 +1,14 @@
+cc_binary {
+    name: "android.hardware.power-service",
+    relative_install_path: "hw",
+    vendor: true,
+    srcs: ["Power.cpp"],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+        "android.hardware.power-V1-ndk",
+    ],
+    init_rc: ["android.hardware.power-service.rc"],
+    vintf_fragments: ["android.hardware.power-service.xml"],
+    cflags: ["-DLOG_TAG=\"android.hardware.power-service.example\""],
+}

@@ -1,0 +1,66 @@
+{
+  "presubmit": [
+    {
+      "name": "MtsWifiTestCases"
+    },
+    {
+      "name": "GtsGmscoreHostTestCases",
+      "keywords": ["primary-device"],
+      "options" : [
+        {
+          "include-filter": "com.google.android.gts.wifi.WifiHostTest"
+        }
+      ]
+    }
+  ],
+  "presubmit-large": [
+    {
+      "name": "CtsWifiTestCases",
+      "options": [
+        {
+          "exclude-annotation": "android.net.wifi.cts.VirtualDeviceNotSupported"
+        }
+      ]
+    }
+  ],
+  "mainline-presubmit": [
+    {
+      "name": "MtsWifiTestCases[com.google.android.wifi.apex]"
+    },
+    {
+      "name": "CtsWifiTestCases[com.google.android.wifi.apex]",
+      "options": [
+        {
+          "exclude-annotation": "android.net.wifi.cts.VirtualDeviceNotSupported"
+        },
+        {
+          "exclude-annotation": "com.android.compatibility.common.util.NonMainlineTest"
+        }
+      ]
+    }
+  ],
+  "automotive-mumd-presubmit": [
+    {
+      "name": "CtsNetTestCases"
+    },
+    {
+      "name": "CtsNetTestCasesUpdateStatsPermission"
+    }
+  ],
+  "wifi-mainline-presubmit": [
+    {
+      "name": "MtsWifiTestCases"
+    },
+    {
+      "name": "CtsWifiTestCases",
+      "options": [
+        {
+          "exclude-annotation": "android.net.wifi.cts.VirtualDeviceNotSupported"
+        },
+        {
+          "exclude-annotation": "com.android.compatibility.common.util.NonMainlineTest"
+        }
+      ]
+    }
+  ]
+}

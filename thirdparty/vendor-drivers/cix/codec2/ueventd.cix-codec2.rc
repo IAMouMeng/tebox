@@ -1,0 +1,5 @@
+# MVX VPU V4L2 codec nodes: owned by mediacodec so the c2.cix HAL (which runs
+# as user mediacodec) can open them.  video9 = decode, video12 = encode on CIX
+# Android; adjust if the VPU enumerates elsewhere.
+/dev/video9    0600   mediacodec   mediacodec
+/dev/video12   0600   mediacodec   mediacodec

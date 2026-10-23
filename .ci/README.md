@@ -5,7 +5,7 @@
 - Native **QEMU + libepoxy + VirGL** packages for **macOS ARM64**, **Linux ARM64** and **Windows x64**
 - Portable **skill ZIPs** for WorkBuddy / local importers
 - HALs and kernel modules (`*.ko`) stay as tracked prebuilts under `src/`; GSI
-  `system.img` and GKI `Image` are runtime downloads
+  branch `rom.zip` (extracted to `system.img`) and GKI `Image` are runtime downloads
 - No repository write permissions beyond `actions/upload-artifact`
 
 ## Workflow
@@ -17,7 +17,7 @@
    build QEMU, then `.ci/package-systems.py` packs each `src/aosp/<variant>`
 
 `ubuntu-24.04` only runs validation. The host job does not recompile guest HALs,
-Mesa, or BusyBox. It downloads the runtime `system.img` and GKI `Image` when
+Mesa, or BusyBox. It downloads the runtime `rom.zip` (→ `system.img`) and GKI `Image` when
 needed, rebuilds `vendor.img` and `initramfs.img`, and packs the runtime without
 bundling those large inputs.
 
@@ -52,7 +52,7 @@ while packing.
 | Artifact | Notes |
 | --- | --- |
 | `qemu-gki-<os>-arm64.tar.gz` | Relocatable `./qemu` wrapper; smoke-tests `--version` and `virtio-gpu-gl-pci` |
-| `tebox-<os>-arm64` | One `tebox-<variant>-<os>-arm64.tar.gz` per system, without `system.img`. `./run` downloads the runtime GSI when needed, then starts the only system or shows the lunch menu. Extract another variant for the same host into the same directory to add it |
+| `tebox-<os>-arm64` | One `tebox-<variant>-<os>-arm64.tar.gz` per system, without `system.img`. `./run` downloads the branch `rom.zip` when needed, then starts the only system or shows the lunch menu. Extract another variant for the same host into the same directory to add it |
 | `tebox-vendor-init.tar.gz` | Every variant’s `vendor.img` and `initramfs.img` under `src/aosp/<variant>/images/`. No `system.img`. Uploaded from the Linux ARM64 job |
 | `project-ai-skills` | `dist/skills/*.zip` |
 

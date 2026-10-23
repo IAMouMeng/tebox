@@ -1,8 +1,10 @@
 # Linux ARM64 runtime for CIX Sky1 hosts (MYT R1P): QEMU + VirGL on the CIX
 # Mali GLES driver, VirGL video on the V4L2 mvxenc H.264 encoder, and
 # tebox-api with host cast (tebox-cast) and UDP input.
-# Built by scripts/r1p-deploy.sh from a staged context; only the final
-# stage (binaries + launcher scripts, no sources) is shipped to the host.
+# Built by scripts/r1p-deploy.sh from a staged context; ships binaries,
+# launcher scripts, and the GKI Image for VARIANT. Guest AOSP images
+# (system/vendor/initramfs) are host-mounted — not baked in. Optional
+# host bind of src/kernel/$KERNEL_ID/gki overrides the baked Image.
 # deps: the compilers and -dev packages only. r1p-deploy.sh tags it as
 # tebox-r1p-builder so `r1p-deploy.sh bin` can rebuild tebox-cast in seconds.
 FROM debian:trixie AS deps
@@ -29,6 +31,7 @@ FROM deps AS build
 # build reads, so tebox-cast or launcher changes do not rebuild QEMU.
 COPY .ci /src/.ci
 COPY scripts/env.sh /src/scripts/env.sh
+COPY build/make/core/config.sh /src/build/make/core/config.sh
 COPY thirdparty /src/thirdparty
 COPY qemu /src/qemu
 WORKDIR /src

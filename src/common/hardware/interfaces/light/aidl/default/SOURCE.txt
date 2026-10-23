@@ -1,0 +1,5 @@
+HAL: android.hardware.light
+Upstream: hardware/interfaces/light/aidl/default (android-16.0.0_r4)
+AOSP default is Rust (lights.rs). google/ is a C++ port of that service:
+three BACKLIGHT HwLight entries kept in memory (QEMU has no LED sysfs).
+ILights v2.

@@ -1,0 +1,16 @@
+HAL: android.hardware.security.keymint
+======================================
+
+google/ is AOSP hardware/interfaces/security/keymint/aidl/default/service.cpp
+linked against this GSI's libkeymint_fake_latest (AndroidKeyMintDevice /
+PureSoft). CVD guest/hals/keymint is Rust or remote vsock to a host KeyMint
+daemon, which this QEMU ranchu image does not run.
+
+QEMU changes vs AOSP default: SecurityLevel::TRUSTED_ENVIRONMENT (keystore2
+TEE slot), persistent_storage.cpp + root_of_trust.cpp. Frozen IKeyMint v4
+AIDL in this tree has no IRemotelyProvisionedComponent (moved to
+hardware/interfaces/security/rkp).
+
+Attestation keys: keybox/keybox.xml (AndroidAttestation schema).
+
+Registers: IKeyMintDevice, ISecureClock, ISharedSecret (/default)

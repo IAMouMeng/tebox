@@ -1,0 +1,2 @@
+obj-m += tebox_mali.o
+obj-m += mali_kbase.o

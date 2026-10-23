@@ -1,0 +1,15 @@
+cc_binary {
+    name: "android.hardware.health-service",
+    relative_install_path: "hw",
+    vendor: true,
+    srcs: ["health-aidl.cpp"],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+        "android.hardware.health-V3-ndk",
+    ],
+    init_rc: ["android.hardware.health-service.rc"],
+    vintf_fragments: ["android.hardware.health-service.xml"],
+    cflags: ["-DLOG_TAG=\"android.hardware.health-service.cuttlefish\""],
+    gki_aidl_forbidden: "getHingeInfo",
+}

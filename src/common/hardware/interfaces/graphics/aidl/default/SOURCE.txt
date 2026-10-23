@@ -1,0 +1,12 @@
+Graphics (stub stack)
+=====================
+
+Composer is the KMS IComposer v3 under stub/ (same DRM path drm_hwcomposer
+uses). Allocator/mapper are the same process: VirGL uses Mesa GBM; gfxstream
+uses virtio-gpu resources with cros_gralloc-layout ints (buffer_handle.h) so
+vulkan.ranchu (ro.hardware.gralloc=minigbm) can import them.
+
+  stub/           composer3 + IAllocator + mapper.stub
+  drm_hwcomposer/ NDK link not wired yet (needs libui); sources kept for later
+  thirdparty/common/minigbm  header-only reference / Codec2 includes — no guest
+                             allocator-service.minigbm is shipped for aosp_arm64

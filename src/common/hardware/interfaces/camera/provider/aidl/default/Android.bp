@@ -1,0 +1,5 @@
+gki_custom {
+    name: "android.hardware.camera.provider-service",
+    build: ["aidl-provider/build.sh"],
+    install: ["aidl-provider/install.sh"],
+}

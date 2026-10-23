@@ -1,0 +1,9 @@
+package: "com.android.btaudio.hal.flags"
+container: "system"
+
+flag {
+    name: "leaudio_sw_offload"
+    namespace: "pixel_bluetooth"
+    description: "Flag for using sw offload path to send premium audio"
+    bug: "398885696"
+}

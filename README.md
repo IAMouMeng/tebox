@@ -14,8 +14,8 @@
 </p>
 
 <p align="center">
-  <b>tebox — 桌面端 Android GSI 运行基座</b><br>
-  通用 GSI 镜像启动能力  gfxstream / VirGL 图形加速  Soft Vendor HAL 示例
+  <b>tebox — Android GSI 运行基座</b><br>
+  跨平台 通用 GSI 镜像启动能力
 </p>
 
 <p align="center">
@@ -27,19 +27,9 @@
 
 ## 项目简介
 
-**tebox** 是一套面向桌面端的 **Android GSI 运行基座**：在 QEMU 上提供通用的 ARM64 GSI 镜像启动能力，并内置 gfxstream（ANGLE + Vulkan）与 VirGL（Mesa）两套图形加速、GKI 内核与 soft vendor HAL 示例，方便你直接上手验证、二次开发和自动化。
+**tebox** 是一套面向全平台的 **Android GSI 运行基座**：在 QEMU 上提供通用的 ARM64 GSI 镜像启动能力，并内置 gfxstream（ANGLE + Vulkan）与 VirGL（Mesa）两套图形加速及 **自主研发的 ARM Mali GPU 直通技术**，方便你直接上手验证、二次开发和自动化。
 
 仓库：[github.com/opencecs/tebox](https://github.com/opencecs/tebox)  官网：[www.opencecs.com](https://www.opencecs.com)
-
-### 基座能力
-
-- **通用 GSI 运行**：以官方 aosp_arm64 GSI 为默认示例，也可替换为任意兼容的 ARM64 GSI（例如 Google、Samsung 等厂商发布的 GSI / Treble 镜像，或由 Pixel、Galaxy 等设备提取的 system 镜像）
-- **图形与输入**：gfxstream（默认）与 VirGL 两种 GPU 加速可选，virtio 触摸屏
-  - 每个镜像目录下的 `GPU` 文件（与 `KERNEL` 同级）写 `gfxstream` 或 `virgl` 即可切换；单次启动也可用 `FORCE_RUTABAGA=1/0` 覆盖
-  - gfxstream：客体 GLES 经 ANGLE 转为 Vulkan，在宿主 GPU 上执行，显示 / 投屏 / 编码全程走 GPU（dma-buf 零拷贝）
-  - 性能：相较原生运行，目前 GPU 约有 20% 的损耗；与 VirGL 相比，因 GL 转 Vulkan 约多 5% 的损耗
-- **编解码**：Gallium video 直通到宿主后端（Linux VA-API / macOS VideoToolbox），Mesa 客体侧注册 `c2.mesa.*` 编解码组件（H.264 / H.265 / VP9 / AV1）
-- **开机所需 HAL 示例**：已内置 Graphics、KeyMint（soft）、Health、Power、Audio 等 soft / stub 实现，可按厂商需求裁剪或替换
 
 > 说明：能否完整启动取决于目标 GSI 的 Treble / VINTF 要求；厂商专有分区与闭源服务需自行适配。基座提供的是可扩展的运行与 HAL 框架，而不是某一机型的一键刷机包。从设备提取或使用第三方 / 厂商镜像、固件与闭源组件时，请自行确认并遵守当地法律、厂商许可协议与版权要求；相关合规与法律风险由使用者自行承担。
 
@@ -51,7 +41,6 @@
 
 - 在桌面环境验证 / 对比不同 GSI 镜像
 - 开发与调试 vendor HAL、图形栈与系统服务
-- 搭建 CI，对 GSI + HAL 改动做自动化编译与冒烟
 
 ## 运行环境
 
@@ -69,11 +58,11 @@
 <p align="center">
   <img src="docs/screenshots/launched.png" width="240" alt="AOSP GSI 启动界面">
   <img src="docs/screenshots/coloros_launched.png" width="240" alt="厂商 ROM 示例：ColorOS GSI">
-  <img src="docs/screenshots/antutu_on_myt_r1p_cix8180.png" width="240" alt="安兔兔跑分：R1P（CIX 8180）">
+  <img src="docs/screenshots/antutu_on_myt_r1p_cix6187.png" width="240" alt="安兔兔跑分：R1P（CIX 6187）">
 </p>
 
 <p align="center">
-  左：AOSP GSI　中：厂商 ROM 示例（ColorOS GSI）　右：安兔兔 V12 跑分（R1P / CIX 8180，gfxstream：ANGLE + Vulkan on Mali-G720）
+  左：AOSP GSI　中：厂商 ROM 示例（ColorOS GSI）　右：安兔兔 V12 跑分（R1P / CIX 6187，gfxstream：ANGLE + Vulkan on Mali-G720）
 </p>
 
 <p align="center">
@@ -95,6 +84,16 @@
   左：Flyme GSI（魅族 22，Android 15）　右：OneUI GSI（三星 Galaxy S25 Ultra，Android 16）
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/Gigaset-13-1693462027-AB-20230918-MysticGSI.png" width="240" alt="厂商 ROM 示例：Gigaset GSI">
+  <img src="docs/screenshots/Oppo-lahaina-13-1694594759862-AB-20231007-MysticGSI.png" width="240" alt="厂商 ROM 示例：OPPO GSI">
+  <img src="docs/screenshots/RogUI-rogphone7-13-33.0820.0810.217-0-AB-20230907-MysticGSI.png" width="240" alt="厂商 ROM 示例：RogUI GSI">
+</p>
+
+<p align="center">
+  左：Gigaset GSI（Android 13）　中：OPPO GSI（lahaina，Android 13）　右：RogUI GSI（ROG Phone 7，Android 13）
+</p>
+
 ## 正确拉取源码
 
 先安装并初始化 Git LFS（macOS：`brew install git-lfs`；Ubuntu/Debian：`sudo apt-get install git-lfs`）：
@@ -110,10 +109,17 @@ git lfs pull
 
 ```bash
 bash .ci/install-deps.sh
-FORCE_VIRGL=1 SNAPSHOT=1 ./run
+source build/envsetup.sh
+lunch aosp_arm64-BP4A.251205.006
+m
+SNAPSHOT=1 ./run aosp_arm64-BP4A.251205.006
 ```
 
-默认会启动仓库内置的 AOSP GSI 示例变体。替换 `src/aosp/<variant>/images/system.img` 即可尝试其他 GSI。
+GSI 变体树在对应的 `GSI/...` 分支（AOSP 示例为 `GSI/AOSP/aosp_arm64-BP4A.251205.006`）。检出后替换 `src/aosp/<variant>/images/system.img` 即可尝试其他 GSI。
+
+## AI 辅助开发
+
+Agent / 自动化请先读本 README，再进入 [`.ai/README.md`](.ai/README.md) 自取技能、提示词与开发流程（工程约束见 `.ai/AGENTS.md`）。根目录不再放置各工具专用的说明文件。
 
 ## 许可证
 

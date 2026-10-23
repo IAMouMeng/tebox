@@ -1,0 +1,4 @@
+HAL: android.hardware.media.c2
+Mesa pipe_video / c2.mesa.* for virtio-gpu. Not a CVD guest HAL (CVD uses
+goldfish/ranchu media). Kernel V4L2 / virtio-gpu drivers stay outside this
+folder.

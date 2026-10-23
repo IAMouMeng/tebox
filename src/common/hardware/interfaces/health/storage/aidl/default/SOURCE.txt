@@ -1,0 +1,4 @@
+HAL: android.hardware.health.storage
+Upstream: cuttlefish/guest/hals/health/storage (android-16.0.0_r4)
+IStorage v1. CVD Storage.cpp no-ops garbageCollect and reports SUCCESS.
+QEMU starts the service from init class hal (addService) instead of lazy.
