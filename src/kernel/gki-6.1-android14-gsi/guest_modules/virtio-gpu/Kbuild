@@ -1,0 +1,8 @@
+virtio-gpu-y := virtgpu_drv.o virtgpu_kms.o virtgpu_gem.o virtgpu_vram.o \
+	virtgpu_display.o virtgpu_vq.o \
+	virtgpu_fence.o virtgpu_object.o virtgpu_debugfs.o virtgpu_plane.o \
+	virtgpu_ioctl.o virtgpu_prime.o virtgpu_trace_points.o
+
+# virtio_dma_buf.ko is built only so modpost knows its export CRCs; the guest
+# keeps loading the stock vendor_modules/virtio_dma_buf.ko.
+obj-m += virtio-gpu.o virtio_dma_buf.o

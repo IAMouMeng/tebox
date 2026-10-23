@@ -1,0 +1,5 @@
+HAL: android.hardware.gnss
+Upstream: platform/hardware/interfaces gnss/aidl/default + gnss/common/utils
+         (android-16.0.0_r4, NDK port under google/).
+CVD has no C++ GNSS HAL in guest/hals.
+VINTF stays IGnss/default v2 (GSI FCM). Mock location from AOSP Utils.

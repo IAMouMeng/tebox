@@ -1,0 +1,12 @@
+gki_custom {
+    name: "android.hardware.wifi-service",
+    build: [
+        "google/build.sh",
+        "supplicant-stub/build-stub.sh",
+        "wificond-stub/build-stub.sh",
+    ],
+    install: [
+        "google/install.sh",
+        "supplicant-stub/install.sh",
+    ],
+}

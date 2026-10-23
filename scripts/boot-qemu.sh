@@ -134,9 +134,6 @@ if [[ "${QEMU_ADB:-1}" == 1 ]]; then
   NETDEV+=",hostfwd=tcp:$ADB_BIND:$ADB_PORT-:5555"
   echo "adb:     $ADB_BIND:$ADB_PORT (guest TCP 5555)"
 fi
-# Display refresh rate (graphics HAL vsync). It caps every app's frame rate,
-# benchmarks included; 120 lets the GPU run past 60 fps.
-APPEND+=(androidboot.tebox.refresh_hz="${REFRESH_HZ:-120}")
 # Extra host-specific kernel/androidboot tokens, e.g. the CIX Mali launcher.
 if [[ -n "${QEMU_EXTRA_APPEND:-}" ]]; then
   # shellcheck disable=SC2206
@@ -168,17 +165,47 @@ if [[ "$FORCE_VIRGL" == 1 ]]; then
 fi
 
 # GPU backend, like KERNEL: src/aosp/<variant>/GPU holds "gfxstream" (or
-# "gfx"; also the default without the file) or "virgl". FORCE_RUTABAGA=1/0
-# overrides it for one boot.
+# "gfx"; also the default without the file), "virgl", or "mali" (CIX Mali
+# kbase passthrough + guest libGLES_mali). FORCE_RUTABAGA=1/0 overrides
+# gfxstream/virgl for one boot; mali ignores FORCE_RUTABAGA.
+GPU_MALI=0
 if [[ -z "${FORCE_RUTABAGA:-}" ]]; then
   GPU_BACKEND="$(tr -d '[:space:]' < "$AOSP/GPU" 2>/dev/null || echo gfxstream)"
+  # R1P / TEBOX_MALI: guest drives the real Mali; never stay on gfxstream.
+  if [[ "${TEBOX_MALI:-0}" == 1 && "$HOST_OS" == linux ]]; then
+    case "${GPU_BACKEND:-gfxstream}" in
+      gfxstream|gfx|"") GPU_BACKEND=mali ;;
+    esac
+  fi
   case "${GPU_BACKEND:-gfxstream}" in
     gfxstream|gfx) FORCE_RUTABAGA=1 ;;
     virgl) FORCE_RUTABAGA=0 ;;
-    *) echo "$AOSP/GPU: unknown backend '$GPU_BACKEND' (use gfxstream or virgl)" >&2; exit 1 ;;
+    mali) FORCE_RUTABAGA=0; GPU_MALI=1 ;;
+    *) echo "$AOSP/GPU: unknown backend '$GPU_BACKEND' (use gfxstream, virgl or mali)" >&2; exit 1 ;;
   esac
+elif [[ "${TEBOX_MALI:-0}" == 1 && "$HOST_OS" == linux && "${FORCE_RUTABAGA}" == 0 ]]; then
+  # Explicit FORCE_RUTABAGA=0 on a Mali host still means guest Mali EGL.
+  GPU_MALI=1
 fi
-if [[ "$FORCE_RUTABAGA" == 1 ]]; then
+if [[ "$GPU_MALI" == 1 ]]; then
+  # Guest: stock CIX libGLES_mali + vulkan.mali. The guest composer CPU-copies
+  # the client target into a dumb buffer, so scanout needs only a 2D
+  # virtio-gpu and the host never starts virglrenderer; the display backend
+  # (egl-headless from cix-mali-env) still feeds cast. Encode is TEBOX_V4L2 /
+  # c2.cix, not gfxstream venc.
+  GPU_DEV=virtio-gpu-pci
+  APPEND+=(androidboot.tebox.gpu=mali androidboot.hardwareegl=mali
+    androidboot.hardware.vulkan=mali androidboot.opengles.version=196610
+    androidboot.hwui.renderer="${HWUI_RENDERER:-skiagl}")
+  # Every frame costs passthrough ioctls plus a scanout upload; 60 halves it.
+  REFRESH_HZ="${REFRESH_HZ:-60}"
+  echo "gpu:     mali (guest libGLES_mali via tebox-mali; display=$GPU_DEV)"
+  # Cast still runs on the egl-headless UI thread; without a dma-heap the hook
+  # falls back to sync glReadPixels (hundreds of MB/s). Same heap as gfxstream.
+  if [[ "$HOST_OS" == linux && -z "${TEBOX_CAST_DMABUF_HEAP+x}" && -w /dev/dma_heap/system ]]; then
+    export TEBOX_CAST_DMABUF_HEAP=/dev/dma_heap/system
+  fi
+elif [[ "$FORCE_RUTABAGA" == 1 ]]; then
   DEVICES="$("$QEMU_BIN" -device help)"
   [[ "$DEVICES" == *virtio-gpu-rutabaga-pci* ]] || {
     echo "QEMU has no virtio-gpu-rutabaga-pci; build the project QEMU or use FORCE_RUTABAGA=0 for diagnostics" >&2
@@ -190,17 +217,19 @@ if [[ "$FORCE_RUTABAGA" == 1 ]]; then
   # Vulkan through the GSI's ANGLE. Blob memory carries the
   # address-space-graphics transport.
   GPU_DEV="virtio-gpu-rutabaga,gfxstream-vulkan=on,x-gfxstream-composer=on,blob=on,hostmem=${RUTABAGA_HOSTMEM:-512M}"
-  # Guest side: GLES through the GSI's ANGLE on the gfxstream Vulkan driver
-  # (prebuilts/android-arm64/gfxstream); our graphics HAL allocates virtio-gpu
-  # resources with minigbm-layout handles (ro.hardware.gralloc stays minigbm).
+  # Guest: ANGLE on gfxstream Vulkan (prebuilts/.../gfxstream). Stub
+  # IAllocator creates virtio-gpu resources with cros_gralloc-layout ints
+  # (gpu_buffer.h); ro.hardware.gralloc=minigbm so vulkan.ranchu parses them.
   APPEND+=(androidboot.tebox.gpu=gfxstream androidboot.hardwareegl=angle
     androidboot.hardware.vulkan=ranchu androidboot.opengles.version=196610
-    androidboot.hardware.gltransport=virtio-gpu-asg)
+    androidboot.hardware.gltransport=virtio-gpu-asg
+    androidboot.hardware.gralloc=minigbm)
   # HWUI renders with Vulkan (skiavk; HWUI_RENDERER=skiagl overrides): HWUI on
   # ANGLE's GLES misrenders some layers (CIX Mali: launcher scrim drawn
   # transparent; macOS: ColorOS clock dial). HWUI's Vulkan backend needs two
   # queues, so on macOS (MoltenVK has one) gfxstream adds a virtual one.
   APPEND+=(androidboot.hwui.renderer="${HWUI_RENDERER:-skiavk}")
+  echo "gpu:     gfxstream (rutabaga + stub alloc / minigbm layout; from GPU file)"
   if [[ "$HOST_OS" == darwin ]]; then
     export GFXSTREAM_RENDERER_FEATURES="${GFXSTREAM_RENDERER_FEATURES:-VulkanVirtualQueue:enabled}"
   fi
@@ -226,7 +255,21 @@ if [[ "$FORCE_RUTABAGA" == 1 ]]; then
   if [[ "$HOST_OS" == darwin && -z "${ANDROID_EMU_VK_LOADER_PATH:-}" && -f /opt/homebrew/lib/libMoltenVK.dylib ]]; then
     export ANDROID_EMU_VK_LOADER_PATH=/opt/homebrew/lib/libMoltenVK.dylib
   fi
+else
+  # VirGL: selected when src/aosp/<variant>/GPU is "virgl" (or FORCE_RUTABAGA=0).
+  # video_encode selects media_codecs_tebox_video.xml so c2.mesa.* appears
+  # (host needs VIRGL_VIDEO=1). GPU_DEV is virtio-gpu-gl-pci when FORCE_VIRGL=1.
+  # stub allocator GBM handles match VirGL kms_display setTarget.
+  APPEND+=(androidboot.tebox.gpu=virgl androidboot.hardwareegl=mesa
+    androidboot.opengles.version=196610
+    androidboot.hwui.renderer="${HWUI_RENDERER:-skiagl}"
+    androidboot.hardware.gralloc=stub
+    androidboot.tebox.video_encode=1 androidboot.tebox.video_decode=1)
+  echo "gpu:     virgl (Mesa + stub gralloc + c2.mesa; from GPU file / FORCE_RUTABAGA=0)"
 fi
+# Display refresh rate (graphics HAL vsync). It caps every app's frame rate,
+# benchmarks included; 120 lets the GPU run past 60 fps.
+APPEND+=(androidboot.tebox.refresh_hz="${REFRESH_HZ:-120}")
 
 
 # Same SDL GL window for both backends. rutabaga scanouts reach it as a
@@ -253,7 +296,12 @@ if [[ "${TEBOX_CAST:-0}" == 1 ]]; then
   export TEBOX_CAST_SOCK="${TEBOX_CAST_SOCK:-$WORKDIR/cast.sock}"
   export TEBOX_CAST_FPS="${TEBOX_CAST_FPS:-60}"
   export TEBOX_CAST_MAX_W="${TEBOX_CAST_MAX_W:-720}" TEBOX_CAST_MAX_H="${TEBOX_CAST_MAX_H:-1600}"
-  echo "cast:    TEBOX_CAST=1 sock=$TEBOX_CAST_SOCK fps=$TEBOX_CAST_FPS max=${TEBOX_CAST_MAX_W}x$TEBOX_CAST_MAX_H"
+  # GPU blit → dma-buf → mvxenc (no CPU glReadPixels). Backends that already
+  # set this keep theirs; mali used to miss it and peg the host on readback.
+  if [[ "$HOST_OS" == linux && -z "${TEBOX_CAST_DMABUF_HEAP+x}" && -w /dev/dma_heap/system ]]; then
+    export TEBOX_CAST_DMABUF_HEAP=/dev/dma_heap/system
+  fi
+  echo "cast:    TEBOX_CAST=1 sock=$TEBOX_CAST_SOCK fps=$TEBOX_CAST_FPS max=${TEBOX_CAST_MAX_W}x$TEBOX_CAST_MAX_H${TEBOX_CAST_DMABUF_HEAP:+ dmabuf=$TEBOX_CAST_DMABUF_HEAP}"
   # Guest audio, microphone and camera reach tebox-cast through virtio-serial
   # ports; the audio and camera HALs find them by name under
   # /sys/class/virtio-ports. Sockets sit next to cast.sock.
@@ -282,6 +330,31 @@ if [[ "${TEBOX_CAST:-0}" == 1 ]]; then
     EXTRA+=(-chardev "socket,id=${sock/-/_},path=$MEDIA_DIR/$sock.sock,server=on,wait=off"
       -device "virtserialport,bus=media.0,chardev=${sock/-/_},name=${port#*:}")
   done
+fi
+
+# tebox (local, Linux/R1P): MVX V4L2 passthrough device so the guest's stock
+# CIX c2.cix Codec2 HAL drives the host VPU (/dev/video0 mvxdec, /dev/video1
+# mvxenc) directly. Fixed slot to avoid shifting the GPU/net slots.
+if [[ "${TEBOX_V4L2:-0}" == 1 && "$HOST_OS" == linux ]]; then
+  EXTRA+=(-device tebox-v4l2-pci,addr=0x11,disable-legacy=on,disable-modern=off)
+  echo "v4l2:    TEBOX_V4L2=1 (MVX passthrough -> guest /dev/video)"
+fi
+
+# tebox-mali: CIX Mali kbase /dev/mali0 passthrough so the guest's Mali userspace
+# drives the real GPU directly (no gfxstream/virgl). Needs a large host-visible
+# hostmem BAR; the guest tebox_mali.ko exposes /dev/mali0. Fixed slot 0x12.
+MACHINE="virt,gic-version=3"
+if [[ "${TEBOX_MALI:-0}" == 1 && "$HOST_OS" == linux ]]; then
+  EXTRA+=(-device tebox-mali-pci,addr=0x12,disable-legacy=on,disable-modern=off)
+  # Back guest RAM with a memfd so tebox-mali can import a scattered guest
+  # buffer (minigbm gives SurfaceFlinger's render targets as non-contiguous
+  # guest pages) into the real GPU: it remaps each guest page segment from the
+  # memfd into one contiguous host VA range and does a single kbase USER_BUFFER
+  # import. Anonymous RAM (the default) has no fd to remap from. share=on is
+  # required for the memfd pages to be mappable MAP_SHARED from the device.
+  EXTRA+=(-object "memory-backend-memfd,id=mem0,size=${MEM:-4096}M,share=on")
+  MACHINE="virt,gic-version=3,memory-backend=mem0"
+  echo "mali:    TEBOX_MALI=1 (Mali kbase passthrough -> guest /dev/mali0)"
 fi
 
 # macOS host video: QEMU itself serves tebox.vdec and tebox.venc
@@ -321,6 +394,52 @@ if [[ "$HOST_OS" == darwin && "$FORCE_RUTABAGA" == 1 &&
   fi
 fi
 
+# Audio HAL always looks up tebox.audio_out / tebox.audio_in by name. Cast
+# already added those ports; a local ./run still needs them or PCM is dropped.
+if [[ "${TEBOX_CAST:-0}" != 1 ]]; then
+  if [[ -z "${MEDIA_DIR:-}" ]]; then
+    MEDIA_DIR="$WORKDIR"
+    EXTRA+=(-device virtio-serial-pci,id=media,addr=0x10)
+  fi
+  add_audio_port() {  # <sock name> <port name>
+    local sock="$MEDIA_DIR/$1.sock"
+    if (( ${#sock} > 103 )); then
+      sock="/tmp/tebox-$1-$(printf '%s' "$MEDIA_DIR" | cksum | cut -d' ' -f1).sock"
+    fi
+    rm -f "$sock"
+    EXTRA+=(-chardev "socket,id=$1,path=$sock,server=on,wait=off"
+      -device "virtserialport,bus=media.0,chardev=$1,name=$2")
+    AUDIO_PORT_SOCK="$sock"
+  }
+  add_audio_port audio_out tebox.audio_out
+  AUDIO_OUT_SOCK="$AUDIO_PORT_SOCK"
+  add_audio_port audio_in tebox.audio_in
+  echo "audio:   virtio-serial tebox.audio_out ($AUDIO_OUT_SOCK)"
+  if [[ "${GRAPHIC:-1}" == 1 ]]; then
+    FFPLAY=""
+    for c in \
+        "$ROOT/prebuilts/host/${HOST_ID:-darwin-arm64}/ffmpeg/bin/ffplay" \
+        /opt/homebrew/bin/ffplay \
+        "$(command -v ffplay 2>/dev/null || true)"; do
+      [[ -n "$c" && -x "$c" ]] && { FFPLAY="$c"; break; }
+    done
+    if [[ -n "$FFPLAY" ]]; then
+      (
+        for _ in $(seq 1 80); do
+          [[ -S "$AUDIO_OUT_SOCK" ]] && break
+          sleep 0.1
+        done
+        while [[ -S "$AUDIO_OUT_SOCK" ]]; do
+          "$FFPLAY" -nodisp -loglevel quiet -fflags nobuffer -flags low_delay \
+            -f s16le -ar 48000 -ac 2 -i "unix:$AUDIO_OUT_SOCK" || true
+          sleep 1
+        done
+      ) >/dev/null 2>&1 &
+      echo "audio:   local ffplay $AUDIO_OUT_SOCK"
+    fi
+  fi
+fi
+
 echo "variant: $VARIANT"
 echo "kernel:  $KERNEL  ($KID)"
 echo "system:  $SYSTEM"
@@ -335,7 +454,7 @@ echo "==> Ctrl+C in this terminal stops QEMU"
 # Keep QEMU in the terminal foreground: background stdio can trigger
 # SIGTTIN/SIGTTOU and stop the VM before boot. Plain stdio preserves Ctrl+C.
 exec "$QEMU_BIN" \
-  -machine virt,gic-version=3 \
+  -machine "${MACHINE:-virt,gic-version=3}" \
   -cpu "$CPU" \
   -accel "$ACCEL" \
   -m "${MEM:-4096}" \

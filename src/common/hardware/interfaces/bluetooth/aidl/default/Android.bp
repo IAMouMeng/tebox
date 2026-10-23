@@ -1,0 +1,23 @@
+cc_binary {
+    name: "android.hardware.bluetooth-service",
+    relative_install_path: "hw",
+    vendor: true,
+    srcs: [
+        "BluetoothHci.cpp",
+        "h4_protocol.cc",
+        "hci_packetizer.cc",
+        "async_fd_watcher.cc",
+        "service.cpp",
+    ],
+    shim_srcs: ["cutils/properties.cpp"],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+        "android.hardware.bluetooth-V1-ndk",
+    ],
+    init_rc: ["android.hardware.bluetooth-service.rc"],
+    vintf_fragments: ["android.hardware.bluetooth-service.xml"],
+    permissions: ["android.hardware.bluetooth.xml"],
+    cflags: ["-DLOG_TAG=\"bluetooth-cf\""],
+    gki_file_contexts: ["android.hardware.bluetooth-service"],
+}

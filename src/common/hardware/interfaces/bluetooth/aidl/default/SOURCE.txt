@@ -1,0 +1,10 @@
+HAL: android.hardware.bluetooth
+Upstream: CVD guest/hals/bluetooth (hci.rs / main.rs) at android-16.0.0_r4.
+C++ NDK port of that IBluetoothHci: H4 UART on /dev/hvc5 (vendor.ser.bt-uart),
+raw tty, drain leftover bytes, HAL-issued HCI Reset before
+initializationComplete. Frozen IBluetoothHci v1.
+
+This QEMU has no virtio-console HCI / rootcanal. Do not add a host serial
+device: when /dev/hvc5 is missing, initialize() uses an in-process software
+controller so the stack still comes up. That controller has no SCO/eSCO/ISO
+and rejects Create Connection so AudioPolicy keeps PCM on the speaker.

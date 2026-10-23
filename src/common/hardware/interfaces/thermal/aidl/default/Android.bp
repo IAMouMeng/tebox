@@ -1,0 +1,17 @@
+cc_binary {
+    name: "android.hardware.thermal-service",
+    relative_install_path: "hw",
+    vendor: true,
+    srcs: [
+        "Thermal.cpp",
+        "main.cpp",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+        "android.hardware.thermal-V3-ndk",
+    ],
+    init_rc: ["android.hardware.thermal-service.rc"],
+    vintf_fragments: ["android.hardware.thermal-service.xml"],
+    cflags: ["-DLOG_TAG=\"thermal_service_example\""],
+}

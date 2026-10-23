@@ -6,6 +6,9 @@ on early-init
     # these unset so this is their only writer.
     setprop ro.hardware.egl ${ro.boot.hardwareegl:-mesa}
     setprop ro.opengles.version ${ro.boot.opengles.version:-196609}
+    # Default minigbm: vulkan.ranchu parses cros_gralloc-layout handles from
+    # the stub allocator's gfxstream path (see gpu_buffer.h). VirGL boots set
+    # androidboot.hardware.gralloc=stub. Never pin this in vendor build.prop.
     setprop ro.hardware.gralloc ${ro.boot.hardware.gralloc:-minigbm}
     setprop ro.hardware.hwcomposer ${ro.boot.hardware.hwcomposer:-drm_minigbm}
     setprop ro.hardware.vulkan ${ro.boot.hardware.vulkan}
@@ -18,8 +21,11 @@ on early-init
     setprop ro.vendor.build.version.sdk 36
     setprop ro.vendor.build.security_patch 2025-12-05
     setprop dalvik.vm.dex2oat64 true
-    # The GSI already exposes its software C2 AIDL store. Its HIDL input
-    # surface fallback requires an OMX HAL which this vendor does not have.
+    # The GSI already exposes its software C2 AIDL store. Prefer AIDL so
+    # MediaCodec / scrcpy can see IComponentStore/{default,software}. HIDL
+    # selection waits forever for a missing HIDL store (list-encoder hangs).
+    # debug.stagefright.c2inputsurface=-1 covers GraphicBufferSource without OMX.
+    # setprop media.c2.hal.selection hidl
     setprop media.c2.hal.selection aidl
     # -1 creates the framework's in-process GraphicBufferSource when the
     # component store does not implement its own input surface.
@@ -69,10 +75,10 @@ service qemu-debug-shell /system/bin/sh
     seclabel u:r:shell:s0
 
 on early-boot
-    start vendor.health-default
+    start vendor.health-cuttlefish
 
 on boot
-    start vendor.health-default
+    start vendor.health-cuttlefish
 
 # TCP ADB when the host launcher passes androidboot.qemu_adb=1 (default).
 # Initramfs clears ro.adb.secure so adbd skips RSA; use the GSI adbd binary.

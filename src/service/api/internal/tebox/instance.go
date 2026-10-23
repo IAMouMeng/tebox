@@ -178,24 +178,39 @@ func (m *Manager) List() ([]Instance, error) {
 		if err != nil {
 			continue
 		}
-		item.State = StateStopped
-		if cmd := m.procs[item.ID]; cmd != nil && cmd.Process != nil {
-			item.PID = cmd.Process.Pid
-			item.Running = true
-			switch {
-			case m.stopping[item.ID]:
-				item.State = StateStopping
-			case m.booted[item.ID]:
-				item.State = StateRunning
-			default:
-				item.State = StateStarting
-			}
-		}
-		item.CastPort = m.castPorts[item.ID]
-		item.ControlPort = m.input.port(item.ID)
-		out = append(out, m.withImages(item))
+		out = append(out, m.liveLocked(item))
 	}
 	return out, nil
+}
+
+func (m *Manager) Get(id string) (Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reapLocked()
+	item, err := m.readMetadata(filepath.Join(m.instancesDir(), id))
+	if err != nil {
+		return Instance{}, err
+	}
+	return m.liveLocked(item), nil
+}
+
+func (m *Manager) liveLocked(item Instance) Instance {
+	item.State = StateStopped
+	if cmd := m.procs[item.ID]; cmd != nil && cmd.Process != nil {
+		item.PID = cmd.Process.Pid
+		item.Running = true
+		switch {
+		case m.stopping[item.ID]:
+			item.State = StateStopping
+		case m.booted[item.ID]:
+			item.State = StateRunning
+		default:
+			item.State = StateStarting
+		}
+	}
+	item.CastPort = m.castPorts[item.ID]
+	item.ControlPort = m.input.port(item.ID)
+	return m.withImages(item)
 }
 
 func (m *Manager) Create(opts CreateOptions) (Instance, error) {

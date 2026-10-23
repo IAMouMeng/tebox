@@ -3,8 +3,9 @@
 set -euo pipefail
 umask 022
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VARIANT="${1:-aosp_arm64-BP4A.251205.006}"
+VARIANT="${1:-${VARIANT:-${TARGET_PRODUCT:-aosp_arm64-BP4A.251205.006}}}"
 AOSP="$ROOT/src/aosp/$VARIANT"
+[[ -d "$AOSP" ]] || { echo "missing variant tree: $AOSP (VARIANT=$VARIANT)" >&2; exit 1; }
 [[ -d "$AOSP" ]] || { echo "missing $AOSP" >&2; exit 1; }
 KID="$(tr -d '[:space:]' < "$AOSP/KERNEL")"
 K="$ROOT/src/kernel/$KID"
@@ -31,27 +32,36 @@ cp -f "$K/vendor_modules/"*.ko "$STAGE/modules/"
 cp -a "$STUB" "$STAGE/vendor"
 chmod 0755 "$STAGE/vendor/bin/enable-camera-launcher.sh" 2>/dev/null || true
 INIT_DIR="$AOSP/qemu/init"
+OVERLAY_DIR="$AOSP/qemu/overlay"
+mkdir -p "$STAGE/overlays"
 if [[ -d "$INIT_DIR" ]]; then
   # Guest path cannot be /init — that is the busybox PID 1 script.
-  mkdir -p "$STAGE/overlays"
-  cp -f "$INIT_DIR/init.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/init.ranchu.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/android.hardware.security.keymint-service.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/keystore2.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/surfaceflinger.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/virtual_camera.hal.rc" "$STAGE/overlays/" 2>/dev/null || true
-  cp -f "$INIT_DIR/vndkcorevariant.libraries.txt" "$STAGE/overlays/" 2>/dev/null || true
-  # Soft wificond (fixed fake SSIDs) — replaces system binary, no kernel wifi.
-  if [[ -x "$INIT_DIR/wificond" ]]; then
-    cp -f "$INIT_DIR/wificond" "$STAGE/overlays/wificond"
+  # init/ is only .rc (system init overlays).
+  shopt -s nullglob
+  for f in "$INIT_DIR"/*.rc; do
+    cp -f "$f" "$STAGE/overlays/"
+  done
+  shopt -u nullglob
+  if [[ -d "$INIT_DIR/system-overlay" ]]; then
+    mkdir -p "$STAGE/system-overlay"
+    cp -a "$INIT_DIR/system-overlay"/. "$STAGE/system-overlay"/
+  fi
+fi
+# Non-rc system overlays (binaries, txt) live in qemu/overlay/<system path>.
+if [[ -d "$OVERLAY_DIR" ]]; then
+  mkdir -p "$STAGE/system-overlay"
+  cp -a "$OVERLAY_DIR"/. "$STAGE/system-overlay"/
+  if [[ -x "$OVERLAY_DIR/system/bin/wificond" ]]; then
+    cp -f "$OVERLAY_DIR/system/bin/wificond" "$STAGE/overlays/wificond"
     chmod 0755 "$STAGE/overlays/wificond"
   fi
-  # system-overlay/<path> replaces /<path> of the GSI by a bind mount, so
-  # system.img stays untouched. The guest busybox has no find: ship a list.
-  if [[ -d "$INIT_DIR/system-overlay" ]]; then
-    cp -a "$INIT_DIR/system-overlay" "$STAGE/system-overlay"
-    (cd "$INIT_DIR/system-overlay" && find . -type f | sed 's|^\./||' | sort) > "$STAGE/system-overlay.list"
+  if [[ -f "$OVERLAY_DIR/system/etc/vndkcorevariant.libraries.txt" ]]; then
+    cp -f "$OVERLAY_DIR/system/etc/vndkcorevariant.libraries.txt" \
+      "$STAGE/overlays/vndkcorevariant.libraries.txt"
   fi
+fi
+if [[ -d "$STAGE/system-overlay" ]]; then
+  (cd "$STAGE/system-overlay" && find . -type f | sed 's|^\./||' | sort) > "$STAGE/system-overlay.list"
 fi
 
 cat > "$STAGE/init" <<'INIT'
@@ -98,7 +108,27 @@ load virtio_input.ko
 load virtio_balloon.ko
 load virtio-rng.ko
 load system_heap.ko
+# tebox MVX V4L2 passthrough (guest half); only present when built. Needs
+# virtio_pci (above) + the builtin V4L2 core. Harmless if the QEMU device is
+# absent (no tebox-v4l2 virtio device -> driver just never probes).
+load tebox_v4l2.ko
+# tebox Mali kbase passthrough (guest half): mali_kbase is a tiny stub that only
+# exposes /sys/module/mali_kbase/parameters/large_page_conf (the stock libmali
+# probes it); tebox_mali exposes /dev/mali0 + /sys/class/misc/mali0. Load the
+# stub first so the sysfs is present before libmali enumerates. Harmless if the
+# tebox-mali virtio device is absent (driver just never probes).
+load mali_kbase.ko
+load tebox_mali.ko
+# Old tebox_mali.ko (count-only fire_batch, no fire_flush_us timer) deferred
+# doorbells until 32 piled up and hung CSF fences. Until that .ko is rebuilt
+# with the hrtimer flush, force fire_batch=1 (notify every doorbell).
+if [ ! -e /sys/module/tebox_mali/parameters/fire_flush_us ]; then
+  echo 1 > /sys/module/tebox_mali/parameters/fire_batch 2>/dev/null || true
+fi
 mdev -s 2>/dev/null || true
+# Force /dev/mali0 world-rw before switch_root (same devtmpfs instance persists
+# into Android).
+chmod 666 /dev/mali0 2>/dev/null || true
 for name in vda vdb vdc; do
   if [ ! -e /dev/$name ]; then
     maj=$(awk -v n="$name" '$4==n {print $1}' /proc/partitions)
@@ -132,10 +162,14 @@ else
 fi
 
 # Neutralize KeyMint stubs previously injected into shared_blocks system.img.
-if [ -f /overlays/init.rc ]; then
+# skip-rootfs-binds: those files are already in the images (no extra mounts).
+if [ -f /skip-rootfs-binds ]; then
+  echo "[init] overlays baked into images"
+elif [ -f /overlays/init.rc ]; then
   mount -o bind /overlays/init.rc /newroot/system/etc/init/hw/init.rc && \
     echo "[init] bound clean init.rc"
 fi
+if [ ! -f /skip-rootfs-binds ]; then
 if [ -f /overlays/init.ranchu.rc ]; then
   touch /newroot/init.ranchu.rc 2>/dev/null || true
   target=/newroot/init.ranchu.rc
@@ -193,10 +227,14 @@ if [ -f /system-overlay.list ]; then
     fi
   done < /system-overlay.list
 fi
+fi
 
 # GSI ships ro.adb.secure=1 (RSA dialog). For loopback TCP ADB, force insecure
 # adbd before second-stage init loads /system/build.prop.
-if grep -q 'androidboot.qemu_adb=1' /proc/cmdline 2>/dev/null && \
+# Baked images already contain ro.adb.secure=0; binding it would show up as a
+# second mount on /system/build.prop.
+if [ ! -f /skip-rootfs-binds ] && \
+   grep -q 'androidboot.qemu_adb=1' /proc/cmdline 2>/dev/null && \
    [ -f /newroot/system/build.prop ]; then
   awk '
     BEGIN { done=0 }
@@ -209,7 +247,14 @@ if grep -q 'androidboot.qemu_adb=1' /proc/cmdline 2>/dev/null && \
 fi
 
 mkdir -p /newroot/proc /newroot/sys /newroot/dev
-mount -o bind /proc /newroot/proc
+# hidepid=2,gid=3009 matches Android: apps cannot read other UIDs' /proc.
+# readproc (3009) is on zygote, system_server and adbd.
+if [ -f /skip-rootfs-binds ]; then
+  mount -t proc -o nosuid,nodev,noexec,hidepid=2,gid=3009 proc /newroot/proc || \
+    mount -o bind /proc /newroot/proc
+else
+  mount -o bind /proc /newroot/proc
+fi
 mount -o bind /sys /newroot/sys
 mount -o bind /dev /newroot/dev
 mount -o bind /dev/pts /newroot/dev/pts 2>/dev/null || true
@@ -222,6 +267,9 @@ echo "[init] exec selinux_setup"
 exec switch_root /newroot /system/bin/init selinux_setup
 INIT
 chmod +x "$STAGE/init"
+if [[ -f "$INIT_DIR/bake-overlays" ]]; then
+  : > "$STAGE/skip-rootfs-binds"
+fi
 
 mkdir -p "$(dirname "$OUT_IMG")"
 ( cd "$STAGE" && find . | cpio -o -H newc 2>/dev/null | gzip -9 ) > "$OUT_IMG"

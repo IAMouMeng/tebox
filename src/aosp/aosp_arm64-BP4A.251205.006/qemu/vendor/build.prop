@@ -8,14 +8,20 @@ ro.zygote=zygote64
 ro.product.cpu.abilist=arm64-v8a
 ro.product.cpu.abilist64=arm64-v8a
 ro.product.cpu.abilist32=
+# egl / gralloc / hwui come from init.ranchu.rc ← androidboot.* (GPU file via
+# boot-qemu.sh). Do not pin ro.hardware.gralloc here — ro.* is immutable and
+# would block gfxstream's minigbm switch (stub → black screen on rutabaga).
+ro.opengles.version=196609
+ro.hardware.hwcomposer=drm_minigbm
 persist.sys.glamor=1
-debug.renderengine.backend=skiaglthreaded
 debug.renderengine.graphite=0
 debug.renderengine.vulkan=0
 ro.surface_flinger.supports_background_blur=false
 
 ro.sf.lcd_density=420
-debug.hwui.renderer=skiagl
+# Default MUSIC is 5/15 on this GSI; that is ~-76 dB to scrcpy AudioPlaybackCapture.
+ro.config.media_vol_steps=15
+ro.config.media_vol_default=10
 
 # Dual-SIM soft radio (slot1 T-Mobile US 5G, slot2 Vodafone DE 4G).
 persist.radio.multisim.config=dsds

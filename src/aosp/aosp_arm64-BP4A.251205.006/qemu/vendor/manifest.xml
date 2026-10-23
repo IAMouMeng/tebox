@@ -28,6 +28,7 @@
         <version>5.0</version>
         <interface>
             <name>IMapper</name>
+            <!-- graphics-service stub allocator returns suffix "stub" (VirGL). -->
             <instance>stub</instance>
         </interface>
     </hal>
@@ -82,7 +83,18 @@
         <version>1</version>
         <fqname>IPower/default</fqname>
     </hal>
+
+
+
+
+
+
 <hal format="aidl">
+        <name>android.hardware.gnss</name>
+        <version>2</version>
+        <fqname>IGnss/default</fqname>
+    </hal>
+    <hal format="aidl">
         <name>android.hardware.radio.config</name>
         <version>3</version>
         <fqname>IRadioConfig/default</fqname>
@@ -124,9 +136,29 @@
         <fqname>IRadioVoice/slot2</fqname>
     </hal>
     <hal format="aidl">
-        <name>android.hardware.gnss</name>
+        <name>android.hardware.health.storage</name>
+        <version>1</version>
+        <fqname>IStorage/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.light</name>
         <version>2</version>
-        <fqname>IGnss/default</fqname>
+        <fqname>ILights/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.thermal</name>
+        <version>3</version>
+        <fqname>IThermal/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.dumpstate</name>
+        <version>1</version>
+        <fqname>IDumpstateDevice/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.memtrack</name>
+        <version>1</version>
+        <fqname>IMemtrack/default</fqname>
     </hal>
 </manifest>
 

@@ -1,4 +1,4 @@
-<!-- Soft Health HAL stub: IHealth AIDL v3 -->
+<!-- CVD xml advertises IHealth v4; this GSI FCM is frozen at v3. -->
 <manifest version="1.0" type="device">
     <hal format="aidl">
         <name>android.hardware.health</name>

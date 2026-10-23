@@ -1,0 +1,13 @@
+HAL: android.hardware.health
+Upstream: device/google/cuttlefish/guest/hals/health/health-aidl.cpp
+Tag: android-16.0.0_r4 (thirdparty/reference/cuttlefish)
+
+CVD implements IHealth by subclassing hardware/interfaces/health/aidl/default
+Health and faking a charging battery (UpdateHealthInfo). This NDK port keeps
+that fake-battery policy and registers BnHealth v3 (GSI FCM on this tree;
+CVD's xml advertises v4 / getHingeInfo).
+
+libhealthd / HalHealthLoop are not linked; binder registration matches the
+rest of this project's NDK HALs.
+
+IStorage lives in health/storage/cvd/ (CVD Storage.cpp).

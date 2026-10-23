@@ -1,0 +1,4 @@
+HAL: android.hardware.memtrack
+Upstream: hardware/interfaces/memtrack/aidl/default (android-16.0.0_r4)
+IMemtrack v1. getMemory is EX_UNSUPPORTED_OPERATION; getGpuDeviceInfo
+reports virtio_gpu (AOSP default already uses that name).

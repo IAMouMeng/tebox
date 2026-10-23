@@ -11,4 +11,16 @@ export LD_LIBRARY_PATH="$CIX_GPU_PREFIX/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+
 export __EGL_VENDOR_LIBRARY_DIRS="$CIX_GPU_COMPAT/share/glvnd/egl_vendor.d"
 export FORCE_VIRGL=1 QEMU_DISPLAY=egl-headless,gl=es
 export TEBOX_EGL_ALLOW_NO_DMABUF_EXPORT=1
-# Android guest property: set vendor.tebox.rgb_row_alignment=64 for Mali.
+# Remaps GPU=gfxstream → mali in boot-qemu on this host. Override with
+# TEBOX_MALI=0 to keep gfxstream/virgl from the GPU file.
+export TEBOX_MALI="${TEBOX_MALI:-1}"
+export TEBOX_V4L2="${TEBOX_V4L2:-1}"
+export TEBOX_MALI_KICK_MS="${TEBOX_MALI_KICK_MS:-32}"
+# Stable: free-mmap SAME_VA at ~0x5f. WIN_IMPORT off (cookie SEGV). Device 64KiB.
+export TEBOX_MALI_ARENA="${TEBOX_MALI_ARENA:-0}"
+export TEBOX_MALI_ARENA_BASE="${TEBOX_MALI_ARENA_BASE:-0x5f00000000}"
+export TEBOX_MALI_WIN_BG_MB="${TEBOX_MALI_WIN_BG_MB:-1024}"
+export TEBOX_MALI_HOSTMEM_BG="${TEBOX_MALI_HOSTMEM_BG:-1}"
+export TEBOX_MALI_WIN_IMPORT="${TEBOX_MALI_WIN_IMPORT:-0}"
+export TEBOX_MALI_DEVICE_MAX="${TEBOX_MALI_DEVICE_MAX:-65536}"
+export TEBOX_MALI_WIN_MIN_PAGES="${TEBOX_MALI_WIN_MIN_PAGES:-1024}"

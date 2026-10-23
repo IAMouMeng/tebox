@@ -3,21 +3,42 @@ name: gki-hal
 description: Design, implement, install and pack soft Android vendor HALs for this QEMU GSI bring-up.
 ---
 
-Locate the GKI workspace and read `AGENTS.md`. HAL code lives under
-`src/aosp/<variant>/hardware/<name>/` and is installed into
-`qemu/vendor` then packed by `scripts/build-vendor-img.sh`.
+Locate the GKI workspace; read root `README.md`, then `.ai/RAG.md` (HAL
+section) and `.ai/AGENTS.md`. Guest
+compile is `source build/envsetup.sh && lunch && m` (product makefile +
+soong-lite). Shared HALs live in
+`src/common/hardware/interfaces/<hal>/aidl/default/`. A variant selects them
+with `$(call inherit-product, src/common/hardware/interfaces/common.mk)` in
+`src/aosp/<variant>/device.mk`. Variant trees live on `GSI/...` branches;
+`main` has no `src/aosp/`. Before edits, create `dirty/<topic>` from that base
+and commit locally after each significant change (`.ai/AGENTS.md` Local git).
+`scripts/build-vendor-img.sh` packs `qemu/vendor`.
 
-## Layout of an existing HAL
+## Common vs own
 
-Typical soft HAL (see `health`, `graphics`, `audio`, `power`, `keymint/soft`):
-
-| Piece | Path |
+| Situation | Where to write |
 | --- | --- |
-| Service sources | `hardware/<name>/stub/` or `hardware/<name>/soft/` (`service*.cpp`, `build-stub.sh`) |
-| init rc | `hardware/<name>/init/*.rc` — `class early_hal`/`hal`, `seclabel`, `interface aidl …` |
-| VINTF fragment | `hardware/<name>/vintf/*.xml` — name, version, `fqname` |
-| Optional props | `hardware/<name>/props/*.prop` |
-| Install helper | `hardware/<name>/stub/install.sh` (copies bin/rc/xml into `vendor`) |
+| Every GSI needs it, or the shared default is buggy | `src/common/hardware/interfaces/<hal>/aidl/default/` + `PRODUCT_PACKAGES` in `common.mk` |
+| This GSI needs an interface common does not ship | `src/aosp/<variant>/hardware/<hal>/aidl/default/` + `PRODUCT_PACKAGES +=` in **that** `device.mk` |
+| Common ships it but this GSI cannot use that binary (AIDL version, extra OEM methods) | Same **relative** `Android.bp` path under the variant `hardware/` (soong-lite overrides common). Keep the module name. |
+
+Do not copy the whole common tree into a variant. Do not put OEM-only packages
+in `common.mk`. Prefer `cc_binary`; QEMU-only script HALs use `gki_custom`
+(graphics, keymint, audio, camera, radio, wifi, codec2).
+
+Template: `src/common/hardware/interfaces/light/aidl/default/`.
+
+## Layout
+
+| Piece | Common | Own (this variant) |
+| --- | --- | --- |
+| Sources + `Android.bp` | `src/common/hardware/interfaces/<name>/aidl/default/` | `src/aosp/<variant>/hardware/<name>/aidl/default/` |
+| Product list | `interfaces/common.mk` | `src/aosp/<variant>/device.mk` after inherit |
+| init rc / VINTF xml | next to sources | next to sources |
+| NDK shims | `src/common/hardware/shim` | reuse the same shims |
+
+Override example: common `interfaces/light/aidl/default/Android.bp` is replaced
+by `src/aosp/<variant>/hardware/light/aidl/default/Android.bp`.
 
 Combined device manifest: `qemu/vendor/manifest.xml`.  
 SELinux file contexts: `vendor/etc/selinux/vendor_file_contexts` (bring-up
@@ -25,45 +46,59 @@ often reuses `hal_keymint_system_exec` under permissive).
 
 ## New HAL checklist
 
-1. **Confirm the required interface** from boot logs (`servicemanager` / audioserver
-   / system_server) and FCM (`out/gsi-vintf` or GSI matrices). Pick a frozen AIDL
-   version allowed by the matrix (often the lowest that still has the needed
-   methods).
+1. **Confirm the interface** from boot logs (`servicemanager` / audioserver /
+   system_server) and FCM (`out/gsi-vintf` or GSI matrices). Pick a frozen AIDL
+   version the matrix allows.
 
-2. **Generate NDK AIDL** from frozen `aidl_api` trees under
-   `thirdparty/hardware-interfaces` or `out/hw-ifaces-tmp`, with matching
-   `--version` / `--hash`, same pattern as `hardware/health/stub/build-stub.sh`.
+2. **Decide common vs own** using the table above. Checkout the GSI branch
+   before editing `device.mk` or variant `hardware/`.
 
-3. **Implement a minimal Bn*** service that registers with
-   `AServiceManager_addService` / `AServiceManager_registerLazyService` as
-   appropriate. Return safe defaults or `EX_UNSUPPORTED_OPERATION` for paths not
-   needed to pass boot; expand only when a client requires it.
+3. **Generate NDK AIDL** from frozen `aidl_api` trees under
+   `thirdparty/hardware-interfaces`. `android.hardware.*-V<n>-ndk` in
+   `shared_libs` is enough for `cc_binary` (soong-lite emits the stubs).
 
-4. **Wire init + VINTF + manifest + file_contexts**. Instance names must match
-   what the framework looks up (usually `/default`).
+4. **Implement a minimal Bn*** service (`AServiceManager_addService` or
+   `AServiceManager_registerLazyService`). Return safe defaults or
+   `EX_UNSUPPORTED_OPERATION` unless a client needs the path.
 
-5. **Build & install**
-   - Cross-compile with NDK via the HAL’s `build-stub.sh` / `build.sh`.
-   - Install into `vendor` (bin under `bin/hw`, libs under `lib64`/`lib64/hw`).
-   - Or run `scripts/build-hals.sh` for the standard set.
-   - Repack: `scripts/build-vendor-img.sh` then `scripts/build-initramfs.sh`.
-   - Ensure `scripts/build-vendor-img.sh` labels the new binary’s SELinux xattr
-     when other HALs do.
+5. **Wire init + VINTF**. Instance names must match the framework (usually
+   `/default`).
 
-6. **Boot verify** looking for `registered …` / `Found … in device VINTF
-   manifest` and that the previous crash loop stopped. Use
-   `scripts/qemu-console.py` when a debug console is enabled.
+6. **Build**
+   ```bash
+   source build/envsetup.sh
+   lunch <variant>
+   m                         # or: m <module>
+   ```
+   Installs into `src/aosp/<variant>/qemu/vendor`. Stop QEMU, then
+   `scripts/build-vendor-img.sh` (and initramfs as needed). Ensure the new
+   binary gets the same SELinux xattr as other HALs.
+
+7. **Boot verify** for `registered` / `Found … in device VINTF manifest` and
+   that the crash loop stopped. Use `scripts/qemu-console.py` when enabled.
 
 ## Conventions
 
-- Prefer soft/reference implementations that unblock boot over full hardware
-  fidelity.
-- KeyMint must provide real crypto ops for progressing past early boot; use
-  `hardware/keymint/soft`, not an empty stub.
-- Link against GSI-extracted `libbinder_ndk` / NDK stubs from `scripts/env.sh`
-  (`GSI_LIBS`, `NDK`, `AIDL`). Do not introduce `libc++_shared` into mapper SPHAL
-  paths unless the search path is fixed like the graphics stub.
-- Stop QEMU before replacing `vendor.img`. Keep userdata under `out/test-<variant>/`.
+- Soft/reference implementations that unblock boot over full hardware fidelity.
+- **Delete unused functions and files** in the same change. `srcs` / `build.sh`
+  must list every leftover file; every leftover function needs a call site.
+  Drop orphan `build-stub.sh`, duplicate `google/` vs `stub/` trees, `#if 0`,
+  and copied AOSP files this binary does not compile. Required `Bn*` overrides
+  stay. See `.ai/AGENTS.md` Code conventions.
+- **Names:** classes `PascalCase`, functions `camelCase`, `#define` constants
+  `SCREAMING_SNAKE`. Do not mint `tools_` / `utils_` helpers.
+- **One caller → inline.** Do not split a helper that only one function uses.
+  No `util.cpp` / `tools.cpp` for a single user.
+- **Constants** are `#define` at the top of the `.c/.cpp`, or a dedicated
+  `.h` if several files share them. No magic numbers in function bodies.
+- KeyMint must do real crypto: common
+  `src/common/hardware/interfaces/security/keymint/aidl/default/soft`, not an
+  empty stub.
+- Link GSI-extracted `libbinder_ndk` / NDK stubs from lunch (`GSI_LIBS`,
+  `NDK`, `AIDL`). Do not put `libc++_shared` on mapper SPHAL paths unless the
+  search path is fixed like the graphics stub.
+- Stop QEMU before replacing `vendor.img`. Keep userdata under
+  `out/test-<variant>/`.
 
 Do not init/push a Git repo unless asked. Report what was registered and what is
 still missing.

@@ -1,0 +1,7 @@
+# From hardware/interfaces/thermal/aidl/default/thermal-example.rc
+service vendor.thermal-example /vendor/bin/hw/android.hardware.thermal-service
+    class hal
+    user system
+    group system
+    seclabel u:r:hal_keymint_system:s0
+    interface aidl android.hardware.thermal.IThermal/default

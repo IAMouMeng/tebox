@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	AndroidService_ListInstances_FullMethodName     = "/tebox.v1.AndroidService/ListInstances"
+	AndroidService_GetInstance_FullMethodName       = "/tebox.v1.AndroidService/GetInstance"
 	AndroidService_CreateInstance_FullMethodName    = "/tebox.v1.AndroidService/CreateInstance"
 	AndroidService_DeleteInstance_FullMethodName    = "/tebox.v1.AndroidService/DeleteInstance"
 	AndroidService_StartInstance_FullMethodName     = "/tebox.v1.AndroidService/StartInstance"
@@ -28,9 +29,7 @@ const (
 	AndroidService_ConfigureInstance_FullMethodName = "/tebox.v1.AndroidService/ConfigureInstance"
 	AndroidService_SendKey_FullMethodName           = "/tebox.v1.AndroidService/SendKey"
 	AndroidService_PowerDown_FullMethodName         = "/tebox.v1.AndroidService/PowerDown"
-	AndroidService_SendInput_FullMethodName         = "/tebox.v1.AndroidService/SendInput"
-	AndroidService_StreamInput_FullMethodName       = "/tebox.v1.AndroidService/StreamInput"
-	AndroidService_WatchClipboard_FullMethodName    = "/tebox.v1.AndroidService/WatchClipboard"
+	AndroidService_GetPreview_FullMethodName        = "/tebox.v1.AndroidService/GetPreview"
 )
 
 // AndroidServiceClient is the client API for AndroidService service.
@@ -38,6 +37,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AndroidServiceClient interface {
 	ListInstances(ctx context.Context, in *ListInstancesRequest, opts ...grpc.CallOption) (*ListInstancesResponse, error)
+	GetInstance(ctx context.Context, in *InstanceRequest, opts ...grpc.CallOption) (*Instance, error)
 	CreateInstance(ctx context.Context, in *CreateInstanceRequest, opts ...grpc.CallOption) (*Instance, error)
 	DeleteInstance(ctx context.Context, in *InstanceRequest, opts ...grpc.CallOption) (*Empty, error)
 	StartInstance(ctx context.Context, in *InstanceRequest, opts ...grpc.CallOption) (*Empty, error)
@@ -46,13 +46,9 @@ type AndroidServiceClient interface {
 	ConfigureInstance(ctx context.Context, in *ConfigureInstanceRequest, opts ...grpc.CallOption) (*Empty, error)
 	SendKey(ctx context.Context, in *KeyRequest, opts ...grpc.CallOption) (*Empty, error)
 	PowerDown(ctx context.Context, in *InstanceRequest, opts ...grpc.CallOption) (*Empty, error)
-	// Guest input (touch / keys). StreamInput keeps one stream open for
-	// continuous gestures; Instance.control_port offers the same over plain TCP.
-	SendInput(ctx context.Context, in *InputRequest, opts ...grpc.CallOption) (*Empty, error)
-	StreamInput(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[InputRequest, Empty], error)
-	// Guest clipboard changes, streamed until the client cancels or the
-	// instance stops. Set the guest clipboard with InputRequest.clipboard.
-	WatchClipboard(ctx context.Context, in *InstanceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ClipboardEvent], error)
+	// Still frame of the guest display. Navigation keys, Android keycodes,
+	// text and clipboard stay on the TCP/UDP control port, not gRPC.
+	GetPreview(ctx context.Context, in *GetPreviewRequest, opts ...grpc.CallOption) (*GetPreviewResponse, error)
 }
 
 type androidServiceClient struct {
@@ -67,6 +63,16 @@ func (c *androidServiceClient) ListInstances(ctx context.Context, in *ListInstan
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListInstancesResponse)
 	err := c.cc.Invoke(ctx, AndroidService_ListInstances_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *androidServiceClient) GetInstance(ctx context.Context, in *InstanceRequest, opts ...grpc.CallOption) (*Instance, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Instance)
+	err := c.cc.Invoke(ctx, AndroidService_GetInstance_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -153,53 +159,22 @@ func (c *androidServiceClient) PowerDown(ctx context.Context, in *InstanceReques
 	return out, nil
 }
 
-func (c *androidServiceClient) SendInput(ctx context.Context, in *InputRequest, opts ...grpc.CallOption) (*Empty, error) {
+func (c *androidServiceClient) GetPreview(ctx context.Context, in *GetPreviewRequest, opts ...grpc.CallOption) (*GetPreviewResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Empty)
-	err := c.cc.Invoke(ctx, AndroidService_SendInput_FullMethodName, in, out, cOpts...)
+	out := new(GetPreviewResponse)
+	err := c.cc.Invoke(ctx, AndroidService_GetPreview_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *androidServiceClient) StreamInput(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[InputRequest, Empty], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &AndroidService_ServiceDesc.Streams[0], AndroidService_StreamInput_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[InputRequest, Empty]{ClientStream: stream}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type AndroidService_StreamInputClient = grpc.ClientStreamingClient[InputRequest, Empty]
-
-func (c *androidServiceClient) WatchClipboard(ctx context.Context, in *InstanceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ClipboardEvent], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &AndroidService_ServiceDesc.Streams[1], AndroidService_WatchClipboard_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[InstanceRequest, ClipboardEvent]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type AndroidService_WatchClipboardClient = grpc.ServerStreamingClient[ClipboardEvent]
-
 // AndroidServiceServer is the server API for AndroidService service.
 // All implementations must embed UnimplementedAndroidServiceServer
 // for forward compatibility.
 type AndroidServiceServer interface {
 	ListInstances(context.Context, *ListInstancesRequest) (*ListInstancesResponse, error)
+	GetInstance(context.Context, *InstanceRequest) (*Instance, error)
 	CreateInstance(context.Context, *CreateInstanceRequest) (*Instance, error)
 	DeleteInstance(context.Context, *InstanceRequest) (*Empty, error)
 	StartInstance(context.Context, *InstanceRequest) (*Empty, error)
@@ -208,13 +183,9 @@ type AndroidServiceServer interface {
 	ConfigureInstance(context.Context, *ConfigureInstanceRequest) (*Empty, error)
 	SendKey(context.Context, *KeyRequest) (*Empty, error)
 	PowerDown(context.Context, *InstanceRequest) (*Empty, error)
-	// Guest input (touch / keys). StreamInput keeps one stream open for
-	// continuous gestures; Instance.control_port offers the same over plain TCP.
-	SendInput(context.Context, *InputRequest) (*Empty, error)
-	StreamInput(grpc.ClientStreamingServer[InputRequest, Empty]) error
-	// Guest clipboard changes, streamed until the client cancels or the
-	// instance stops. Set the guest clipboard with InputRequest.clipboard.
-	WatchClipboard(*InstanceRequest, grpc.ServerStreamingServer[ClipboardEvent]) error
+	// Still frame of the guest display. Navigation keys, Android keycodes,
+	// text and clipboard stay on the TCP/UDP control port, not gRPC.
+	GetPreview(context.Context, *GetPreviewRequest) (*GetPreviewResponse, error)
 	mustEmbedUnimplementedAndroidServiceServer()
 }
 
@@ -227,6 +198,9 @@ type UnimplementedAndroidServiceServer struct{}
 
 func (UnimplementedAndroidServiceServer) ListInstances(context.Context, *ListInstancesRequest) (*ListInstancesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListInstances not implemented")
+}
+func (UnimplementedAndroidServiceServer) GetInstance(context.Context, *InstanceRequest) (*Instance, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetInstance not implemented")
 }
 func (UnimplementedAndroidServiceServer) CreateInstance(context.Context, *CreateInstanceRequest) (*Instance, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateInstance not implemented")
@@ -252,14 +226,8 @@ func (UnimplementedAndroidServiceServer) SendKey(context.Context, *KeyRequest) (
 func (UnimplementedAndroidServiceServer) PowerDown(context.Context, *InstanceRequest) (*Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PowerDown not implemented")
 }
-func (UnimplementedAndroidServiceServer) SendInput(context.Context, *InputRequest) (*Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SendInput not implemented")
-}
-func (UnimplementedAndroidServiceServer) StreamInput(grpc.ClientStreamingServer[InputRequest, Empty]) error {
-	return status.Errorf(codes.Unimplemented, "method StreamInput not implemented")
-}
-func (UnimplementedAndroidServiceServer) WatchClipboard(*InstanceRequest, grpc.ServerStreamingServer[ClipboardEvent]) error {
-	return status.Errorf(codes.Unimplemented, "method WatchClipboard not implemented")
+func (UnimplementedAndroidServiceServer) GetPreview(context.Context, *GetPreviewRequest) (*GetPreviewResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPreview not implemented")
 }
 func (UnimplementedAndroidServiceServer) mustEmbedUnimplementedAndroidServiceServer() {}
 func (UnimplementedAndroidServiceServer) testEmbeddedByValue()                        {}
@@ -296,6 +264,24 @@ func _AndroidService_ListInstances_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AndroidServiceServer).ListInstances(ctx, req.(*ListInstancesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AndroidService_GetInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AndroidServiceServer).GetInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AndroidService_GetInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AndroidServiceServer).GetInstance(ctx, req.(*InstanceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -444,41 +430,23 @@ func _AndroidService_PowerDown_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
-func _AndroidService_SendInput_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(InputRequest)
+func _AndroidService_GetPreview_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPreviewRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(AndroidServiceServer).SendInput(ctx, in)
+		return srv.(AndroidServiceServer).GetPreview(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: AndroidService_SendInput_FullMethodName,
+		FullMethod: AndroidService_GetPreview_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AndroidServiceServer).SendInput(ctx, req.(*InputRequest))
+		return srv.(AndroidServiceServer).GetPreview(ctx, req.(*GetPreviewRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
-
-func _AndroidService_StreamInput_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(AndroidServiceServer).StreamInput(&grpc.GenericServerStream[InputRequest, Empty]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type AndroidService_StreamInputServer = grpc.ClientStreamingServer[InputRequest, Empty]
-
-func _AndroidService_WatchClipboard_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(InstanceRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(AndroidServiceServer).WatchClipboard(m, &grpc.GenericServerStream[InstanceRequest, ClipboardEvent]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type AndroidService_WatchClipboardServer = grpc.ServerStreamingServer[ClipboardEvent]
 
 // AndroidService_ServiceDesc is the grpc.ServiceDesc for AndroidService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -490,6 +458,10 @@ var AndroidService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListInstances",
 			Handler:    _AndroidService_ListInstances_Handler,
+		},
+		{
+			MethodName: "GetInstance",
+			Handler:    _AndroidService_GetInstance_Handler,
 		},
 		{
 			MethodName: "CreateInstance",
@@ -524,21 +496,10 @@ var AndroidService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AndroidService_PowerDown_Handler,
 		},
 		{
-			MethodName: "SendInput",
-			Handler:    _AndroidService_SendInput_Handler,
+			MethodName: "GetPreview",
+			Handler:    _AndroidService_GetPreview_Handler,
 		},
 	},
-	Streams: []grpc.StreamDesc{
-		{
-			StreamName:    "StreamInput",
-			Handler:       _AndroidService_StreamInput_Handler,
-			ClientStreams: true,
-		},
-		{
-			StreamName:    "WatchClipboard",
-			Handler:       _AndroidService_WatchClipboard_Handler,
-			ServerStreams: true,
-		},
-	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "tebox.proto",
 }

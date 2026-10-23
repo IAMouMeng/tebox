@@ -76,107 +76,6 @@ func (InstanceState) EnumDescriptor() ([]byte, []int) {
 	return file_tebox_proto_rawDescGZIP(), []int{0}
 }
 
-type TouchAction int32
-
-const (
-	TouchAction_TOUCH_ACTION_UNSPECIFIED TouchAction = 0
-	TouchAction_TOUCH_ACTION_DOWN        TouchAction = 1
-	TouchAction_TOUCH_ACTION_MOVE        TouchAction = 2
-	TouchAction_TOUCH_ACTION_UP          TouchAction = 3
-)
-
-// Enum value maps for TouchAction.
-var (
-	TouchAction_name = map[int32]string{
-		0: "TOUCH_ACTION_UNSPECIFIED",
-		1: "TOUCH_ACTION_DOWN",
-		2: "TOUCH_ACTION_MOVE",
-		3: "TOUCH_ACTION_UP",
-	}
-	TouchAction_value = map[string]int32{
-		"TOUCH_ACTION_UNSPECIFIED": 0,
-		"TOUCH_ACTION_DOWN":        1,
-		"TOUCH_ACTION_MOVE":        2,
-		"TOUCH_ACTION_UP":          3,
-	}
-)
-
-func (x TouchAction) Enum() *TouchAction {
-	p := new(TouchAction)
-	*p = x
-	return p
-}
-
-func (x TouchAction) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (TouchAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_tebox_proto_enumTypes[1].Descriptor()
-}
-
-func (TouchAction) Type() protoreflect.EnumType {
-	return &file_tebox_proto_enumTypes[1]
-}
-
-func (x TouchAction) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use TouchAction.Descriptor instead.
-func (TouchAction) EnumDescriptor() ([]byte, []int) {
-	return file_tebox_proto_rawDescGZIP(), []int{1}
-}
-
-type KeyAction int32
-
-const (
-	KeyAction_KEY_ACTION_PRESS KeyAction = 0 // down then up
-	KeyAction_KEY_ACTION_DOWN  KeyAction = 1
-	KeyAction_KEY_ACTION_UP    KeyAction = 2
-)
-
-// Enum value maps for KeyAction.
-var (
-	KeyAction_name = map[int32]string{
-		0: "KEY_ACTION_PRESS",
-		1: "KEY_ACTION_DOWN",
-		2: "KEY_ACTION_UP",
-	}
-	KeyAction_value = map[string]int32{
-		"KEY_ACTION_PRESS": 0,
-		"KEY_ACTION_DOWN":  1,
-		"KEY_ACTION_UP":    2,
-	}
-)
-
-func (x KeyAction) Enum() *KeyAction {
-	p := new(KeyAction)
-	*p = x
-	return p
-}
-
-func (x KeyAction) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (KeyAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_tebox_proto_enumTypes[2].Descriptor()
-}
-
-func (KeyAction) Type() protoreflect.EnumType {
-	return &file_tebox_proto_enumTypes[2]
-}
-
-func (x KeyAction) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use KeyAction.Descriptor instead.
-func (KeyAction) EnumDescriptor() ([]byte, []int) {
-	return file_tebox_proto_rawDescGZIP(), []int{2}
-}
-
 type Empty struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -616,13 +515,14 @@ type Instance struct {
 	ControlPort int32         `protobuf:"varint,10,opt,name=control_port,json=controlPort,proto3" json:"control_port,omitempty"`
 	CpuCores    int32         `protobuf:"varint,11,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
 	MemoryMb    int32         `protobuf:"varint,12,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
-	DiskMb      int32         `protobuf:"varint,13,opt,name=disk_mb,json=diskMb,proto3" json:"disk_mb,omitempty"`               // userdata size
+	DiskMb      int32         `protobuf:"varint,13,opt,name=disk_mb,json=diskMb,proto3" json:"disk_mb,omitempty"`               // userdata size (allocated)
 	DiskUsedMb  int32         `protobuf:"varint,14,opt,name=disk_used_mb,json=diskUsedMb,proto3" json:"disk_used_mb,omitempty"` // host space userdata.img occupies
 	State       InstanceState `protobuf:"varint,15,opt,name=state,proto3,enum=tebox.v1.InstanceState" json:"state,omitempty"`
 	// Images the instance boots (the variant's unless set at creation).
 	SystemImage    string `protobuf:"bytes,16,opt,name=system_image,json=systemImage,proto3" json:"system_image,omitempty"`
 	VendorImage    string `protobuf:"bytes,17,opt,name=vendor_image,json=vendorImage,proto3" json:"vendor_image,omitempty"`
 	InitramfsImage string `protobuf:"bytes,18,opt,name=initramfs_image,json=initramfsImage,proto3" json:"initramfs_image,omitempty"`
+	DiskFreeMb     int32  `protobuf:"varint,19,opt,name=disk_free_mb,json=diskFreeMb,proto3" json:"disk_free_mb,omitempty"` // max(0, disk_mb - disk_used_mb)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -783,6 +683,161 @@ func (x *Instance) GetInitramfsImage() string {
 	return ""
 }
 
+func (x *Instance) GetDiskFreeMb() int32 {
+	if x != nil {
+		return x.DiskFreeMb
+	}
+	return 0
+}
+
+type GetPreviewRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// Longest side in pixels after scaling (up or down). 0 keeps native size.
+	// Capped at 4096.
+	Size int32 `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	// jpeg (default) or png.
+	Format string `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
+	// 1..100, jpeg only; default 80. Ignored for png.
+	Quality       int32 `protobuf:"varint,4,opt,name=quality,proto3" json:"quality,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPreviewRequest) Reset() {
+	*x = GetPreviewRequest{}
+	mi := &file_tebox_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPreviewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPreviewRequest) ProtoMessage() {}
+
+func (x *GetPreviewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_tebox_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPreviewRequest.ProtoReflect.Descriptor instead.
+func (*GetPreviewRequest) Descriptor() ([]byte, []int) {
+	return file_tebox_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *GetPreviewRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *GetPreviewRequest) GetSize() int32 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *GetPreviewRequest) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
+}
+
+func (x *GetPreviewRequest) GetQuality() int32 {
+	if x != nil {
+		return x.Quality
+	}
+	return 0
+}
+
+type GetPreviewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Image         []byte                 `protobuf:"bytes,1,opt,name=image,proto3" json:"image,omitempty"`
+	Format        string                 `protobuf:"bytes,2,opt,name=format,proto3" json:"format,omitempty"`
+	MimeType      string                 `protobuf:"bytes,3,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
+	Width         int32                  `protobuf:"varint,4,opt,name=width,proto3" json:"width,omitempty"`
+	Height        int32                  `protobuf:"varint,5,opt,name=height,proto3" json:"height,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPreviewResponse) Reset() {
+	*x = GetPreviewResponse{}
+	mi := &file_tebox_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPreviewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPreviewResponse) ProtoMessage() {}
+
+func (x *GetPreviewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_tebox_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPreviewResponse.ProtoReflect.Descriptor instead.
+func (*GetPreviewResponse) Descriptor() ([]byte, []int) {
+	return file_tebox_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetPreviewResponse) GetImage() []byte {
+	if x != nil {
+		return x.Image
+	}
+	return nil
+}
+
+func (x *GetPreviewResponse) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
+}
+
+func (x *GetPreviewResponse) GetMimeType() string {
+	if x != nil {
+		return x.MimeType
+	}
+	return ""
+}
+
+func (x *GetPreviewResponse) GetWidth() int32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *GetPreviewResponse) GetHeight() int32 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
 type DeviceProfile struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Latitude        float64                `protobuf:"fixed64,1,opt,name=latitude,proto3" json:"latitude,omitempty"`
@@ -799,7 +854,7 @@ type DeviceProfile struct {
 
 func (x *DeviceProfile) Reset() {
 	*x = DeviceProfile{}
-	mi := &file_tebox_proto_msgTypes[9]
+	mi := &file_tebox_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -811,7 +866,7 @@ func (x *DeviceProfile) String() string {
 func (*DeviceProfile) ProtoMessage() {}
 
 func (x *DeviceProfile) ProtoReflect() protoreflect.Message {
-	mi := &file_tebox_proto_msgTypes[9]
+	mi := &file_tebox_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -824,7 +879,7 @@ func (x *DeviceProfile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeviceProfile.ProtoReflect.Descriptor instead.
 func (*DeviceProfile) Descriptor() ([]byte, []int) {
-	return file_tebox_proto_rawDescGZIP(), []int{9}
+	return file_tebox_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DeviceProfile) GetLatitude() float64 {
@@ -883,412 +938,6 @@ func (x *DeviceProfile) GetRoot() bool {
 	return false
 }
 
-// x and y are normalised to the screen: 0..1 from the top-left corner.
-type TouchEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Action        TouchAction            `protobuf:"varint,1,opt,name=action,proto3,enum=tebox.v1.TouchAction" json:"action,omitempty"`
-	X             float32                `protobuf:"fixed32,2,opt,name=x,proto3" json:"x,omitempty"`
-	Y             float32                `protobuf:"fixed32,3,opt,name=y,proto3" json:"y,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TouchEvent) Reset() {
-	*x = TouchEvent{}
-	mi := &file_tebox_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TouchEvent) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TouchEvent) ProtoMessage() {}
-
-func (x *TouchEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_tebox_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TouchEvent.ProtoReflect.Descriptor instead.
-func (*TouchEvent) Descriptor() ([]byte, []int) {
-	return file_tebox_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *TouchEvent) GetAction() TouchAction {
-	if x != nil {
-		return x.Action
-	}
-	return TouchAction_TOUCH_ACTION_UNSPECIFIED
-}
-
-func (x *TouchEvent) GetX() float32 {
-	if x != nil {
-		return x.X
-	}
-	return 0
-}
-
-func (x *TouchEvent) GetY() float32 {
-	if x != nil {
-		return x.Y
-	}
-	return 0
-}
-
-// Navigation key: home, back, menu, power, volume_up, volume_down, mute, or a
-// QEMU qcode. Pressed and released through the virtio keyboard.
-type KeyEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *KeyEvent) Reset() {
-	*x = KeyEvent{}
-	mi := &file_tebox_proto_msgTypes[11]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *KeyEvent) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*KeyEvent) ProtoMessage() {}
-
-func (x *KeyEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_tebox_proto_msgTypes[11]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use KeyEvent.ProtoReflect.Descriptor instead.
-func (*KeyEvent) Descriptor() ([]byte, []int) {
-	return file_tebox_proto_rawDescGZIP(), []int{11}
-}
-
-func (x *KeyEvent) GetKey() string {
-	if x != nil {
-		return x.Key
-	}
-	return ""
-}
-
-// Text typed into the focused field. ASCII is typed as key events; other
-// text (CJK, emoji) is pasted through the guest clipboard.
-type TextEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TextEvent) Reset() {
-	*x = TextEvent{}
-	mi := &file_tebox_proto_msgTypes[12]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TextEvent) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TextEvent) ProtoMessage() {}
-
-func (x *TextEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_tebox_proto_msgTypes[12]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TextEvent.ProtoReflect.Descriptor instead.
-func (*TextEvent) Descriptor() ([]byte, []int) {
-	return file_tebox_proto_rawDescGZIP(), []int{12}
-}
-
-func (x *TextEvent) GetText() string {
-	if x != nil {
-		return x.Text
-	}
-	return ""
-}
-
-// Android KeyEvent (android.view.KeyEvent KEYCODE_* / META_* values), e.g.
-// keycode 67 = DEL, 66 = ENTER, 29 + meta 0x3000 = Ctrl+A.
-type AndroidKeyEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Keycode       int32                  `protobuf:"varint,1,opt,name=keycode,proto3" json:"keycode,omitempty"`
-	Action        KeyAction              `protobuf:"varint,2,opt,name=action,proto3,enum=tebox.v1.KeyAction" json:"action,omitempty"`
-	Meta          int32                  `protobuf:"varint,3,opt,name=meta,proto3" json:"meta,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *AndroidKeyEvent) Reset() {
-	*x = AndroidKeyEvent{}
-	mi := &file_tebox_proto_msgTypes[13]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *AndroidKeyEvent) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*AndroidKeyEvent) ProtoMessage() {}
-
-func (x *AndroidKeyEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_tebox_proto_msgTypes[13]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use AndroidKeyEvent.ProtoReflect.Descriptor instead.
-func (*AndroidKeyEvent) Descriptor() ([]byte, []int) {
-	return file_tebox_proto_rawDescGZIP(), []int{13}
-}
-
-func (x *AndroidKeyEvent) GetKeycode() int32 {
-	if x != nil {
-		return x.Keycode
-	}
-	return 0
-}
-
-func (x *AndroidKeyEvent) GetAction() KeyAction {
-	if x != nil {
-		return x.Action
-	}
-	return KeyAction_KEY_ACTION_PRESS
-}
-
-func (x *AndroidKeyEvent) GetMeta() int32 {
-	if x != nil {
-		return x.Meta
-	}
-	return 0
-}
-
-// Sets the guest clipboard; with paste it is also pasted into the focused field.
-type ClipboardEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
-	Paste         bool                   `protobuf:"varint,2,opt,name=paste,proto3" json:"paste,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ClipboardEvent) Reset() {
-	*x = ClipboardEvent{}
-	mi := &file_tebox_proto_msgTypes[14]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ClipboardEvent) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ClipboardEvent) ProtoMessage() {}
-
-func (x *ClipboardEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_tebox_proto_msgTypes[14]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ClipboardEvent.ProtoReflect.Descriptor instead.
-func (*ClipboardEvent) Descriptor() ([]byte, []int) {
-	return file_tebox_proto_rawDescGZIP(), []int{14}
-}
-
-func (x *ClipboardEvent) GetText() string {
-	if x != nil {
-		return x.Text
-	}
-	return ""
-}
-
-func (x *ClipboardEvent) GetPaste() bool {
-	if x != nil {
-		return x.Paste
-	}
-	return false
-}
-
-type InputRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// Types that are valid to be assigned to Event:
-	//
-	//	*InputRequest_Touch
-	//	*InputRequest_Key
-	//	*InputRequest_Text
-	//	*InputRequest_Keycode
-	//	*InputRequest_Clipboard
-	Event         isInputRequest_Event `protobuf_oneof:"event"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *InputRequest) Reset() {
-	*x = InputRequest{}
-	mi := &file_tebox_proto_msgTypes[15]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *InputRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*InputRequest) ProtoMessage() {}
-
-func (x *InputRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tebox_proto_msgTypes[15]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use InputRequest.ProtoReflect.Descriptor instead.
-func (*InputRequest) Descriptor() ([]byte, []int) {
-	return file_tebox_proto_rawDescGZIP(), []int{15}
-}
-
-func (x *InputRequest) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *InputRequest) GetEvent() isInputRequest_Event {
-	if x != nil {
-		return x.Event
-	}
-	return nil
-}
-
-func (x *InputRequest) GetTouch() *TouchEvent {
-	if x != nil {
-		if x, ok := x.Event.(*InputRequest_Touch); ok {
-			return x.Touch
-		}
-	}
-	return nil
-}
-
-func (x *InputRequest) GetKey() *KeyEvent {
-	if x != nil {
-		if x, ok := x.Event.(*InputRequest_Key); ok {
-			return x.Key
-		}
-	}
-	return nil
-}
-
-func (x *InputRequest) GetText() *TextEvent {
-	if x != nil {
-		if x, ok := x.Event.(*InputRequest_Text); ok {
-			return x.Text
-		}
-	}
-	return nil
-}
-
-func (x *InputRequest) GetKeycode() *AndroidKeyEvent {
-	if x != nil {
-		if x, ok := x.Event.(*InputRequest_Keycode); ok {
-			return x.Keycode
-		}
-	}
-	return nil
-}
-
-func (x *InputRequest) GetClipboard() *ClipboardEvent {
-	if x != nil {
-		if x, ok := x.Event.(*InputRequest_Clipboard); ok {
-			return x.Clipboard
-		}
-	}
-	return nil
-}
-
-type isInputRequest_Event interface {
-	isInputRequest_Event()
-}
-
-type InputRequest_Touch struct {
-	Touch *TouchEvent `protobuf:"bytes,2,opt,name=touch,proto3,oneof"`
-}
-
-type InputRequest_Key struct {
-	Key *KeyEvent `protobuf:"bytes,3,opt,name=key,proto3,oneof"`
-}
-
-type InputRequest_Text struct {
-	Text *TextEvent `protobuf:"bytes,4,opt,name=text,proto3,oneof"`
-}
-
-type InputRequest_Keycode struct {
-	Keycode *AndroidKeyEvent `protobuf:"bytes,5,opt,name=keycode,proto3,oneof"`
-}
-
-type InputRequest_Clipboard struct {
-	Clipboard *ClipboardEvent `protobuf:"bytes,6,opt,name=clipboard,proto3,oneof"`
-}
-
-func (*InputRequest_Touch) isInputRequest_Event() {}
-
-func (*InputRequest_Key) isInputRequest_Event() {}
-
-func (*InputRequest_Text) isInputRequest_Event() {}
-
-func (*InputRequest_Keycode) isInputRequest_Event() {}
-
-func (*InputRequest_Clipboard) isInputRequest_Event() {}
-
 var File_tebox_proto protoreflect.FileDescriptor
 
 const file_tebox_proto_rawDesc = "" +
@@ -1318,7 +967,7 @@ const file_tebox_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\"I\n" +
 	"\x15ListInstancesResponse\x120\n" +
-	"\tinstances\x18\x01 \x03(\v2\x12.tebox.v1.InstanceR\tinstances\"\xa7\x04\n" +
+	"\tinstances\x18\x01 \x03(\v2\x12.tebox.v1.InstanceR\tinstances\"\xc9\x04\n" +
 	"\bInstance\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -1339,7 +988,20 @@ const file_tebox_proto_rawDesc = "" +
 	"\x05state\x18\x0f \x01(\x0e2\x17.tebox.v1.InstanceStateR\x05state\x12!\n" +
 	"\fsystem_image\x18\x10 \x01(\tR\vsystemImage\x12!\n" +
 	"\fvendor_image\x18\x11 \x01(\tR\vvendorImage\x12'\n" +
-	"\x0finitramfs_image\x18\x12 \x01(\tR\x0einitramfsImage\"\x83\x02\n" +
+	"\x0finitramfs_image\x18\x12 \x01(\tR\x0einitramfsImage\x12 \n" +
+	"\fdisk_free_mb\x18\x13 \x01(\x05R\n" +
+	"diskFreeMb\"i\n" +
+	"\x11GetPreviewRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04size\x18\x02 \x01(\x05R\x04size\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\x12\x18\n" +
+	"\aquality\x18\x04 \x01(\x05R\aquality\"\x8d\x01\n" +
+	"\x12GetPreviewResponse\x12\x14\n" +
+	"\x05image\x18\x01 \x01(\fR\x05image\x12\x16\n" +
+	"\x06format\x18\x02 \x01(\tR\x06format\x12\x1b\n" +
+	"\tmime_type\x18\x03 \x01(\tR\bmimeType\x12\x14\n" +
+	"\x05width\x18\x04 \x01(\x05R\x05width\x12\x16\n" +
+	"\x06height\x18\x05 \x01(\x05R\x06height\"\x83\x02\n" +
 	"\rDeviceProfile\x12\x1a\n" +
 	"\blatitude\x18\x01 \x01(\x01R\blatitude\x12\x1c\n" +
 	"\tlongitude\x18\x02 \x01(\x01R\tlongitude\x12\x18\n" +
@@ -1348,48 +1010,16 @@ const file_tebox_proto_rawDesc = "" +
 	"\roperator_name\x18\x05 \x01(\tR\foperatorName\x12\x17\n" +
 	"\acell_id\x18\x06 \x01(\tR\x06cellId\x12!\n" +
 	"\fphone_number\x18\a \x01(\tR\vphoneNumber\x12\x12\n" +
-	"\x04root\x18\b \x01(\bR\x04root\"W\n" +
-	"\n" +
-	"TouchEvent\x12-\n" +
-	"\x06action\x18\x01 \x01(\x0e2\x15.tebox.v1.TouchActionR\x06action\x12\f\n" +
-	"\x01x\x18\x02 \x01(\x02R\x01x\x12\f\n" +
-	"\x01y\x18\x03 \x01(\x02R\x01y\"\x1c\n" +
-	"\bKeyEvent\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\"\x1f\n" +
-	"\tTextEvent\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\"l\n" +
-	"\x0fAndroidKeyEvent\x12\x18\n" +
-	"\akeycode\x18\x01 \x01(\x05R\akeycode\x12+\n" +
-	"\x06action\x18\x02 \x01(\x0e2\x13.tebox.v1.KeyActionR\x06action\x12\x12\n" +
-	"\x04meta\x18\x03 \x01(\x05R\x04meta\":\n" +
-	"\x0eClipboardEvent\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\x12\x14\n" +
-	"\x05paste\x18\x02 \x01(\bR\x05paste\"\x99\x02\n" +
-	"\fInputRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12,\n" +
-	"\x05touch\x18\x02 \x01(\v2\x14.tebox.v1.TouchEventH\x00R\x05touch\x12&\n" +
-	"\x03key\x18\x03 \x01(\v2\x12.tebox.v1.KeyEventH\x00R\x03key\x12)\n" +
-	"\x04text\x18\x04 \x01(\v2\x13.tebox.v1.TextEventH\x00R\x04text\x125\n" +
-	"\akeycode\x18\x05 \x01(\v2\x19.tebox.v1.AndroidKeyEventH\x00R\akeycode\x128\n" +
-	"\tclipboard\x18\x06 \x01(\v2\x18.tebox.v1.ClipboardEventH\x00R\tclipboardB\a\n" +
-	"\x05event*\xa1\x01\n" +
+	"\x04root\x18\b \x01(\bR\x04root*\xa1\x01\n" +
 	"\rInstanceState\x12\x1e\n" +
 	"\x1aINSTANCE_STATE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16INSTANCE_STATE_STOPPED\x10\x01\x12\x1b\n" +
 	"\x17INSTANCE_STATE_STARTING\x10\x02\x12\x1a\n" +
 	"\x16INSTANCE_STATE_RUNNING\x10\x03\x12\x1b\n" +
-	"\x17INSTANCE_STATE_STOPPING\x10\x04*n\n" +
-	"\vTouchAction\x12\x1c\n" +
-	"\x18TOUCH_ACTION_UNSPECIFIED\x10\x00\x12\x15\n" +
-	"\x11TOUCH_ACTION_DOWN\x10\x01\x12\x15\n" +
-	"\x11TOUCH_ACTION_MOVE\x10\x02\x12\x13\n" +
-	"\x0fTOUCH_ACTION_UP\x10\x03*I\n" +
-	"\tKeyAction\x12\x14\n" +
-	"\x10KEY_ACTION_PRESS\x10\x00\x12\x13\n" +
-	"\x0fKEY_ACTION_DOWN\x10\x01\x12\x11\n" +
-	"\rKEY_ACTION_UP\x10\x022\x90\x06\n" +
+	"\x17INSTANCE_STATE_STOPPING\x10\x042\xde\x05\n" +
 	"\x0eAndroidService\x12P\n" +
-	"\rListInstances\x12\x1e.tebox.v1.ListInstancesRequest\x1a\x1f.tebox.v1.ListInstancesResponse\x12E\n" +
+	"\rListInstances\x12\x1e.tebox.v1.ListInstancesRequest\x1a\x1f.tebox.v1.ListInstancesResponse\x12<\n" +
+	"\vGetInstance\x12\x19.tebox.v1.InstanceRequest\x1a\x12.tebox.v1.Instance\x12E\n" +
 	"\x0eCreateInstance\x12\x1f.tebox.v1.CreateInstanceRequest\x1a\x12.tebox.v1.Instance\x12<\n" +
 	"\x0eDeleteInstance\x12\x19.tebox.v1.InstanceRequest\x1a\x0f.tebox.v1.Empty\x12;\n" +
 	"\rStartInstance\x12\x19.tebox.v1.InstanceRequest\x1a\x0f.tebox.v1.Empty\x12:\n" +
@@ -1397,10 +1027,9 @@ const file_tebox_proto_rawDesc = "" +
 	"\rResetInstance\x12\x1e.tebox.v1.ResetInstanceRequest\x1a\x0f.tebox.v1.Empty\x12H\n" +
 	"\x11ConfigureInstance\x12\".tebox.v1.ConfigureInstanceRequest\x1a\x0f.tebox.v1.Empty\x120\n" +
 	"\aSendKey\x12\x14.tebox.v1.KeyRequest\x1a\x0f.tebox.v1.Empty\x127\n" +
-	"\tPowerDown\x12\x19.tebox.v1.InstanceRequest\x1a\x0f.tebox.v1.Empty\x124\n" +
-	"\tSendInput\x12\x16.tebox.v1.InputRequest\x1a\x0f.tebox.v1.Empty\x128\n" +
-	"\vStreamInput\x12\x16.tebox.v1.InputRequest\x1a\x0f.tebox.v1.Empty(\x01\x12G\n" +
-	"\x0eWatchClipboard\x12\x19.tebox.v1.InstanceRequest\x1a\x18.tebox.v1.ClipboardEvent0\x01B\x1dZ\x1btebox-client/api/v1;teboxv1b\x06proto3"
+	"\tPowerDown\x12\x19.tebox.v1.InstanceRequest\x1a\x0f.tebox.v1.Empty\x12G\n" +
+	"\n" +
+	"GetPreview\x12\x1b.tebox.v1.GetPreviewRequest\x1a\x1c.tebox.v1.GetPreviewResponseB\x1dZ\x1btebox-client/api/v1;teboxv1b\x06proto3"
 
 var (
 	file_tebox_proto_rawDescOnce sync.Once
@@ -1414,70 +1043,55 @@ func file_tebox_proto_rawDescGZIP() []byte {
 	return file_tebox_proto_rawDescData
 }
 
-var file_tebox_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_tebox_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_tebox_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_tebox_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_tebox_proto_goTypes = []any{
 	(InstanceState)(0),               // 0: tebox.v1.InstanceState
-	(TouchAction)(0),                 // 1: tebox.v1.TouchAction
-	(KeyAction)(0),                   // 2: tebox.v1.KeyAction
-	(*Empty)(nil),                    // 3: tebox.v1.Empty
-	(*ListInstancesRequest)(nil),     // 4: tebox.v1.ListInstancesRequest
-	(*CreateInstanceRequest)(nil),    // 5: tebox.v1.CreateInstanceRequest
-	(*InstanceRequest)(nil),          // 6: tebox.v1.InstanceRequest
-	(*ResetInstanceRequest)(nil),     // 7: tebox.v1.ResetInstanceRequest
-	(*ConfigureInstanceRequest)(nil), // 8: tebox.v1.ConfigureInstanceRequest
-	(*KeyRequest)(nil),               // 9: tebox.v1.KeyRequest
-	(*ListInstancesResponse)(nil),    // 10: tebox.v1.ListInstancesResponse
-	(*Instance)(nil),                 // 11: tebox.v1.Instance
+	(*Empty)(nil),                    // 1: tebox.v1.Empty
+	(*ListInstancesRequest)(nil),     // 2: tebox.v1.ListInstancesRequest
+	(*CreateInstanceRequest)(nil),    // 3: tebox.v1.CreateInstanceRequest
+	(*InstanceRequest)(nil),          // 4: tebox.v1.InstanceRequest
+	(*ResetInstanceRequest)(nil),     // 5: tebox.v1.ResetInstanceRequest
+	(*ConfigureInstanceRequest)(nil), // 6: tebox.v1.ConfigureInstanceRequest
+	(*KeyRequest)(nil),               // 7: tebox.v1.KeyRequest
+	(*ListInstancesResponse)(nil),    // 8: tebox.v1.ListInstancesResponse
+	(*Instance)(nil),                 // 9: tebox.v1.Instance
+	(*GetPreviewRequest)(nil),        // 10: tebox.v1.GetPreviewRequest
+	(*GetPreviewResponse)(nil),       // 11: tebox.v1.GetPreviewResponse
 	(*DeviceProfile)(nil),            // 12: tebox.v1.DeviceProfile
-	(*TouchEvent)(nil),               // 13: tebox.v1.TouchEvent
-	(*KeyEvent)(nil),                 // 14: tebox.v1.KeyEvent
-	(*TextEvent)(nil),                // 15: tebox.v1.TextEvent
-	(*AndroidKeyEvent)(nil),          // 16: tebox.v1.AndroidKeyEvent
-	(*ClipboardEvent)(nil),           // 17: tebox.v1.ClipboardEvent
-	(*InputRequest)(nil),             // 18: tebox.v1.InputRequest
 }
 var file_tebox_proto_depIdxs = []int32{
 	12, // 0: tebox.v1.ConfigureInstanceRequest.profile:type_name -> tebox.v1.DeviceProfile
-	11, // 1: tebox.v1.ListInstancesResponse.instances:type_name -> tebox.v1.Instance
+	9,  // 1: tebox.v1.ListInstancesResponse.instances:type_name -> tebox.v1.Instance
 	12, // 2: tebox.v1.Instance.profile:type_name -> tebox.v1.DeviceProfile
 	0,  // 3: tebox.v1.Instance.state:type_name -> tebox.v1.InstanceState
-	1,  // 4: tebox.v1.TouchEvent.action:type_name -> tebox.v1.TouchAction
-	2,  // 5: tebox.v1.AndroidKeyEvent.action:type_name -> tebox.v1.KeyAction
-	13, // 6: tebox.v1.InputRequest.touch:type_name -> tebox.v1.TouchEvent
-	14, // 7: tebox.v1.InputRequest.key:type_name -> tebox.v1.KeyEvent
-	15, // 8: tebox.v1.InputRequest.text:type_name -> tebox.v1.TextEvent
-	16, // 9: tebox.v1.InputRequest.keycode:type_name -> tebox.v1.AndroidKeyEvent
-	17, // 10: tebox.v1.InputRequest.clipboard:type_name -> tebox.v1.ClipboardEvent
-	4,  // 11: tebox.v1.AndroidService.ListInstances:input_type -> tebox.v1.ListInstancesRequest
-	5,  // 12: tebox.v1.AndroidService.CreateInstance:input_type -> tebox.v1.CreateInstanceRequest
-	6,  // 13: tebox.v1.AndroidService.DeleteInstance:input_type -> tebox.v1.InstanceRequest
-	6,  // 14: tebox.v1.AndroidService.StartInstance:input_type -> tebox.v1.InstanceRequest
-	6,  // 15: tebox.v1.AndroidService.StopInstance:input_type -> tebox.v1.InstanceRequest
-	7,  // 16: tebox.v1.AndroidService.ResetInstance:input_type -> tebox.v1.ResetInstanceRequest
-	8,  // 17: tebox.v1.AndroidService.ConfigureInstance:input_type -> tebox.v1.ConfigureInstanceRequest
-	9,  // 18: tebox.v1.AndroidService.SendKey:input_type -> tebox.v1.KeyRequest
-	6,  // 19: tebox.v1.AndroidService.PowerDown:input_type -> tebox.v1.InstanceRequest
-	18, // 20: tebox.v1.AndroidService.SendInput:input_type -> tebox.v1.InputRequest
-	18, // 21: tebox.v1.AndroidService.StreamInput:input_type -> tebox.v1.InputRequest
-	6,  // 22: tebox.v1.AndroidService.WatchClipboard:input_type -> tebox.v1.InstanceRequest
-	10, // 23: tebox.v1.AndroidService.ListInstances:output_type -> tebox.v1.ListInstancesResponse
-	11, // 24: tebox.v1.AndroidService.CreateInstance:output_type -> tebox.v1.Instance
-	3,  // 25: tebox.v1.AndroidService.DeleteInstance:output_type -> tebox.v1.Empty
-	3,  // 26: tebox.v1.AndroidService.StartInstance:output_type -> tebox.v1.Empty
-	3,  // 27: tebox.v1.AndroidService.StopInstance:output_type -> tebox.v1.Empty
-	3,  // 28: tebox.v1.AndroidService.ResetInstance:output_type -> tebox.v1.Empty
-	3,  // 29: tebox.v1.AndroidService.ConfigureInstance:output_type -> tebox.v1.Empty
-	3,  // 30: tebox.v1.AndroidService.SendKey:output_type -> tebox.v1.Empty
-	3,  // 31: tebox.v1.AndroidService.PowerDown:output_type -> tebox.v1.Empty
-	3,  // 32: tebox.v1.AndroidService.SendInput:output_type -> tebox.v1.Empty
-	3,  // 33: tebox.v1.AndroidService.StreamInput:output_type -> tebox.v1.Empty
-	17, // 34: tebox.v1.AndroidService.WatchClipboard:output_type -> tebox.v1.ClipboardEvent
-	23, // [23:35] is the sub-list for method output_type
-	11, // [11:23] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	2,  // 4: tebox.v1.AndroidService.ListInstances:input_type -> tebox.v1.ListInstancesRequest
+	4,  // 5: tebox.v1.AndroidService.GetInstance:input_type -> tebox.v1.InstanceRequest
+	3,  // 6: tebox.v1.AndroidService.CreateInstance:input_type -> tebox.v1.CreateInstanceRequest
+	4,  // 7: tebox.v1.AndroidService.DeleteInstance:input_type -> tebox.v1.InstanceRequest
+	4,  // 8: tebox.v1.AndroidService.StartInstance:input_type -> tebox.v1.InstanceRequest
+	4,  // 9: tebox.v1.AndroidService.StopInstance:input_type -> tebox.v1.InstanceRequest
+	5,  // 10: tebox.v1.AndroidService.ResetInstance:input_type -> tebox.v1.ResetInstanceRequest
+	6,  // 11: tebox.v1.AndroidService.ConfigureInstance:input_type -> tebox.v1.ConfigureInstanceRequest
+	7,  // 12: tebox.v1.AndroidService.SendKey:input_type -> tebox.v1.KeyRequest
+	4,  // 13: tebox.v1.AndroidService.PowerDown:input_type -> tebox.v1.InstanceRequest
+	10, // 14: tebox.v1.AndroidService.GetPreview:input_type -> tebox.v1.GetPreviewRequest
+	8,  // 15: tebox.v1.AndroidService.ListInstances:output_type -> tebox.v1.ListInstancesResponse
+	9,  // 16: tebox.v1.AndroidService.GetInstance:output_type -> tebox.v1.Instance
+	9,  // 17: tebox.v1.AndroidService.CreateInstance:output_type -> tebox.v1.Instance
+	1,  // 18: tebox.v1.AndroidService.DeleteInstance:output_type -> tebox.v1.Empty
+	1,  // 19: tebox.v1.AndroidService.StartInstance:output_type -> tebox.v1.Empty
+	1,  // 20: tebox.v1.AndroidService.StopInstance:output_type -> tebox.v1.Empty
+	1,  // 21: tebox.v1.AndroidService.ResetInstance:output_type -> tebox.v1.Empty
+	1,  // 22: tebox.v1.AndroidService.ConfigureInstance:output_type -> tebox.v1.Empty
+	1,  // 23: tebox.v1.AndroidService.SendKey:output_type -> tebox.v1.Empty
+	1,  // 24: tebox.v1.AndroidService.PowerDown:output_type -> tebox.v1.Empty
+	11, // 25: tebox.v1.AndroidService.GetPreview:output_type -> tebox.v1.GetPreviewResponse
+	15, // [15:26] is the sub-list for method output_type
+	4,  // [4:15] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_tebox_proto_init() }
@@ -1485,20 +1099,13 @@ func file_tebox_proto_init() {
 	if File_tebox_proto != nil {
 		return
 	}
-	file_tebox_proto_msgTypes[15].OneofWrappers = []any{
-		(*InputRequest_Touch)(nil),
-		(*InputRequest_Key)(nil),
-		(*InputRequest_Text)(nil),
-		(*InputRequest_Keycode)(nil),
-		(*InputRequest_Clipboard)(nil),
-	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tebox_proto_rawDesc), len(file_tebox_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   16,
+			NumEnums:      1,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

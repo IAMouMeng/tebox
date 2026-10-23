@@ -1,0 +1,5 @@
+gki_custom {
+    name: "android.hardware.audio-service",
+    build: ["google/build.sh"],
+    install: ["google/install.sh"],
+}

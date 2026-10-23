@@ -1,0 +1,14 @@
+cc_binary {
+    name: "android.hardware.lights-service",
+    relative_install_path: "hw",
+    vendor: true,
+    srcs: ["lights.cpp"],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+        "android.hardware.light-V2-ndk",
+    ],
+    init_rc: ["android.hardware.lights-service.rc"],
+    vintf_fragments: ["android.hardware.lights-service.xml"],
+    cflags: ["-DLOG_TAG=\"lights_service_example\""],
+}

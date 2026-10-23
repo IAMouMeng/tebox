@@ -6,6 +6,15 @@ source "$(dirname "$0")/env.sh"
 HAL="$ROOT/src/aosp/$VARIANT/hardware"
 STUB="$ROOT/src/aosp/$VARIANT/qemu/vendor"
 [[ -d "$STUB/etc" ]] || { echo "missing vendor template: $STUB" >&2; exit 1; }
+if [[ -f "$ROOT/src/aosp/$VARIANT/device.mk" ]]; then
+  exec python3 "$ROOT/build/soong/soong.py" --variant "$VARIANT"
+fi
+if [[ -f "$HAL/Makefile" ]]; then
+  exec make -C "$HAL" VARIANT="$VARIANT"
+fi
+if [[ -f "$HAL/Android.mk.sh" ]]; then
+  exec bash "$HAL/Android.mk.sh"
+fi
 bash "$ROOT/scripts/extract-gsi-libs.sh" "$VARIANT"
 for name in graphics health audio power sensors wifi radio bluetooth fingerprint nfc gnss; do
   bash "$HAL/$name/stub/build-stub.sh"

@@ -1,0 +1,5 @@
+REPO=https://android.googlesource.com/platform/hardware/interfaces
+TAG=android-16.0.0_r4
+COMMIT=aa229558cbf04bc997ed27465c5e7ad497123d1b
+SPARSE=light vibrator thermal dumpstate usb boot gatekeeper memtrack drm/aidl
+NOTE=AOSP default HALs for remaining aosp_arm64 rewrite. Nested .git removed after fetch.

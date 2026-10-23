@@ -4,7 +4,7 @@ on early-init
     setprop debug.renderengine.backend skiaglthreaded
 
 on early-boot
-    start vendor.health-default
+    start vendor.health-cuttlefish
 
 on boot
-    start vendor.health-default
+    start vendor.health-cuttlefish

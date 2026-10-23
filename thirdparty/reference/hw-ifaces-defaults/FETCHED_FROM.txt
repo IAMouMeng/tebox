@@ -1,0 +1,7 @@
+REPO=https://android.googlesource.com/platform/hardware/interfaces
+TAG=android-16.0.0_r4
+COMMIT=aa229558cbf04bc997ed27465c5e7ad497123d1b
+SPARSE=gnss/aidl/default gnss/common biometrics/fingerprint/aidl/default bluetooth/aidl/default nfc/aidl/default camera/provider/default
+NOTE=AOSP default HAL implementations for aosp_arm64 rewrite. Nested .git will be removed after fetch.
+EXTRA_SPARSE=bluetooth biometrics nfc
+NOTE2=Merged hardware/interfaces bluetooth/{hci,async,bluetooth_hal}, biometrics/common, nfc HIDL default. Nested .git removed.

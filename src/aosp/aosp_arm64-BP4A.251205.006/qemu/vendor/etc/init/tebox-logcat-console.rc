@@ -1,0 +1,8 @@
+on init
+    write /dev/kmsg "<3>TEBOXKMSGTEST-init-parsed"
+
+service tebox-logbridge /system/bin/sh /vendor/bin/tebox-logbridge.sh
+    class core
+    user root
+    group root log readproc
+    seclabel u:r:hal_keymint_system:s0

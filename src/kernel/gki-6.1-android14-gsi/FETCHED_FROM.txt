@@ -7,3 +7,6 @@ IMAGE_URL=https://mirror.opencecs.com/f/GKI/gki-6.1-android14-gsi/Image
 
 # vendor_modules/*.ko — tracked in Git (virtio-gpu/blk/net/...):
 #   pinned in .ci/guest.lock.json kernel_files
+#
+# guest_modules/ — out-of-tree sources for tebox_mali / tebox_v4l2 / virtio-gpu
+#   (built .ko land in vendor_modules/; build.sh lives next to each driver)

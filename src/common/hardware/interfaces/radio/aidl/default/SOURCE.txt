@@ -1,0 +1,7 @@
+HAL: android.hardware.radio
+Upstream: hardware/interfaces/radio/aidl/minradio (AOSP) compiled against
+GSI FCM Radio AIDL v3. Dual-SIM slot1+slot2. Messaging/voice stay the
+existing REQUEST_NOT_SUPPORTED Bn (minradio does not implement them).
+Frozen v3 RadioConst omits VALUE_UNAVAILABLE* (added in v4); build.sh
+patches those INT32_MAX / INT64_MAX sentinels into the generated header.
+CVD guest/hals/ril is vsock reference-ril; no host modem on this QEMU.

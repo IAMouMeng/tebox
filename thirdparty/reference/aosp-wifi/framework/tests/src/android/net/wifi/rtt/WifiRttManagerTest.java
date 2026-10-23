@@ -1,0 +1,1092 @@
+/*
+ * Copyright (C) 2017 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package android.net.wifi.rtt;
+
+import static junit.framework.Assert.assertNotNull;
+import static junit.framework.Assert.fail;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
+
+import android.content.Context;
+import android.net.MacAddress;
+import android.net.wifi.OuiKeyedData;
+import android.net.wifi.OuiKeyedDataUtil;
+import android.net.wifi.ScanResult;
+import android.net.wifi.WifiSsid;
+import android.net.wifi.aware.PeerHandle;
+import android.os.Bundle;
+import android.os.IBinder;
+import android.os.Parcel;
+import android.os.test.TestLooper;
+
+import androidx.test.filters.SmallTest;
+
+import com.android.modules.utils.build.SdkLevel;
+
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Executor;
+
+/**
+ * Unit test harness for WifiRttManager class.
+ */
+@SmallTest
+public class WifiRttManagerTest {
+    private WifiRttManager mDut;
+    private TestLooper mMockLooper;
+    private Executor mMockLooperExecutor;
+
+    private final String packageName = "some.package.name.for.rtt.app";
+    private final String featureId = "some.feature.id.in.rtt.app";
+
+    @Mock
+    public Context mockContext;
+
+    @Mock
+    public IWifiRttManager mockRttService;
+
+    // Define some constants for test values
+    private static final MacAddress TEST_MAC_ADDRESS = MacAddress.fromString("00:11:22:33:44:55");
+    private static final int TEST_RESPONDER_TYPE = ResponderConfig.RESPONDER_STA;
+    private static final boolean TEST_SUPPORTS_80211MC = false;
+    private static final boolean TEST_SUPPORTS_80211AZ_NTB = true;
+    private static final int TEST_CHANNEL_WIDTH_SCAN_RESULT = ScanResult.CHANNEL_WIDTH_80MHZ;
+    private static final int TEST_FREQUENCY_MHZ = 5200;
+    private static final int TEST_CENTER_FREQ0_MHZ = 5180;
+    private static final int TEST_CENTER_FREQ1_MHZ = 5220;
+    private static final int TEST_PREAMBLE_SCAN_RESULT = ScanResult.PREAMBLE_HE;
+    private static final long TEST_NTB_MIN_TIME = 15000L;
+    private static final long TEST_NTB_MAX_TIME = 25000L;
+    @Mock
+    private SecureRangingConfig mMockSecureRangingConfig;
+    @Mock
+    private PeerHandle mMockPeerHandle;
+
+    @Before
+    public void setUp() throws Exception {
+        MockitoAnnotations.initMocks(this);
+
+        mDut = new WifiRttManager(mockContext, mockRttService);
+        mMockLooper = new TestLooper();
+        mMockLooperExecutor = mMockLooper.getNewExecutor();
+
+        when(mockContext.getOpPackageName()).thenReturn(packageName);
+        when(mockContext.getAttributionTag()).thenReturn(featureId);
+    }
+
+    /**
+     * Validate ranging call flow with successful results.
+     */
+    @Test
+    public void testRangeSuccess() throws Exception {
+        RangingRequest request = new RangingRequest.Builder().build();
+        List<RangingResult> results = new ArrayList<>();
+        results.add(new RangingResult.Builder()
+                .setStatus(RangingResult.STATUS_SUCCESS)
+                .setMacAddress(MacAddress.BROADCAST_ADDRESS)
+                .setDistanceMm(15)
+                .setDistanceStdDevMm(5)
+                .setRssi(10)
+                .setNumAttemptedMeasurements(8)
+                .setNumSuccessfulMeasurements(5)
+                .setRangingTimestampMillis(666)
+                .set80211mcMeasurement(true)
+                .build());
+        RangingResultCallback callbackMock = mock(RangingResultCallback.class);
+        ArgumentCaptor<IRttCallback> callbackCaptor = ArgumentCaptor.forClass(IRttCallback.class);
+
+        // verify ranging request passed to service
+        mDut.startRanging(request, mMockLooperExecutor, callbackMock);
+        verify(mockRttService).startRanging(any(IBinder.class), eq(packageName), eq(featureId),
+                eq(null),  eq(request), callbackCaptor.capture(), any(Bundle.class));
+
+        // service calls back with success
+        callbackCaptor.getValue().onRangingResults(results);
+        mMockLooper.dispatchAll();
+        verify(callbackMock).onRangingResults(results);
+
+        verifyNoMoreInteractions(mockRttService, callbackMock);
+    }
+
+    /**
+     * Validate ranging call flow which failed.
+     */
+    @Test
+    public void testRangeFail() throws Exception {
+        int failureCode = RangingResultCallback.STATUS_CODE_FAIL;
+
+        RangingRequest request = new RangingRequest.Builder().build();
+        RangingResultCallback callbackMock = mock(RangingResultCallback.class);
+        ArgumentCaptor<IRttCallback> callbackCaptor = ArgumentCaptor.forClass(IRttCallback.class);
+
+        // verify ranging request passed to service
+        mDut.startRanging(request, mMockLooperExecutor, callbackMock);
+        verify(mockRttService).startRanging(any(IBinder.class), eq(packageName), eq(featureId),
+                eq(null), eq(request), callbackCaptor.capture(), any(Bundle.class));
+
+        // service calls back with failure code
+        callbackCaptor.getValue().onRangingFailure(failureCode);
+        mMockLooper.dispatchAll();
+        verify(callbackMock).onRangingFailure(failureCode);
+
+        verifyNoMoreInteractions(mockRttService, callbackMock);
+    }
+
+    /**
+     * Validate that RangingRequest parcel works (produces same object on write/read).
+     */
+    @Test
+    public void testRangingRequestParcel() {
+        // Note: not validating parcel code of ScanResult (assumed to work)
+        ScanResult scanResult1 = new ScanResult();
+        scanResult1.BSSID = "00:01:02:03:04:05";
+        scanResult1.setFlag(ScanResult.FLAG_80211mc_RESPONDER);
+        ScanResult scanResult2 = new ScanResult();
+        scanResult2.BSSID = "06:07:08:09:0A:0B";
+        scanResult2.setFlag(ScanResult.FLAG_80211mc_RESPONDER);
+        ScanResult scanResult3 = new ScanResult();
+        scanResult3.BSSID = "AA:BB:CC:DD:EE:FF";
+        scanResult3.setFlag(ScanResult.FLAG_80211mc_RESPONDER);
+        List<ScanResult> scanResults2and3 = new ArrayList<>(2);
+        scanResults2and3.add(scanResult2);
+        scanResults2and3.add(scanResult3);
+        MacAddress mac1 = MacAddress.fromString("00:01:02:03:04:05");
+        PeerHandle peerHandle1 = new PeerHandle(12);
+
+        RangingRequest.Builder builder = new RangingRequest.Builder();
+        builder.addAccessPoint(scanResult1);
+        builder.addAccessPoints(scanResults2and3);
+        builder.addWifiAwarePeer(mac1);
+        builder.addWifiAwarePeer(peerHandle1);
+        builder.setRttBurstSize(4);
+        if (SdkLevel.isAtLeastV()) {
+            builder.setVendorData(OuiKeyedDataUtil.createTestOuiKeyedDataList(5));
+        }
+        RangingRequest request = builder.build();
+
+        Parcel parcelW = Parcel.obtain();
+        request.writeToParcel(parcelW, 0);
+        byte[] bytes = parcelW.marshall();
+        parcelW.recycle();
+
+        Parcel parcelR = Parcel.obtain();
+        parcelR.unmarshall(bytes, 0, bytes.length);
+        parcelR.setDataPosition(0);
+        RangingRequest rereadRequest = RangingRequest.CREATOR.createFromParcel(parcelR);
+
+        assertEquals(request, rereadRequest);
+    }
+
+    /**
+     * Validate 80211mc APs cannot be used in Non-80211mc ranging request builders.
+     */
+    @Test
+    public void test802llmcCapableAccessPointFailsForNon11mcBuilderMethods() {
+        ScanResult scanResult1 = new ScanResult();
+        scanResult1.BSSID = "AA:BB:CC:DD:EE:FF";
+        scanResult1.setFlag(ScanResult.FLAG_80211mc_RESPONDER);
+
+        // create request for one AP
+        try {
+            RangingRequest.Builder builder = new RangingRequest.Builder();
+            builder.addNon80211mcCapableAccessPoint(scanResult1);
+            fail("Single Access Point was 11mc capable.");
+        } catch (IllegalArgumentException e) {
+            // expected
+        }
+
+        ScanResult scanResult2 = new ScanResult();
+        scanResult2.BSSID = "11:BB:CC:DD:EE:FF";
+        scanResult2.setFlag(ScanResult.FLAG_80211mc_RESPONDER);
+        List<ScanResult> scanResults = new ArrayList<>();
+        scanResults.add(scanResult1);
+        scanResults.add(scanResult2);
+
+        // create request for a list of 2 APs.
+        try {
+            RangingRequest.Builder builder = new RangingRequest.Builder();
+            builder.addNon80211mcCapableAccessPoints(scanResults);
+            fail("One Access Point in the List was 11mc capable.");
+        } catch (IllegalArgumentException e) {
+            // expected
+        }
+    }
+
+    /**
+     * Validate the rtt burst size is set correctly when in range.
+     */
+    @Test
+    public void testRangingRequestSetBurstSize() {
+        ScanResult scanResult = new ScanResult();
+        scanResult.BSSID = "AA:BB:CC:DD:EE:FF";
+        scanResult.setFlag(ScanResult.FLAG_80211mc_RESPONDER);
+
+        // create request
+        RangingRequest.Builder builder = new RangingRequest.Builder();
+        builder.setRttBurstSize(4);
+        builder.addAccessPoint(scanResult);
+        RangingRequest request = builder.build();
+
+        // confirm rtt burst size is set correctly to default value
+        assertEquals(request.getRttBurstSize(), 4);
+    }
+
+    /**
+     * Validate the rtt burst size cannot be smaller than the minimum.
+     */
+    @Test
+    public void testRangingRequestMinBurstSizeIsEnforced() {
+        ScanResult scanResult = new ScanResult();
+        scanResult.BSSID = "AA:BB:CC:DD:EE:FF";
+
+        // create request
+        try {
+            RangingRequest.Builder builder = new RangingRequest.Builder();
+            builder.setRttBurstSize(RangingRequest.getMinRttBurstSize() - 1);
+            fail("RTT burst size was smaller than min value.");
+        } catch (IllegalArgumentException e) {
+            // expected
+        }
+    }
+
+    /**
+     * Validate the rtt burst size cannot exceed the maximum.
+     */
+    @Test
+    public void testRangingRequestMaxBurstSizeIsEnforced() {
+        ScanResult scanResult = new ScanResult();
+        scanResult.BSSID = "AA:BB:CC:DD:EE:FF";
+
+        // create request
+        try {
+            RangingRequest.Builder builder = new RangingRequest.Builder();
+            builder.setRttBurstSize(RangingRequest.getMaxRttBurstSize() + 1);
+            fail("RTT Burst size exceeded max value.");
+        } catch (IllegalArgumentException e) {
+            // expected
+        }
+    }
+
+    /**
+     * Validate that can request as many range operation as the upper limit on number of requests.
+     * Testing all methods to add 80211mc capable responders.
+     */
+    @Test
+    public void testRangingRequestAtLimit() {
+        ScanResult scanResult1 = new ScanResult();
+        scanResult1.BSSID = "AA:BB:CC:DD:EE:FF";
+        scanResult1.setFlag(ScanResult.FLAG_80211mc_RESPONDER);
+
+        List<ScanResult> scanResultList = new ArrayList<>();
+        for (int i = 0; i < RangingRequest.getMaxPeers() - 5; ++i) {
+            scanResultList.add(scanResult1);
+        }
+
+        ScanResult scanResult2 = new ScanResult();
+        scanResult2.BSSID = "11:22:33:44:55:66";
+        scanResult2.setFlag(ScanResult.FLAG_80211mc_RESPONDER);
+
+        ResponderConfig responderConfig2a = ResponderConfig.fromScanResult(scanResult2);
+        int preamble = responderConfig2a.getPreamble();
+
+        ResponderConfig.Builder responderBuilder = new ResponderConfig.Builder();
+        ResponderConfig responderConfig2b = responderBuilder
+                .setMacAddress(MacAddress.fromString(scanResult2.BSSID))
+                .set80211mcSupported(scanResult2.is80211mcResponder())
+                .setChannelWidth(scanResult2.channelWidth)
+                .setFrequencyMhz(scanResult2.frequency)
+                .setCenterFreq0Mhz(scanResult2.centerFreq0)
+                .setCenterFreq1Mhz(scanResult2.centerFreq1)
+                .setPreamble(preamble)
+                .build();
+
+        // Validate ResponderConfig.Builder setter method arguments match getter method results.
+        assertTrue(responderConfig2a.getMacAddress().toString().equalsIgnoreCase(scanResult2.BSSID)
+                && responderConfig2a.is80211mcSupported() == scanResult2.is80211mcResponder()
+                && responderConfig2a.getChannelWidth() == scanResult2.channelWidth
+                && responderConfig2a.getFrequencyMhz() == scanResult2.frequency
+                && responderConfig2a.getCenterFreq0Mhz() == scanResult2.centerFreq0
+                && responderConfig2a.getCenterFreq1Mhz() == scanResult2.centerFreq1
+                && responderConfig2a.getPreamble() == preamble);
+
+        ArrayList<ResponderConfig> responderList = new ArrayList<>();
+        responderList.add(responderConfig2b);
+
+        MacAddress mac1 = MacAddress.fromString("00:01:02:03:04:05");
+
+        // create request using max RTT Peers
+        RangingRequest.Builder builder = new RangingRequest.Builder();
+        builder.addAccessPoint(scanResult1);        // Add 1
+        builder.addAccessPoints(scanResultList);    // Add MaxPeers - 5
+        builder.addResponder(responderConfig2a);    // Add 1
+        builder.addResponders(responderList);       // Add 1
+        builder.addAccessPoint(scanResult2);        // Add 1
+        builder.addWifiAwarePeer(mac1);             // Add 1
+        RangingRequest request = builder.build();
+
+        // verify request
+        request.enforceValidity(true);
+        // confirm rtt burst size is set correctly to default value
+        assertEquals(request.getRttBurstSize(), RangingRequest.getDefaultRttBurstSize());
+        // confirm the number of peers in the request is the max number of peers
+        List<ResponderConfig> rttPeers = request.getRttResponders();
+        int numRttPeers = rttPeers.size();
+        assertEquals(RangingRequest.getMaxPeers(), numRttPeers);
+        // confirm each peer has the correct mac address
+        for (int i = 0; i < numRttPeers - 4; ++i) {
+            assertEquals("AA:BB:CC:DD:EE:FF",
+                    rttPeers.get(i).macAddress.toString().toUpperCase());
+        }
+        for (int i = numRttPeers - 4; i < numRttPeers - 1; ++i) {
+            assertEquals("11:22:33:44:55:66",
+                    rttPeers.get(i).macAddress.toString().toUpperCase());
+        }
+        assertEquals("00:01:02:03:04:05",
+                rttPeers.get(numRttPeers - 1).macAddress.toString().toUpperCase());
+    }
+
+    /**
+     * Validate that a non802llmc ranging request can have as many range operations as the upper
+     * limit for number of requests. Testing all methods to add non-80211mc capable responders using
+     * a mix of ScanResults and ResponderConfigs.
+     */
+    @Test
+    public void testNon80211mcRangingRequestAtLimit() {
+        ScanResult scanResult1 = new ScanResult();
+        scanResult1.BSSID = "AA:BB:CC:DD:EE:FF";
+
+        List<ScanResult> scanResultList = new ArrayList<>();
+        for (int i = 0; i < RangingRequest.getMaxPeers() - 5; ++i) {
+            scanResultList.add(scanResult1);
+        }
+
+        ScanResult scanResult2 = new ScanResult();
+        scanResult2.BSSID = "11:22:33:44:55:66";
+
+        ResponderConfig responderConfig2 = ResponderConfig.fromScanResult(scanResult2);
+        List<ResponderConfig> responderConfigList = new ArrayList<>();
+        for (int i = 0; i < 3; ++i) {
+            responderConfigList.add(responderConfig2);
+        }
+
+        // create request using max RTT Peers
+        RangingRequest.Builder builder = new RangingRequest.Builder();
+        builder.addNon80211mcCapableAccessPoint(scanResult1);        // Add 1
+        builder.addNon80211mcCapableAccessPoints(scanResultList);    // Add MaxPeers - 5 = 5
+        builder.addResponders(responderConfigList);                  // Add 3
+        builder.addNon80211mcCapableAccessPoint(scanResult2);        // Add 1
+        RangingRequest request = builder.build();
+
+        // verify request
+        request.enforceValidity(true);
+        // confirm rtt burst size is set correctly to default value
+        assertEquals(request.getRttBurstSize(), RangingRequest.getDefaultRttBurstSize());
+        // confirm the number of peers in the request is the max number of peers
+        List<ResponderConfig> rttPeers = request.getRttResponders();
+        int numRttPeers = rttPeers.size();
+        assertEquals(RangingRequest.getMaxPeers(), numRttPeers);
+        // confirm each peer has the correct mac address
+        for (int i = 0; i < numRttPeers - 4; ++i) {
+            assertEquals("AA:BB:CC:DD:EE:FF",
+                    rttPeers.get(i).macAddress.toString().toUpperCase());
+        }
+        for (int i = numRttPeers - 4; i < numRttPeers; ++i) {
+            assertEquals("11:22:33:44:55:66",
+                    rttPeers.get(i).macAddress.toString().toUpperCase());
+        }
+    }
+
+    /**
+     * Validate that limit on number of requests is applied.
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testRangingRequestPastLimit() {
+        ScanResult scanResult = new ScanResult();
+        scanResult.BSSID = "00:01:02:03:04:05";
+        List<ScanResult> scanResultList = new ArrayList<>();
+        for (int i = 0; i < RangingRequest.getMaxPeers() - 2; ++i) {
+            scanResultList.add(scanResult);
+        }
+        MacAddress mac1 = MacAddress.fromString("00:01:02:03:04:05");
+
+        // create request
+        RangingRequest.Builder builder = new RangingRequest.Builder();
+        builder.addAccessPoint(scanResult);
+        builder.addAccessPoints(scanResultList);
+        builder.addAccessPoint(scanResult);
+        builder.addWifiAwarePeer(mac1);
+        RangingRequest request = builder.build();
+
+        // verify request
+        request.enforceValidity(true);
+    }
+
+    /**
+     * Validate that Aware requests are invalid on devices which do not support Aware
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testRangingRequestWithAwareWithNoAwareSupport() {
+        // create request
+        RangingRequest.Builder builder = new RangingRequest.Builder();
+        builder.addWifiAwarePeer(new PeerHandle(10));
+        RangingRequest request = builder.build();
+
+        // verify request
+        request.enforceValidity(false);
+    }
+
+    /**
+     * Validate that RangingResults parcel works (produces same object on write/read).
+     */
+    @Test
+    public void testRangingResultsParcel() {
+        int status = RangingResult.STATUS_SUCCESS;
+        final MacAddress mac = MacAddress.fromString("00:01:02:03:04:05");
+        PeerHandle peerHandle = new PeerHandle(10);
+        int distanceCm = 105;
+        int distanceStdDevCm = 10;
+        int rssi = 5;
+        int numAttemptedMeasurements = 8;
+        int numSuccessfulMeasurements = 3;
+        long timestamp = System.currentTimeMillis();
+        byte[] lci = { 0x5, 0x6, 0x7 };
+        byte[] lcr = { 0x1, 0x2, 0x3, 0xA, 0xB, 0xC };
+        List<OuiKeyedData> vendorData = OuiKeyedDataUtil.createTestOuiKeyedDataList(5);
+
+        // RangingResults constructed with a MAC address
+        RangingResult.Builder resultBuilder = new RangingResult.Builder()
+                .setStatus(status)
+                .setMacAddress(mac)
+                .setDistanceMm(distanceCm)
+                .setDistanceStdDevMm(distanceStdDevCm)
+                .setRssi(rssi)
+                .setNumAttemptedMeasurements(numAttemptedMeasurements)
+                .setNumSuccessfulMeasurements(numSuccessfulMeasurements)
+                .setLci(lci)
+                .setLcr(lcr)
+                .setRangingTimestampMillis(timestamp)
+                .set80211mcMeasurement(true);
+        if (SdkLevel.isAtLeastV()) {
+            resultBuilder.setVendorData(vendorData);
+        }
+        RangingResult result = resultBuilder.build();
+
+        Parcel parcelW = Parcel.obtain();
+        result.writeToParcel(parcelW, 0);
+        byte[] bytes = parcelW.marshall();
+        parcelW.recycle();
+
+        Parcel parcelR = Parcel.obtain();
+        parcelR.unmarshall(bytes, 0, bytes.length);
+        parcelR.setDataPosition(0);
+        RangingResult rereadResult = RangingResult.CREATOR.createFromParcel(parcelR);
+
+        assertEquals(result, rereadResult);
+
+        // RangingResults constructed with a PeerHandle
+        resultBuilder = new RangingResult.Builder()
+                .setStatus(status)
+                .setPeerHandle(peerHandle)
+                .setDistanceMm(distanceCm)
+                .setDistanceStdDevMm(distanceStdDevCm)
+                .setRssi(rssi)
+                .setNumAttemptedMeasurements(numAttemptedMeasurements)
+                .setNumSuccessfulMeasurements(numSuccessfulMeasurements)
+                .setRangingTimestampMillis(timestamp);
+        if (SdkLevel.isAtLeastV()) {
+            resultBuilder.setVendorData(vendorData);
+        }
+        result = resultBuilder.build();
+
+        parcelW = Parcel.obtain();
+        result.writeToParcel(parcelW, 0);
+        bytes = parcelW.marshall();
+        parcelW.recycle();
+
+        parcelR = Parcel.obtain();
+        parcelR.unmarshall(bytes, 0, bytes.length);
+        parcelR.setDataPosition(0);
+        rereadResult = RangingResult.CREATOR.createFromParcel(parcelR);
+
+        assertEquals(result, rereadResult);
+    }
+
+    /**
+     * Validate that RangingResults parcel works with secure ranging enabled (produces same
+     * object on write/read).
+     */
+    @Test
+    public void testSecureRangingResultsParcel() {
+        int status = RangingResult.STATUS_SUCCESS;
+        final MacAddress mac = MacAddress.fromString("00:01:02:03:04:05");
+        int distanceCm = 105;
+        int distanceStdDevCm = 10;
+        int rssi = 5;
+        int numAttemptedMeasurements = 8;
+        int numSuccessfulMeasurements = 3;
+        long timestamp = System.currentTimeMillis();
+        byte[] lci = { 0x5, 0x6, 0x7 };
+        byte[] lcr = { 0x1, 0x2, 0x3, 0xA, 0xB, 0xC };
+        List<OuiKeyedData> vendorData = OuiKeyedDataUtil.createTestOuiKeyedDataList(5);
+
+        RangingResult.Builder resultBuilder = new RangingResult.Builder()
+                .setStatus(status)
+                .setMacAddress(mac)
+                .setDistanceMm(distanceCm)
+                .setDistanceStdDevMm(distanceStdDevCm)
+                .setRssi(rssi)
+                .setNumAttemptedMeasurements(numAttemptedMeasurements)
+                .setNumSuccessfulMeasurements(numSuccessfulMeasurements)
+                .setLci(lci)
+                .setLcr(lcr)
+                .setRangingTimestampMillis(timestamp)
+                .set80211mcMeasurement(false)
+                .set80211azNtbMeasurement(true)
+                .set80211azInitiatorTxLtfRepetitionsCount(2)
+                .set80211azResponderTxLtfRepetitionsCount(2)
+                .set80211azNumberOfRxSpatialStreams(2)
+                .setPasnComebackCookie(new byte[] {1, 2, 3})
+                .setMaxTimeBetweenNtbMeasurementsMicros(1000)
+                .setMinTimeBetweenNtbMeasurementsMicros(100)
+                .setRangingAuthenticated(true)
+                .setRangingFrameProtected(true);
+
+        if (SdkLevel.isAtLeastV()) {
+            resultBuilder.setVendorData(vendorData);
+        }
+        RangingResult result = resultBuilder.build();
+
+        Parcel parcelW = Parcel.obtain();
+        result.writeToParcel(parcelW, 0);
+        byte[] bytes = parcelW.marshall();
+        parcelW.recycle();
+
+        Parcel parcelR = Parcel.obtain();
+        parcelR.unmarshall(bytes, 0, bytes.length);
+        parcelR.setDataPosition(0);
+        RangingResult rereadResult = RangingResult.CREATOR.createFromParcel(parcelR);
+
+        assertEquals(result, rereadResult);
+    }
+
+    /**
+     * Validate that RangingResults tests equal even if LCI/LCR is empty (length == 0) and null.
+     */
+    @Test
+    public void testRangingResultsEqualityLciLcr() {
+        int status = RangingResult.STATUS_SUCCESS;
+        final MacAddress mac = MacAddress.fromString("00:01:02:03:04:05");
+        PeerHandle peerHandle = new PeerHandle(10);
+        int distanceCm = 105;
+        int distanceStdDevCm = 10;
+        int rssi = 5;
+        int numAttemptedMeasurements = 10;
+        int numSuccessfulMeasurements = 3;
+        long timestamp = System.currentTimeMillis();
+        byte[] lci = { };
+        byte[] lcr = { };
+
+        RangingResult rr1 = new RangingResult.Builder()
+                .setStatus(status)
+                .setMacAddress(mac)
+                .setDistanceMm(distanceCm)
+                .setDistanceStdDevMm(distanceStdDevCm)
+                .setRssi(rssi)
+                .setNumAttemptedMeasurements(numAttemptedMeasurements)
+                .setNumSuccessfulMeasurements(numSuccessfulMeasurements)
+                .setLci(lci)
+                .setLcr(lcr)
+                .setRangingTimestampMillis(timestamp)
+                .set80211mcMeasurement(true)
+                .build();
+        RangingResult rr2 = new RangingResult.Builder()
+                .setStatus(status)
+                .setMacAddress(mac)
+                .setDistanceMm(distanceCm)
+                .setDistanceStdDevMm(distanceStdDevCm)
+                .setRssi(rssi)
+                .setNumAttemptedMeasurements(numAttemptedMeasurements)
+                .setNumSuccessfulMeasurements(numSuccessfulMeasurements)
+                .setRangingTimestampMillis(timestamp)
+                .set80211mcMeasurement(true)
+                .build();
+        assertEquals(rr1, rr2);
+    }
+
+    /**
+     * Validate that ResponderConfig parcel works (produces same object on write/read).
+     */
+    @Test
+    public void testResponderConfigParcel() {
+        // Create SecureRangingConfig
+        PasnConfig pasnConfig = new PasnConfig.Builder(PasnConfig.AKM_SAE | PasnConfig.AKM_PASN,
+                PasnConfig.CIPHER_CCMP_256 | PasnConfig.CIPHER_GCMP_256)
+                .setPassword("password")
+                .setWifiSsid(WifiSsid.fromString("\"SSID\""))
+                .setPasnComebackCookie(new byte[]{1, 2, 3})
+                .build();
+        SecureRangingConfig secureRangingConfig = new SecureRangingConfig.Builder(pasnConfig)
+                .setSecureHeLtfEnabled(true)
+                .setRangingFrameProtectionEnabled(true)
+                .build();
+        // ResponderConfig constructed with a MAC address
+        ResponderConfig config = new ResponderConfig.Builder()
+                .setMacAddress(MacAddress.fromString("00:01:02:03:04:05"))
+                .set80211mcSupported(true)
+                .setChannelWidth(ScanResult.CHANNEL_WIDTH_80MHZ)
+                .setFrequencyMhz(2134)
+                .setCenterFreq0Mhz(2345)
+                .setCenterFreq1Mhz(2555)
+                .setPreamble(ScanResult.PREAMBLE_HE)
+                .set80211azNtbSupported(true)
+                .setNtbMaxTimeBetweenMeasurementsMicros(10000)
+                .setNtbMinTimeBetweenMeasurementsMicros(100)
+                .setSecureRangingConfig(secureRangingConfig)
+                .build();
+
+        Parcel parcelW = Parcel.obtain();
+        config.writeToParcel(parcelW, 0);
+        byte[] bytes = parcelW.marshall();
+        parcelW.recycle();
+
+        Parcel parcelR = Parcel.obtain();
+        parcelR.unmarshall(bytes, 0, bytes.length);
+        parcelR.setDataPosition(0);
+        ResponderConfig rereadConfig = ResponderConfig.CREATOR.createFromParcel(parcelR);
+
+        assertEquals(config, rereadConfig);
+
+        // ResponderConfig constructed with a PeerHandle
+        config = new ResponderConfig.Builder()
+                .setPeerHandle(new PeerHandle(10))
+                .setResponderType(ResponderConfig.RESPONDER_AWARE)
+                .set80211mcSupported(false)
+                .setChannelWidth(ScanResult.CHANNEL_WIDTH_80MHZ_PLUS_MHZ)
+                .setFrequencyMhz(5555)
+                .setCenterFreq0Mhz(6666)
+                .setCenterFreq1Mhz(7777)
+                .setPreamble(ScanResult.PREAMBLE_VHT)
+                .build();
+
+        parcelW = Parcel.obtain();
+        config.writeToParcel(parcelW, 0);
+        bytes = parcelW.marshall();
+        parcelW.recycle();
+
+        parcelR = Parcel.obtain();
+        parcelR.unmarshall(bytes, 0, bytes.length);
+        parcelR.setDataPosition(0);
+        rereadConfig = ResponderConfig.CREATOR.createFromParcel(parcelR);
+
+        assertEquals(config, rereadConfig);
+    }
+
+    /**
+     * Validate preamble selection from ScanResults.
+     */
+    @Test
+    public void testResponderPreambleSelection() {
+        ScanResult.InformationElement htCap = new ScanResult.InformationElement();
+        htCap.id = ScanResult.InformationElement.EID_HT_CAPABILITIES;
+
+        ScanResult.InformationElement vhtCap = new ScanResult.InformationElement();
+        vhtCap.id = ScanResult.InformationElement.EID_VHT_CAPABILITIES;
+
+        ScanResult.InformationElement vsa = new ScanResult.InformationElement();
+        vsa.id = ScanResult.InformationElement.EID_VSA;
+
+        ScanResult.InformationElement heCap = new ScanResult.InformationElement();
+        heCap.id = ScanResult.InformationElement.EID_EXTENSION_PRESENT;
+        heCap.idExt = ScanResult.InformationElement.EID_EXT_HE_CAPABILITIES;
+
+        ScanResult.InformationElement ehtCap = new ScanResult.InformationElement();
+        ehtCap.id = ScanResult.InformationElement.EID_EXTENSION_PRESENT;
+        ehtCap.idExt = ScanResult.InformationElement.EID_EXT_EHT_CAPABILITIES;
+
+        // no IE
+        ScanResult scan = new ScanResult();
+        scan.BSSID = "00:01:02:03:04:05";
+        scan.informationElements = null;
+        scan.channelWidth = ResponderConfig.CHANNEL_WIDTH_80MHZ;
+
+        ResponderConfig config = ResponderConfig.fromScanResult(scan);
+
+        assertEquals(ResponderConfig.PREAMBLE_VHT, config.preamble);
+
+        // IE with HT & VHT
+        scan.channelWidth = ResponderConfig.CHANNEL_WIDTH_40MHZ;
+
+        scan.informationElements = new ScanResult.InformationElement[2];
+        scan.informationElements[0] = htCap;
+        scan.informationElements[1] = vhtCap;
+
+        config = ResponderConfig.fromScanResult(scan);
+
+        assertEquals(ResponderConfig.PREAMBLE_VHT, config.preamble);
+
+        // IE with some entries but no HT or VHT
+        scan.informationElements[0] = vsa;
+        scan.informationElements[1] = vsa;
+
+        config = ResponderConfig.fromScanResult(scan);
+
+        assertEquals(ResponderConfig.PREAMBLE_LEGACY, config.preamble);
+
+        // IE with HT
+        scan.informationElements[0] = vsa;
+        scan.informationElements[1] = htCap;
+
+        config = ResponderConfig.fromScanResult(scan);
+
+        assertEquals(ResponderConfig.PREAMBLE_HT, config.preamble);
+
+        // IE with VHT and HE on 5G
+
+        scan.frequency = 5200;
+        scan.informationElements[0] = vhtCap;
+        scan.informationElements[1] = heCap;
+
+        config = ResponderConfig.fromScanResult(scan);
+
+        assertEquals(ResponderConfig.PREAMBLE_VHT, config.preamble);
+
+        // IE with VHT and HE on 6G
+        scan.frequency = 5935;
+        scan.informationElements[0] = vhtCap;
+        scan.informationElements[1] = heCap;
+
+        config = ResponderConfig.fromScanResult(scan);
+
+        assertEquals(ResponderConfig.PREAMBLE_HE, config.preamble);
+
+        ScanResult.InformationElement[] ie = new ScanResult.InformationElement[3];
+        ie[0] = vhtCap;
+        ie[1] = heCap;
+        ie[2] = ehtCap;
+
+        ScanResult.Builder builder = new ScanResult.Builder()
+                .setBssid("00:01:02:03:04:05")
+                .setChannelWidth(ResponderConfig.CHANNEL_WIDTH_80MHZ);
+
+        // Validate 11az & 11mc ranging in 5 Ghz and EHT
+        scan =  builder.setFrequency(5200).setIs80211azNtbRTTResponder(true)
+                .setIs80211McRTTResponder(true).build();
+        scan.informationElements = ie;
+        config = ResponderConfig.fromScanResult(scan);
+        assertEquals(ResponderConfig.PREAMBLE_EHT, config.preamble);
+
+        // Validate 11az & 11mc ranging in 6 Ghz and EHT
+        scan =  builder.setFrequency(5935).setIs80211azNtbRTTResponder(true)
+                .setIs80211McRTTResponder(true).build();
+        scan.informationElements = ie;
+        config = ResponderConfig.fromScanResult(scan);
+        assertEquals(ResponderConfig.PREAMBLE_EHT, config.preamble);
+
+        // Validate 11mc ranging in 5 Ghz with EHT
+        scan =  builder.setFrequency(5200).setIs80211azNtbRTTResponder(false)
+                .setIs80211McRTTResponder(true).build();
+        scan.informationElements = ie;
+        config = ResponderConfig.fromScanResult(scan);
+        assertEquals(ResponderConfig.PREAMBLE_VHT, config.preamble);
+
+        // Validate one-sided ranging in 5 Ghz with EHT; Same result as 11mc.
+        scan =  builder.setFrequency(5200).setIs80211azNtbRTTResponder(false)
+                .setIs80211McRTTResponder(false).build();
+        scan.informationElements = ie;
+        config = ResponderConfig.fromScanResult(scan);
+        assertEquals(ResponderConfig.PREAMBLE_VHT, config.preamble);
+
+        // Validate 11mc ranging in 6 Ghz with EHT
+        scan =  builder.setFrequency(5935).setIs80211azNtbRTTResponder(false)
+                .setIs80211McRTTResponder(true).build();
+        scan.informationElements = ie;
+        config = ResponderConfig.fromScanResult(scan);
+        assertEquals(ResponderConfig.PREAMBLE_EHT, config.preamble);
+
+        // Validate one-sided ranging in 6 Ghz with EHT; Same result as 11mc.
+        scan =  builder.setFrequency(5935).setIs80211azNtbRTTResponder(false)
+                .setIs80211McRTTResponder(false).build();
+        scan.informationElements = ie;
+        config = ResponderConfig.fromScanResult(scan);
+        assertEquals(ResponderConfig.PREAMBLE_EHT, config.preamble);
+
+        // Validate preamble type if HE even if HE/EHT capability is not present.
+        scan = builder.setFrequency(5935).setIs80211azNtbRTTResponder(true)
+                .setIs80211McRTTResponder(true).build();
+        ie[1] = null;
+        ie[2] = null;
+        scan.informationElements = ie;
+        assertEquals(ResponderConfig.PREAMBLE_EHT, config.preamble);
+
+        // Assert the ResponderConfig.Builder().build() method throws an exception if preamble type
+        // is HT and responder supports IEEE 802.11az.
+        assertThrows(IllegalArgumentException.class, () -> {
+            new ResponderConfig.Builder().set80211azNtbSupported(true).setPreamble(
+                    ResponderConfig.PREAMBLE_HT).build();
+        });
+    }
+
+    @Test
+    public void testGetRttCharacteristics() throws Exception {
+        when(mockRttService.getRttCharacteristics()).thenReturn(new Bundle());
+        Bundle characteristics = mDut.getRttCharacteristics();
+        verify(mockRttService).getRttCharacteristics();
+        assertEquals(0, characteristics.size());
+    }
+
+    /**
+     * Validate secure ranging request call flow with successful results.
+     */
+    @Test
+    public void testSecureRangeSuccess() throws Exception {
+        // Build a scan result with secure ranging support
+        ScanResult.InformationElement htCap = new ScanResult.InformationElement();
+        htCap.id = ScanResult.InformationElement.EID_HT_CAPABILITIES;
+
+        ScanResult.InformationElement vhtCap = new ScanResult.InformationElement();
+        vhtCap.id = ScanResult.InformationElement.EID_VHT_CAPABILITIES;
+
+        ScanResult.InformationElement vsa = new ScanResult.InformationElement();
+        vsa.id = ScanResult.InformationElement.EID_VSA;
+
+        ScanResult.InformationElement heCap = new ScanResult.InformationElement();
+        heCap.id = ScanResult.InformationElement.EID_EXTENSION_PRESENT;
+        heCap.idExt = ScanResult.InformationElement.EID_EXT_HE_CAPABILITIES;
+
+        ScanResult.InformationElement ehtCap = new ScanResult.InformationElement();
+        ehtCap.id = ScanResult.InformationElement.EID_EXTENSION_PRESENT;
+        ehtCap.idExt = ScanResult.InformationElement.EID_EXT_EHT_CAPABILITIES;
+
+        ScanResult.InformationElement[] ie = new ScanResult.InformationElement[3];
+        ie[0] = vhtCap;
+        ie[1] = heCap;
+        ie[2] = ehtCap;
+
+        // Build a secure ranging request
+        ScanResult scanResult = new ScanResult();
+        scanResult.BSSID = "00:01:02:03:04:05";
+        scanResult.setFlag(
+                ScanResult.FLAG_80211az_NTB_RESPONDER | ScanResult.FLAG_SECURE_HE_LTF_SUPPORTED);
+        scanResult.informationElements = ie;
+        scanResult.capabilities = "[RSN-PASN-SAE+SAE_EXT_KEY-GCMP-128]";
+        scanResult.setWifiSsid(WifiSsid.fromString("\"TEST_SSID\""));
+
+        RangingRequest.Builder builder = new RangingRequest.Builder();
+        builder.addAccessPoint(scanResult);
+        builder.setSecurityMode(RangingRequest.SECURITY_MODE_SECURE_AUTH);
+        RangingRequest secureRangingRequest = builder.build();
+
+        // Make sure responder is configured correctly for secure ranging
+        ResponderConfig responderConfig = secureRangingRequest.getRttResponders().get(0);
+        assertNotNull(responderConfig);
+        SecureRangingConfig secureRangingConfig = responderConfig.getSecureRangingConfig();
+        assertNotNull(secureRangingConfig);
+        assertTrue(secureRangingConfig.isRangingFrameProtectionEnabled());
+        assertTrue(secureRangingConfig.isSecureHeLtfEnabled());
+        PasnConfig pasnConfig = secureRangingConfig.getPasnConfig();
+        assertNotNull(pasnConfig);
+        assertEquals(PasnConfig.AKM_PASN | PasnConfig.AKM_SAE, pasnConfig.getBaseAkms());
+        assertEquals(PasnConfig.CIPHER_GCMP_128, pasnConfig.getCiphers());
+        assertNull(pasnConfig.getPasnComebackCookie());
+        assertEquals(WifiSsid.fromString("\"TEST_SSID\""), pasnConfig.getWifiSsid());
+        assertEquals(RangingRequest.SECURITY_MODE_SECURE_AUTH,
+                secureRangingRequest.getSecurityMode());
+
+        List<RangingResult> results = new ArrayList<>();
+        results.add(new RangingResult.Builder()
+                .setStatus(RangingResult.STATUS_SUCCESS)
+                .setMacAddress(MacAddress.fromString(scanResult.BSSID))
+                .setDistanceMm(15)
+                .setDistanceStdDevMm(5)
+                .setRssi(10)
+                .setNumAttemptedMeasurements(8)
+                .setNumSuccessfulMeasurements(5)
+                .setRangingTimestampMillis(666)
+                .set80211mcMeasurement(false)
+                .set80211azNtbMeasurement(true)
+                .setRangingFrameProtected(true)
+                .setSecureHeLtfEnabled(true)
+                .setSecureHeLtfProtocolVersion(0)
+                .build());
+        RangingResultCallback callbackMock = mock(RangingResultCallback.class);
+        ArgumentCaptor<IRttCallback> callbackCaptor = ArgumentCaptor.forClass(IRttCallback.class);
+
+        // verify ranging request passed to service
+        mDut.startRanging(secureRangingRequest, mMockLooperExecutor, callbackMock);
+        verify(mockRttService).startRanging(any(IBinder.class), eq(packageName), eq(featureId),
+                eq(null),  eq(secureRangingRequest), callbackCaptor.capture(),
+                any(Bundle.class));
+
+        // service calls back with success
+        callbackCaptor.getValue().onRangingResults(results);
+        mMockLooper.dispatchAll();
+        verify(callbackMock).onRangingResults(results);
+
+        verifyNoMoreInteractions(mockRttService, callbackMock);
+    }
+
+    private ResponderConfig createFullTestResponderConfig() {
+        // Build an initial ResponderConfig with all fields set
+        ResponderConfig.Builder initialBuilder = new ResponderConfig.Builder();
+        initialBuilder.setMacAddress(TEST_MAC_ADDRESS)
+                .setResponderType(TEST_RESPONDER_TYPE)
+                .set80211mcSupported(TEST_SUPPORTS_80211MC)
+                .set80211azNtbSupported(TEST_SUPPORTS_80211AZ_NTB)
+                .setChannelWidth(TEST_CHANNEL_WIDTH_SCAN_RESULT) // Builder setter takes
+                // ScanResult constants
+                .setFrequencyMhz(TEST_FREQUENCY_MHZ)
+                .setCenterFreq0Mhz(TEST_CENTER_FREQ0_MHZ)
+                .setCenterFreq1Mhz(TEST_CENTER_FREQ1_MHZ)
+                .setPreamble(TEST_PREAMBLE_SCAN_RESULT) // Builder setter takes ScanResult constants
+                .setNtbMinTimeBetweenMeasurementsMicros(TEST_NTB_MIN_TIME)
+                .setNtbMaxTimeBetweenMeasurementsMicros(TEST_NTB_MAX_TIME)
+                .setSecureRangingConfig(mMockSecureRangingConfig);
+        return initialBuilder.build();
+    }
+
+    /**
+     * Validates that {@link ResponderConfig.Builder#build()} throws an IllegalStateException
+     * if neither a MAC address nor a PeerHandle has been set.
+     */
+    @Test
+    public void testResponderConfigBuilderWithNeitherMacOrPeerHandle() {
+        ResponderConfig originalConfig = createFullTestResponderConfig();
+        ResponderConfig.Builder configBuilder = new ResponderConfig
+                .Builder(originalConfig)
+                .setMacAddress(null)
+                .setPeerHandle(null);
+
+        assertThrows(IllegalArgumentException.class, configBuilder::build);
+    }
+
+    /**
+     * Validates that {@link ResponderConfig.Builder#build()} throws an IllegalStateException
+     * if both MAC address and PeerHandle are set.
+     */
+    @Test
+    public void testResponderConfigBuilderWithBothMacAndPeerHandle() {
+        ResponderConfig originalConfig = createFullTestResponderConfig();
+        ResponderConfig.Builder configBuilder = new ResponderConfig
+                .Builder(originalConfig)
+                .setPeerHandle(new PeerHandle(10));
+
+        assertThrows(IllegalArgumentException.class, configBuilder::build);
+    }
+
+    /**
+     * Validates that the {@link ResponderConfig.Builder} copy constructor
+     * throws a {@link NullPointerException} when a null {@link ResponderConfig}
+     * is passed as an argument, due to an explicit null check (e.g., Objects.requireNonNull).
+     */
+    @Test
+    public void testBuilderCopyConstructorThrowsNullPointerExceptionForNullConfig() {
+        assertThrows(NullPointerException.class, () -> new ResponderConfig.Builder(null));
+    }
+
+    /**
+     * Validate {@code ResponderConfig.Builder constructor} with MAC address
+     */
+    @Test
+    public void testRespondConfigBuilderWithMacAddress() {
+        ResponderConfig originalConfig = createFullTestResponderConfig();
+        // Use the copy constructor
+        ResponderConfig copiedConfig = new ResponderConfig.Builder(originalConfig).build();
+
+        // Assert that all fields from the originalConfig have been copied to the newConfig
+        assertEquals("MAC address should be copied", TEST_MAC_ADDRESS,
+                copiedConfig.getMacAddress());
+        assertNull("PeerHandle should be null if MAC was set", copiedConfig.getPeerHandle());
+        assertEquals("Responder type should be copied", TEST_RESPONDER_TYPE,
+                copiedConfig.getResponderType());
+        assertEquals("802.11mc support should be copied", TEST_SUPPORTS_80211MC,
+                copiedConfig.is80211mcSupported());
+        assertEquals("802.11az NTB support should be copied", TEST_SUPPORTS_80211AZ_NTB,
+                copiedConfig.is80211azNtbSupported());
+        assertEquals("Channel width should be copied", TEST_CHANNEL_WIDTH_SCAN_RESULT,
+                copiedConfig.getChannelWidth());
+        assertEquals("Frequency should be copied", TEST_FREQUENCY_MHZ,
+                copiedConfig.getFrequencyMhz());
+        assertEquals("Center frequency 0 should be copied", TEST_CENTER_FREQ0_MHZ,
+                copiedConfig.getCenterFreq0Mhz());
+        assertEquals("Center frequency 1 should be copied", TEST_CENTER_FREQ1_MHZ,
+                copiedConfig.getCenterFreq1Mhz());
+        assertEquals("Preamble should be copied", TEST_PREAMBLE_SCAN_RESULT,
+                copiedConfig.getPreamble());
+        assertEquals("NTB Min time should be copied", TEST_NTB_MIN_TIME,
+                copiedConfig.getNtbMinTimeBetweenMeasurementsMicros());
+        assertEquals("NTB Max time should be copied", TEST_NTB_MAX_TIME,
+                copiedConfig.getNtbMaxTimeBetweenMeasurementsMicros());
+        Assert.assertEquals("SecureRangingConfig should be copied",
+                mMockSecureRangingConfig, copiedConfig.getSecureRangingConfig());
+    }
+
+    /**
+     * Validate {@code ResponderConfig.Builder constructor} with peer handle.
+     */
+    @Test
+    public void testBuilderCopyConstructorWithPeerHandle() {
+        // Create an original config using PeerHandle
+        ResponderConfig originalConfig = new ResponderConfig.Builder()
+                .setPeerHandle(mMockPeerHandle)
+                .setResponderType(ResponderConfig.RESPONDER_AWARE) // Aware typically uses
+                // PeerHandle
+                .set80211mcSupported(true)
+                .set80211azNtbSupported(false)
+                .setChannelWidth(ScanResult.CHANNEL_WIDTH_20MHZ)
+                .setFrequencyMhz(2412)
+                .setCenterFreq0Mhz(2412)
+                .setCenterFreq1Mhz(0)
+                .setPreamble(ScanResult.PREAMBLE_HT)
+                .setNtbMinTimeBetweenMeasurementsMicros(1000L)
+                .setNtbMaxTimeBetweenMeasurementsMicros(5000L)
+                .setSecureRangingConfig(mMockSecureRangingConfig)
+                .build();
+
+        ResponderConfig.Builder copiedBuilder = new ResponderConfig.Builder(originalConfig);
+        ResponderConfig copiedConfig = copiedBuilder.build();
+
+        assertNull("MAC address should be null if PeerHandle was set",
+                copiedConfig.getMacAddress());
+        Assert.assertEquals("PeerHandle should be copied", mMockPeerHandle,
+                copiedConfig.getPeerHandle());
+        assertEquals("Responder type should be copied", ResponderConfig.RESPONDER_AWARE,
+                copiedConfig.getResponderType());
+        assertTrue("802.11mc support should be copied", copiedConfig.is80211mcSupported());
+        Assert.assertFalse("802.11az NTB support should be copied",
+                copiedConfig.is80211azNtbSupported());
+        assertEquals("Channel width should be copied", ScanResult.CHANNEL_WIDTH_20MHZ,
+                copiedConfig.getChannelWidth());
+        Assert.assertEquals("SecureRangingConfig should be copied",
+                mMockSecureRangingConfig, copiedConfig.getSecureRangingConfig());
+    }
+}

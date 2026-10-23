@@ -1,0 +1,5 @@
+REPO=https://android.googlesource.com/device/google/cuttlefish
+TAG=android-16.0.0_r4
+COMMIT=4d368849922b04124e66b1aad48f93b3209f3c8d
+SPARSE=guest/hals
+NOTE=Guest HALs for the aosp_arm64 rewrite. Rust/vsock services stay as reference; C++ HALs are compiled with the project NDK.

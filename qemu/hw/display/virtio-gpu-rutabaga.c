@@ -1289,6 +1289,41 @@ static struct {
     size_t map_size;
 } tebox_res = { .listen_fd = -1, .client_fd = -1 };
 
+#include "tebox-gpu-res.h"
+
+/* Same transfer_read as TEBOX_RES_SOCK, for in-process callers (tebox-v4l2). */
+int tebox_gpu_resource_read_rgba(uint32_t resource_id, uint32_t width,
+                                 uint32_t height, void *dst, size_t dst_bytes,
+                                 uint32_t *stride_out)
+{
+    struct rutabaga_transfer transfer = { 0 };
+    struct iovec iov;
+    size_t need;
+    int result;
+
+    if (!tebox_res.vr || !tebox_res.vr->rutabaga || !dst || !width || !height) {
+        return -EINVAL;
+    }
+    need = (size_t)width * height * 4;
+    if (need > dst_bytes || width > 16384 || height > 16384) {
+        return -EMSGSIZE;
+    }
+    iov.iov_base = dst;
+    iov.iov_len = need;
+    transfer.w = width;
+    transfer.h = height;
+    transfer.d = 1;
+    result = rutabaga_resource_transfer_read(tebox_res.vr->rutabaga, 0,
+                                            resource_id, &transfer, &iov);
+    if (result) {
+        return result < 0 ? result : -EIO;
+    }
+    if (stride_out) {
+        *stride_out = width * 4;
+    }
+    return 0;
+}
+
 static void tebox_res_drop_client(void)
 {
     if (tebox_res.client_fd >= 0) {

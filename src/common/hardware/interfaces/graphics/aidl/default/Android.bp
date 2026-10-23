@@ -1,0 +1,4 @@
+gki_custom {
+    name: "graphics",
+    build: ["build.sh"],
+}

@@ -1,0 +1,7 @@
+HAL: android.hardware.power
+Upstream: hardware/interfaces/power/aidl/default (AOSP example IPower)
+Frozen: aidl_api/android.hardware.power/1
+
+Cuttlefish does not ship a C++ Power HAL in guest/hals at android-16.0.0_r4.
+The AOSP default logs mode/boost requests and reports no capabilities — the
+host schedules QEMU's vCPUs. HintManagerService still needs IPower/default.
