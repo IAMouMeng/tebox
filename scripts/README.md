@@ -17,8 +17,9 @@ Runtime and guest-image scripts used by `./run` and local HAL work.
 | `fetch-host-drivers.sh <platform>` | Restore missing packages in `thirdparty/host-drivers/<platform>` from its `SOURCES` list and verify every checksum. |
 | `cix-r1p-start.sh` | Container entrypoint on the R1P: Mali GLES (`egl-headless,gl=es`), adb on `0.0.0.0:$ADB_PORT`, `androidboot.tebox.video_encode=1` (VirGL V4L2 `mvxenc` H.264). Used by the root `Dockerfile`. |
 | `cix-mali-env.sh` | CIX Mali userspace environment sourced by the R1P entrypoint. |
+| `r1p-deploy.sh` | Assemble the products-only context under `out/r1p-docker/` and build the root `Dockerfile` (`tebox:<ver>`). Also `push` / `start` / `export` to an R1P. CI wraps this via `.ci/build-r1p-image.sh`. |
 
-R1P products image: root `Dockerfile` + local `out/r1p-deploy.sh` (under gitignored `out/`).
+R1P products image: root `Dockerfile` + `scripts/r1p-deploy.sh` (CI: `.ci/build-r1p-image.sh` → `dist/tebox-r1p-linux-arm64.tar.gz`).
 
 `boot-qemu.sh` extras: `ADB_BIND` (default `127.0.0.1`) and `QEMU_EXTRA_APPEND`
 (extra kernel/androidboot tokens). `androidboot.tebox.video_encode=1` lists
