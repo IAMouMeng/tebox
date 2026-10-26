@@ -4,74 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"tebox-api/internal/constants"
+	"tebox-api/internal/tebox/types"
+	"tebox-api/internal/utils"
 )
-
-type Instance struct {
-	ID      string        `json:"id"`
-	Name    string        `json:"name"`
-	Variant string        `json:"variant"`
-	Dir     string        `json:"dir"`
-	AdbPort int           `json:"adbPort"`
-	PID     int           `json:"pid"`
-	Running bool          `json:"running"`
-	Profile DeviceProfile `json:"profile"`
-	// CastPort is the per-instance tebox-cast port while casting (0 otherwise).
-	CastPort int `json:"castPort"`
-	// ControlPort is the per-instance input port while running (0 otherwise).
-	ControlPort int `json:"controlPort"`
-	// Resources fixed at creation; 0 in old metadata means the boot defaults.
-	CPUCores int `json:"cpuCores"`
-	MemoryMB int `json:"memoryMb"`
-	DiskMB   int `json:"diskMb"`
-	// DiskUsedMB is the space userdata.img occupies on the host.
-	DiskUsedMB int `json:"diskUsedMb"`
-	// State is stopped, starting (QEMU up, Android booting), running
-	// (sys.boot_completed) or stopping.
-	State string `json:"state"`
-	// Images set at creation; empty means the variant's own image.
-	SystemImage    string `json:"systemImage,omitempty"`
-	VendorImage    string `json:"vendorImage,omitempty"`
-	InitramfsImage string `json:"initramfsImage,omitempty"`
-	// RunDir is the instance directory chosen at creation (empty: the
-	// default under the data root, which always holds instance.json).
-	RunDir string `json:"runDir,omitempty"`
-
-	metaDir string // data root entry holding instance.json
-}
-
-// CreateOptions sizes a new instance; zero fields take the defaults.
-type CreateOptions struct {
-	Name     string
-	CPUCores int
-	MemoryMB int
-	DiskMB   int
-	// Absolute image paths; empty takes the variant's image.
-	SystemImage    string
-	VendorImage    string
-	InitramfsImage string
-	// InstanceDir holds userdata.img and sockets; empty takes
-	// <data root>/instances/<id>. It must be absent or empty, and Delete
-	// removes it.
-	InstanceDir string
-}
-
-type DeviceProfile struct {
-	Latitude        float64 `json:"latitude"`
-	Longitude       float64 `json:"longitude"`
-	Country         string  `json:"country"`
-	OperatorNumeric string  `json:"operatorNumeric"`
-	OperatorName    string  `json:"operatorName"`
-	CellId          string  `json:"cellId"`
-	PhoneNumber     string  `json:"phoneNumber"`
-	Root            bool    `json:"root"`
-}
 
 type Manager struct {
 	ProjectRoot string
@@ -89,7 +32,7 @@ type Manager struct {
 }
 
 func NewManager(projectRoot, dataRoot string) (*Manager, error) {
-	variant, err := ChooseVariant(projectRoot)
+	variant, err := utils.ChooseVariant(projectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -110,54 +53,11 @@ func NewManager(projectRoot, dataRoot string) (*Manager, error) {
 	return m, nil
 }
 
-func ChooseVariant(root string) (string, error) {
-	if preferred := os.Getenv("TEBOX_VARIANT"); preferred != "" {
-		if _, err := os.Stat(filepath.Join(root, "src", "aosp", preferred, "KERNEL")); err == nil {
-			return preferred, nil
-		}
-	}
-	entries, err := os.ReadDir(filepath.Join(root, "src", "aosp"))
-	if err != nil {
-		return "", fmt.Errorf("no Android variant under %s/src/aosp", root)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(root, "src", "aosp", entry.Name(), "KERNEL")); err == nil {
-			return entry.Name(), nil
-		}
-	}
-	return "", fmt.Errorf("no Android variant under %s/src/aosp", root)
-}
-
-func DefaultDataRoot() string {
-	if data := os.Getenv("TEBOX_DATA_DIR"); data != "" {
-		return data
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ".tebox"
-	}
-	return filepath.Join(home, ".tebox")
-}
-
-func ResolveProjectRoot() (string, error) {
-	if root := os.Getenv("TEBOX_ROOT"); root != "" {
-		return root, nil
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	return cwd, nil
-}
-
 func (m *Manager) instancesDir() string {
 	return filepath.Join(m.DataRoot, "instances")
 }
 
-func (m *Manager) List() ([]Instance, error) {
+func (m *Manager) List() ([]types.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.reapLocked()
@@ -169,7 +69,7 @@ func (m *Manager) List() ([]Instance, error) {
 		}
 		return nil, err
 	}
-	out := make([]Instance, 0, len(entries))
+	out := make([]types.Instance, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
@@ -183,50 +83,50 @@ func (m *Manager) List() ([]Instance, error) {
 	return out, nil
 }
 
-func (m *Manager) Get(id string) (Instance, error) {
+func (m *Manager) Get(id string) (types.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.reapLocked()
 	item, err := m.readMetadata(filepath.Join(m.instancesDir(), id))
 	if err != nil {
-		return Instance{}, err
+		return types.Instance{}, err
 	}
 	return m.liveLocked(item), nil
 }
 
-func (m *Manager) liveLocked(item Instance) Instance {
-	item.State = StateStopped
+func (m *Manager) liveLocked(item types.Instance) types.Instance {
+	item.State = constants.StateStopped
 	if cmd := m.procs[item.ID]; cmd != nil && cmd.Process != nil {
 		item.PID = cmd.Process.Pid
 		item.Running = true
 		switch {
 		case m.stopping[item.ID]:
-			item.State = StateStopping
+			item.State = constants.StateStopping
 		case m.booted[item.ID]:
-			item.State = StateRunning
+			item.State = constants.StateRunning
 		default:
-			item.State = StateStarting
+			item.State = constants.StateStarting
 		}
 	}
 	item.CastPort = m.castPorts[item.ID]
-	item.ControlPort = m.input.port(item.ID)
+	item.ControlPort = m.ControlPort(item.ID)
 	return m.withImages(item)
 }
 
-func (m *Manager) Create(opts CreateOptions) (Instance, error) {
-	if err := opts.normalize(); err != nil {
-		return Instance{}, err
+func (m *Manager) Create(opts types.CreateOptions) (types.Instance, error) {
+	if err := m.normalizeCreate(&opts); err != nil {
+		return types.Instance{}, err
 	}
 	now := time.Now()
-	item := Instance{
+	item := types.Instance{
 		ID:       fmt.Sprintf("android-%d-%d", now.Unix(), now.Nanosecond()/1e6),
 		Name:     fmt.Sprintf("Android %d", now.Unix()),
 		Variant:  m.Variant,
-		Profile:  DeviceProfile{Latitude: 39.9042, Longitude: 116.4074, Country: "CN", OperatorNumeric: "46000", OperatorName: "China Mobile", CellId: "0x1001", PhoneNumber: "+8613800138000"},
+		Profile:  types.DeviceProfile{Latitude: 39.9042, Longitude: 116.4074, Country: "CN", OperatorNumeric: "46000", OperatorName: "China Mobile", CellId: "0x1001", PhoneNumber: "+8613800138000"},
 		CPUCores: opts.CPUCores,
 		MemoryMB: opts.MemoryMB,
 		DiskMB:   opts.DiskMB,
-		State:    StateStopped,
+		State:    constants.StateStopped,
 
 		SystemImage:    opts.SystemImage,
 		VendorImage:    opts.VendorImage,
@@ -236,43 +136,40 @@ func (m *Manager) Create(opts CreateOptions) (Instance, error) {
 	if opts.Name != "" {
 		item.Name = opts.Name
 	}
-	item.metaDir = filepath.Join(m.instancesDir(), item.ID)
-	item.Dir = item.metaDir
+	item.MetaDir = filepath.Join(m.instancesDir(), item.ID)
+	item.Dir = item.MetaDir
 	if item.RunDir != "" {
 		item.Dir = item.RunDir
 	}
 	port, err := m.allocateAdbPort(item.ID)
 	if err != nil {
-		return Instance{}, err
+		return types.Instance{}, err
 	}
 	item.AdbPort = port
-	if err := os.MkdirAll(item.metaDir, 0o755); err != nil {
-		return Instance{}, err
+	if err := os.MkdirAll(item.MetaDir, 0o755); err != nil {
+		return types.Instance{}, err
 	}
 	if err := os.MkdirAll(item.Dir, 0o755); err != nil {
-		_ = os.RemoveAll(item.metaDir)
-		return Instance{}, err
+		_ = os.RemoveAll(item.MetaDir)
+		return types.Instance{}, err
 	}
 	if item.RunDir != "" {
 		// Claims the directory: it is no longer empty for another
 		// CreateInstance, and Delete checks it before removing anything.
-		if err := os.WriteFile(filepath.Join(item.Dir, runDirMarker), []byte(item.ID+"\n"), 0o644); err != nil {
-			_ = os.RemoveAll(item.metaDir)
-			return Instance{}, err
+		if err := os.WriteFile(filepath.Join(item.Dir, constants.RunDirMarker), []byte(item.ID+"\n"), 0o644); err != nil {
+			_ = os.RemoveAll(item.MetaDir)
+			return types.Instance{}, err
 		}
 	}
-	if err := writeMetadata(item); err != nil {
-		return Instance{}, err
+	if err := m.writeMetadata(item); err != nil {
+		return types.Instance{}, err
 	}
 	return m.withImages(item), nil
 }
 
-// runDirMarker names the owning instance inside a chosen instance_dir.
-const runDirMarker = ".tebox-instance"
-
 // withImages fills the image paths the instance boots, defaulting to the
 // variant's images.
-func (m *Manager) withImages(item Instance) Instance {
+func (m *Manager) withImages(item types.Instance) types.Instance {
 	images := filepath.Join(m.ProjectRoot, "src", "aosp", item.Variant, "images")
 	if item.SystemImage == "" {
 		item.SystemImage = filepath.Join(images, "system.img")
@@ -288,7 +185,7 @@ func (m *Manager) withImages(item Instance) Instance {
 
 // imageEnv passes the instance's own images to ./run, after checking they
 // are still there.
-func imageEnv(item Instance) ([]string, error) {
+func (m *Manager) imageEnv(item types.Instance) ([]string, error) {
 	var env []string
 	for _, img := range []struct{ key, path string }{
 		{"SYSTEM_IMG", item.SystemImage},
@@ -298,7 +195,7 @@ func imageEnv(item Instance) ([]string, error) {
 		if img.path == "" {
 			continue
 		}
-		if err := checkImage(img.path); err != nil {
+		if err := utils.CheckReadableImage(img.path); err != nil {
 			return nil, err
 		}
 		env = append(env, img.key+"="+img.path)
@@ -324,8 +221,8 @@ func (m *Manager) Delete(id string) error {
 		delete(m.castPorts, id)
 	}
 	m.input.stop(id)
-	if item.Dir != item.metaDir {
-		owner, _ := os.ReadFile(filepath.Join(item.Dir, runDirMarker))
+	if item.Dir != item.MetaDir {
+		owner, _ := os.ReadFile(filepath.Join(item.Dir, constants.RunDirMarker))
 		if strings.TrimSpace(string(owner)) != item.ID {
 			return fmt.Errorf("instance %s: %s is not marked as its directory; not removing it", id, item.Dir)
 		}
@@ -333,7 +230,7 @@ func (m *Manager) Delete(id string) error {
 			return err
 		}
 	}
-	return os.RemoveAll(item.metaDir)
+	return os.RemoveAll(item.MetaDir)
 }
 
 func (m *Manager) Start(id string) error {
@@ -347,7 +244,7 @@ func (m *Manager) Start(id string) error {
 	if err != nil {
 		return err
 	}
-	images, err := imageEnv(item)
+	images, err := m.imageEnv(item)
 	if err != nil {
 		return err
 	}
@@ -357,21 +254,21 @@ func (m *Manager) Start(id string) error {
 			return err
 		}
 		item.AdbPort = port
-		if err := writeMetadata(item); err != nil {
+		if err := m.writeMetadata(item); err != nil {
 			return err
 		}
 	}
 	runPath := filepath.Join(m.ProjectRoot, "run")
 	qmpPath := filepath.Join(item.Dir, "qmp.sock")
 	_ = os.Remove(qmpPath)
-	_ = os.Remove(inputQMPPath(item.Dir))
+	_ = os.Remove(utils.InputQMPPath(item.Dir))
 
 	cmd := exec.Command(runPath, item.Variant)
 	cmd.Dir = m.ProjectRoot
 	cmd.Env = append(os.Environ(),
 		"TEBOX_INSTANCE_DIR="+item.Dir,
 		"QMP_SOCKET="+qmpPath,
-		"QMP_INPUT_SOCKET="+inputQMPPath(item.Dir),
+		"QMP_INPUT_SOCKET="+utils.InputQMPPath(item.Dir),
 		"SNAPSHOT=0",
 		"FORCE_VIRGL=1",
 		"QEMU_DEBUG=1",
@@ -397,7 +294,7 @@ func (m *Manager) Start(id string) error {
 		return err
 	}
 	m.procs[id] = cmd
-	m.input.start(id, inputQMPPath(item.Dir), m.ProjectRoot, fmt.Sprintf("127.0.0.1:%d", item.AdbPort))
+	m.input.start(id, utils.InputQMPPath(item.Dir), m.ProjectRoot, fmt.Sprintf("127.0.0.1:%d", item.AdbPort))
 	delete(m.booted, id)
 	delete(m.stopping, id)
 	go m.watchBoot(id, cmd, fmt.Sprintf("127.0.0.1:%d", item.AdbPort))
@@ -430,13 +327,13 @@ func (m *Manager) Stop(id string) error {
 	}
 	m.stopping[id] = true
 	if path, err := m.QMPPath(id); err == nil {
-		_ = PowerDown(path)
+		_ = utils.QMPSocket{Path: path}.PowerDown()
 	}
 	_ = cmd.Process.Signal(os.Interrupt)
 	return nil
 }
 
-func (m *Manager) startCastLocked(item Instance) {
+func (m *Manager) startCastLocked(item types.Instance) {
 	if _, ok := m.castProcs[item.ID]; ok {
 		return
 	}
@@ -444,7 +341,7 @@ func (m *Manager) startCastLocked(item Instance) {
 	if _, err := os.Stat(binary); err != nil {
 		return
 	}
-	port, err := allocatePort(12000, m.castPorts)
+	port, err := utils.AllocateTCPPort(12000, m.castPorts)
 	if err != nil {
 		return
 	}
@@ -520,7 +417,7 @@ func (m *Manager) Reset(id string, wipeData bool) error {
 	if err != nil {
 		return err
 	}
-	if err := SystemReset(path); err != nil {
+	if err := (utils.QMPSocket{Path: path}).SystemReset(); err != nil {
 		return err
 	}
 	// The guest reboots: back to "starting" until Android boots again.
@@ -562,7 +459,7 @@ func (m *Manager) stopAndWait(id, why string) (bool, error) {
 
 // Configure applies instance-specific guest identity/location values over ADB.
 // It deliberately leaves system.img and the kernel untouched.
-func (m *Manager) Configure(id string, profile DeviceProfile) error {
+func (m *Manager) Configure(id string, profile types.DeviceProfile) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	item, err := m.readMetadata(filepath.Join(m.instancesDir(), id))
@@ -570,17 +467,14 @@ func (m *Manager) Configure(id string, profile DeviceProfile) error {
 		return err
 	}
 	item.Profile = profile
-	if err := writeMetadata(item); err != nil {
+	if err := m.writeMetadata(item); err != nil {
 		return err
 	}
 	cmd := m.procs[id]
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	adb := os.Getenv("TEBOX_ADB")
-	if adb == "" {
-		adb = "adb"
-	}
+	adb := utils.ADBBinary()
 	target := fmt.Sprintf("127.0.0.1:%d", item.AdbPort)
 	commands := [][]string{
 		{"shell", "settings", "put", "secure", "location_providers_allowed", "+gps"},
@@ -621,10 +515,8 @@ func (m *Manager) InputQMPPath(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return inputQMPPath(item.Dir), nil
+	return utils.InputQMPPath(item.Dir), nil
 }
-
-func inputQMPPath(dir string) string { return filepath.Join(dir, "qmp-input.sock") }
 
 func (m *Manager) ShutdownRunning() {
 	m.mu.Lock()
@@ -635,7 +527,7 @@ func (m *Manager) ShutdownRunning() {
 			continue
 		}
 		if path, err := m.QMPPath(id); err == nil {
-			_ = PowerDown(path)
+			_ = utils.QMPSocket{Path: path}.PowerDown()
 		}
 	}
 	for id, cmd := range m.castProcs {
@@ -658,33 +550,33 @@ func (m *Manager) reapLocked() {
 	}
 }
 
-func (m *Manager) readMetadata(dir string) (Instance, error) {
+func (m *Manager) readMetadata(dir string) (types.Instance, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "instance.json"))
 	if err != nil {
-		return Instance{}, err
+		return types.Instance{}, err
 	}
-	var item Instance
+	var item types.Instance
 	if err := json.Unmarshal(data, &item); err != nil {
-		return Instance{}, err
+		return types.Instance{}, err
 	}
-	item.metaDir, item.Dir = dir, dir
+	item.MetaDir, item.Dir = dir, dir
 	if item.RunDir != "" {
 		item.Dir = item.RunDir
 	}
 	if item.ID == "" || item.Variant == "" {
-		return Instance{}, fmt.Errorf("invalid metadata")
+		return types.Instance{}, fmt.Errorf("invalid metadata")
 	}
-	item.fillResources()
+	m.fillResources(&item)
 	return item, nil
 }
 
-func writeMetadata(item Instance) error {
+func (m *Manager) writeMetadata(item types.Instance) error {
 	data, err := json.Marshal(struct {
 		ID       string        `json:"id"`
 		Name     string        `json:"name"`
 		Variant  string        `json:"variant"`
 		AdbPort  int           `json:"adbPort"`
-		Profile  DeviceProfile `json:"profile"`
+		Profile  types.DeviceProfile `json:"profile"`
 		CPUCores int           `json:"cpuCores"`
 		MemoryMB int           `json:"memoryMb"`
 		DiskMB   int           `json:"diskMb"`
@@ -698,7 +590,7 @@ func writeMetadata(item Instance) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(item.metaDir, "instance.json"), append(data, '\n'), 0o644)
+	return os.WriteFile(filepath.Join(item.MetaDir, "instance.json"), append(data, '\n'), 0o644)
 }
 
 func (m *Manager) allocateAdbPort(skipID string) (int, error) {
@@ -732,7 +624,7 @@ func (m *Manager) allocateAdbPortLocked(skipID string) (int, error) {
 		if used[port] {
 			continue
 		}
-		if !portFree(port) {
+		if !utils.TCPPortFree(port) {
 			continue
 		}
 		return port, nil
@@ -740,27 +632,4 @@ func (m *Manager) allocateAdbPortLocked(skipID string) (int, error) {
 	return 0, fmt.Errorf("no free ADB port available")
 }
 
-func portFree(port int) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return false
-	}
-	_ = ln.Close()
-	return true
-}
 
-func allocatePort(start int, used map[string]int) (int, error) {
-	for port := start; port < 65535; port++ {
-		busy := false
-		for _, value := range used {
-			if value == port {
-				busy = true
-				break
-			}
-		}
-		if !busy && portFree(port) {
-			return port, nil
-		}
-	}
-	return 0, fmt.Errorf("no free cast port available")
-}

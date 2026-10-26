@@ -108,7 +108,8 @@ g StartInstance '{"id":"android-1791942209-289"}'
 | `id`, `name`, `variant`, `dir` | 标识，以及运行目录 |
 | `state` | `STOPPED` / `STARTING`（QEMU 已起，Android 开机中）/ `RUNNING`（`sys.boot_completed=1`）/ `STOPPING` |
 | `adb_port` | `adb connect <host>:<adb_port>`（R1P 上对局域网开放） |
-| `cast_port`, `control_port` | 运行时才有：实例自己的 tebox-cast 端口，以及输入端口（只在本机 127.0.0.1 上监听） |
+| `cast_port` | 运行时才有：实例自己的 tebox-cast 端口 |
+| `control_port` | 恒为 0；输入只走共享控制口（`TEBOX-CTRL` / UDP） |
 | `cpu_cores`, `memory_mb` | CPU 核数、内存 |
 | `disk_mb` | userdata 分配大小（MB） |
 | `disk_used_mb` | userdata.img 在宿主上实际占用的空间（稀疏文件按块计） |
@@ -123,7 +124,7 @@ g GetInstance '{"id":"android-1791942209-289"}'
 
 ## 预览画面
 
-`GetPreview` 抓当前客户机画面。实例必须已在运行（QEMU 进程在）。优先 `adb exec-out screencap -p`，失败则走 QMP `screendump`。
+`GetPreview` 抓当前客户机画面。实例必须已在运行（QEMU 进程在）。直接经 QMP `screendump` 从 QEMU 取当前 scanout 一帧（PPM），无需 adb/adbd，也不受 SurfaceFlinger `screencap` 的慢 `exec-out` 与安全层黑屏影响。
 
 ```protobuf
 message GetPreviewRequest {
@@ -156,9 +157,9 @@ grpcurl -plaintext -d '{"id":"tebox-1","format":"jpeg","quality":80,"size":540}'
 |------|------|-----------------|-----------------|
 | 9901 视频 | `TEBOX-CAST/1 <id>` | codec 0：H.264 Annex-B（连上即发关键帧） | 不接收（发了也会被丢弃） |
 | 9904 音频 | `TEBOX-AUDIO/1 <id>` | codec 16：AAC-LC 48 kHz 立体声，每条一个 ADTS 帧 | codec 33：麦克风 PCM s16le 48 kHz 单声道，每条 10–20 ms |
-| 9905 控制 | `TEBOX-CTRL/1 <id>` | 先回 `{"ok":true}`；之后只在出错时回复，客户机剪贴板变化也从这里推送 | 每行一个输入 JSON |
+| 9905 控制 | `TEBOX-CTRL/1 <id>` | 先回 `{"ok":true}`；之后只在出错时回复 | 每行一个输入 JSON |
 | 9905 控制 | `TEBOX-CAMERA/1 <id>` | 无 | codec 32：摄像头帧，每条一张 JPEG（任意尺寸） |
-| 9905 控制（UDP） | 无握手，每个数据报都带 `"id"` | 出错回复和剪贴板推送，发回发送方地址 | 输入 JSON（一个数据报可以放多行） |
+| 9905 控制（UDP） | 无握手，每个数据报都带 `"id"` | 出错回复，发回发送方地址 | 输入 JSON（一个数据报可以放多行） |
 
 - 每个端口只转发表里列出的 codec，其他记录直接丢弃。视频端口不接受控制和上行数据。
 - 客户机没有声音时，音频端口不会发数据。
@@ -166,27 +167,26 @@ grpcurl -plaintext -d '{"id":"tebox-1","format":"jpeg","quality":80,"size":540}'
 - 输入 JSON 示例：
   - `{"type":"touch","action":"down","x":0.5,"y":0.25}`（x、y 取 0..1，从左上角算起）
   - `{"type":"key","key":"home"}`
-  - `{"type":"text","text":"你好"}`
+  - `{"type":"text","text":"hello"}`（可打印 ASCII，与本机 QEMU 窗口打字相同）
   - `{"type":"keycode","keycode":67}`
-  - `{"type":"clipboard","text":"...","paste":false}`
+  - `{"type":"clipboard","text":"...","paste":false}`（按 virtio 键序打出；`paste:true` 再发 Enter）
 
-  完整格式见 [`../README.md`](../README.md)。
+  完整格式见 [`../README.md`](../README.md)。触控/按键走 QEMU virtio-tablet /
+  virtio-keyboard（QMP `input-send-event`），与本机 QEMU 窗口同源，不注入 guest
+  jar / scrcpy。非 ASCII 文本需在 guest 内用 IME。
 - UDP 输入发到 9905（和 TCP 控制同一个端口号）。
   - 每个数据报都要带 `"id"`。
   - `"seq"` 要一直递增：服务端按“发送地址 + 实例”记录，`seq` 不大于上一个的包会被丢弃。
   - 单个数据报不超过 64 KB。
-  - 想收到剪贴板推送，至少每 15 秒发一个包。空闲时发 `{"id":"...","type":"ping"}` 就行。
+  - 空闲时可发 `{"id":"...","type":"ping"}`。
 
   例如：`{"id":"tebox-1","seq":1,"type":"touch","action":"down","x":0.5,"y":0.5}`
 
-导航键 / Android keycode / 文本 / 剪贴板只走这条 TCP/UDP 控制口（`Instance.control_port`，或 `TEBOX-CTRL/1 <id>`）。gRPC 没有 `SendInput`。
+导航键 / Android keycode / 文本 / 剪贴板只走共享 TCP/UDP 控制口（`TEBOX-CTRL/1 <id>`）。无 per-instance 输入端口。gRPC 没有 `SendInput`。
 
 ```bash
-# 实例自己的输入口（ListInstances / GetInstance 里的 control_port）
-printf '%s\n' '{"type":"key","key":"home"}' | nc 127.0.0.1 "$CTRL"
-printf '%s\n' '{"type":"text","text":"hello"}' | nc 127.0.0.1 "$CTRL"
-# 或共享控制口 9905
 printf 'TEBOX-CTRL/1 tebox-1\n{"type":"key","key":"home"}\n' | nc 10.10.2.142 9905
+printf 'TEBOX-CTRL/1 tebox-1\n{"type":"text","text":"hello"}\n' | nc 10.10.2.142 9905
 # 桌面查看器：视频 9901，音频 9904，摄像头和输入都走 9905（TCP / UDP）
 ./out/service/tebox-cast-view --host 10.10.2.142 --id tebox-1 \
     [--audio-port 9904] [--control-port 9905] [--mic] [--camera avfoundation:0]

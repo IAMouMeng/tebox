@@ -16,7 +16,10 @@ import (
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	api "tebox-api/api/v1"
+	"tebox-api/internal/constants"
 	tebox "tebox-api/internal/tebox"
+	"tebox-api/internal/tebox/types"
+	"tebox-api/internal/utils"
 )
 
 type server struct {
@@ -59,14 +62,14 @@ func (s *server) GetPreview(_ context.Context, req *api.GetPreviewRequest) (*api
 	if err != nil {
 		return nil, err
 	}
-	preview, err := s.mgr.Preview(id, tebox.PreviewOptions{
+	preview, err := s.mgr.Preview(id, types.PreviewOptions{
 		Size: int(req.GetSize()), Format: req.GetFormat(), Quality: int(req.GetQuality()),
 	})
 	if err != nil {
-		if errors.Is(err, tebox.ErrInputNotRunning) {
+		if errors.Is(err, constants.ErrInputNotRunning) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
-		if errors.Is(err, tebox.ErrInvalidOptions) {
+		if errors.Is(err, constants.ErrInvalidOptions) {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
 		return nil, internalError(err)
@@ -78,14 +81,14 @@ func (s *server) GetPreview(_ context.Context, req *api.GetPreviewRequest) (*api
 }
 
 func (s *server) CreateInstance(_ context.Context, req *api.CreateInstanceRequest) (*api.Instance, error) {
-	item, err := s.mgr.Create(tebox.CreateOptions{
+	item, err := s.mgr.Create(types.CreateOptions{
 		Name: req.GetName(), CPUCores: int(req.GetCpuCores()),
 		MemoryMB: int(req.GetMemoryMb()), DiskMB: int(req.GetDiskMb()),
 		SystemImage: req.GetSystemImage(), VendorImage: req.GetVendorImage(),
 		InitramfsImage: req.GetInitramfsImage(), InstanceDir: req.GetInstanceDir(),
 	})
 	if err != nil {
-		if errors.Is(err, tebox.ErrInvalidOptions) {
+		if errors.Is(err, constants.ErrInvalidOptions) {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
 		return nil, internalError(err)
@@ -161,7 +164,7 @@ func (s *server) ConfigureInstance(_ context.Context, req *api.ConfigureInstance
 		return nil, status.Error(codes.InvalidArgument, "profile is required")
 	}
 	p := req.Profile
-	err = s.mgr.Configure(id, tebox.DeviceProfile{Latitude: p.Latitude, Longitude: p.Longitude, Country: p.Country, OperatorNumeric: p.OperatorNumeric, OperatorName: p.OperatorName, CellId: p.CellId, PhoneNumber: p.PhoneNumber, Root: p.Root})
+	err = s.mgr.Configure(id, types.DeviceProfile{Latitude: p.Latitude, Longitude: p.Longitude, Country: p.Country, OperatorNumeric: p.OperatorNumeric, OperatorName: p.OperatorName, CellId: p.CellId, PhoneNumber: p.PhoneNumber, Root: p.Root})
 	if err != nil {
 		return nil, internalError(err)
 	}
@@ -180,7 +183,7 @@ func (s *server) SendKey(_ context.Context, req *api.KeyRequest) (*api.Empty, er
 	if err != nil {
 		return nil, internalError(err)
 	}
-	if err = tebox.SendKey(path, req.GetKey()); err != nil {
+	if err = (utils.QMPSocket{Path: path}).SendKey(req.GetKey()); err != nil {
 		return nil, internalError(err)
 	}
 	return &api.Empty{}, nil
@@ -198,7 +201,7 @@ func (s *server) PowerDown(_ context.Context, req *api.InstanceRequest) (*api.Em
 	if err != nil {
 		return nil, internalError(err)
 	}
-	if err = tebox.PowerDown(path); err != nil {
+	if err = (utils.QMPSocket{Path: path}).PowerDown(); err != nil {
 		return nil, internalError(err)
 	}
 	return &api.Empty{}, nil
@@ -212,7 +215,7 @@ func requireID(raw string) (string, error) {
 	return id, nil
 }
 
-func instanceMessage(item tebox.Instance) *api.Instance {
+func instanceMessage(item types.Instance) *api.Instance {
 	return &api.Instance{
 		Id: item.ID, Name: item.Name, Variant: item.Variant, Dir: item.Dir,
 		AdbPort: int32(item.AdbPort), Pid: int32(item.PID), Running: item.Running,
@@ -242,13 +245,13 @@ func diskFreeMB(diskMB, usedMB int) int32 {
 
 func instanceState(state string) api.InstanceState {
 	switch state {
-	case tebox.StateStopped:
+	case constants.StateStopped:
 		return api.InstanceState_INSTANCE_STATE_STOPPED
-	case tebox.StateStarting:
+	case constants.StateStarting:
 		return api.InstanceState_INSTANCE_STATE_STARTING
-	case tebox.StateRunning:
+	case constants.StateRunning:
 		return api.InstanceState_INSTANCE_STATE_RUNNING
-	case tebox.StateStopping:
+	case constants.StateStopping:
 		return api.InstanceState_INSTANCE_STATE_STOPPING
 	}
 	return api.InstanceState_INSTANCE_STATE_UNSPECIFIED
@@ -258,7 +261,7 @@ func internalError(err error) error {
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, tebox.ErrInvalidOptions):
+	case errors.Is(err, constants.ErrInvalidOptions):
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
 	return status.Error(codes.Internal, err.Error())
@@ -271,11 +274,11 @@ func main() {
 	controlAddr := flag.String("control-listen", getenv("TEBOX_CONTROL_ADDR", "127.0.0.1:9905"), "control address: TCP input + camera (TEBOX-CTRL/1, TEBOX-CAMERA/1) and UDP input datagrams")
 	autostart := flag.String("start", getenv("TEBOX_AUTOSTART", ""), "comma-separated instance ids to start once serving")
 	flag.Parse()
-	root, err := tebox.ResolveProjectRoot()
+	root, err := utils.ResolveProjectRoot()
 	if err != nil {
 		fatal(err)
 	}
-	mgr, err := tebox.NewManager(root, tebox.DefaultDataRoot())
+	mgr, err := tebox.NewManager(root, utils.DefaultDataRoot())
 	if err != nil {
 		fatal(err)
 	}

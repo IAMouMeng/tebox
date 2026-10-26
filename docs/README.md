@@ -1,7 +1,7 @@
-[English](README.md) | [简体中文](../README.md)
+English | [简体中文](../README.md)
 
 <p align="center">
-  <a href="https://opencecs.com">
+  <a href="https://www.opencecs.com">
     <img src="assets/logo.png" alt="OPENCECS" width="128">
   </a>
 </p>
@@ -9,63 +9,48 @@
 <h1 align="center">OPENCECS</h1>
 
 <p align="center">
-  <a href="https://opencecs.com"><b>opencecs.com</b></a>
+  <a href="https://www.opencecs.com"><b>www.opencecs.com</b></a>
   <a href="https://github.com/opencecs/tebox">GitHub</a>
 </p>
 
 <p align="center">
-  <b>tebox — a desktop Android GSI runtime base</b><br>
-  Generic GSI boot  VirGL acceleration  Soft vendor HAL examples
+  <b>tebox — Android GSI runtime base</b><br>
+  Cross-platform generic GSI boot
 </p>
 
 <p align="center">
   <a href="https://github.com/opencecs/tebox/stargazers"><img src="https://img.shields.io/github/stars/opencecs/tebox?style=flat-square" alt="stars"></a>
   <a href="https://github.com/opencecs/tebox/network/members"><img src="https://img.shields.io/github/forks/opencecs/tebox?style=flat-square" alt="forks"></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="license"></a>
-  <a href="https://opencecs.com"><img src="https://img.shields.io/badge/Website-opencecs.com-informational?style=flat-square" alt="website"></a>
+  <a href="https://www.opencecs.com"><img src="https://img.shields.io/badge/Website-opencecs.com-informational?style=flat-square" alt="website"></a>
 </p>
 
 ## Overview
 
-**tebox** is a desktop **Android GSI runtime base**. It provides generic ARM64 GSI boot on QEMU, with VirGL / Mesa GPU acceleration, a pinned GKI kernel, and soft vendor HAL examples — so you can validate images, develop HALs, and automate bring-up without a physical device.
+**tebox** is a cross-platform **Android GSI runtime base**: it boots generic ARM64 GSI images on QEMU, with gfxstream (ANGLE + Vulkan) and VirGL (Mesa) graphics acceleration plus **in-house ARM Mali GPU passthrough**, so you can validate, develop, and automate bring-up quickly.
 
-Repository: [github.com/opencecs/tebox](https://github.com/opencecs/tebox)  Website: [opencecs.com](https://opencecs.com)
-
-### What the base provides
-
-- **Generic GSI runtime**: ships with an official aosp_arm64 GSI as the default example; you can swap in any compatible ARM64 GSI (e.g. Google or Samsung GSI / Treble images, or a system image extracted from devices such as Pixel or Galaxy)
-- **Graphics & input**: VirGL GPU acceleration, virtio touchscreen
-- **Codecs**: Gallium video pass-through to the host backend (Linux VA-API / macOS VideoToolbox); the Mesa guest registers `c2.mesa.*` codec components (H.264 / H.265 / VP9 / AV1)
-- **Boot-oriented HAL examples**: Graphics, KeyMint (soft), Health, Power, Audio soft / stub implementations — trim or replace them for your product
+Repository: [github.com/opencecs/tebox](https://github.com/opencecs/tebox)  Website: [www.opencecs.com](https://www.opencecs.com)
 
 > Note: whether a given image boots fully depends on its Treble / VINTF requirements. Vendor-private partitions and closed-source services need your own adaptation. tebox is an extensible runtime and HAL framework, not a one-click flash package for a specific phone. If you extract or use third-party / OEM images, firmware, or proprietary components, you are responsible for complying with applicable laws, OEM license terms, and copyright; legal and compliance risk rests with you.
+
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/ops-coffee-1793007973066.jpg" width="720" alt="">
+</p>
 
 ### Related resources
 
 - Community GSI image catalog / downloads: [Mystic GSI Updates on SourceForge](https://sourceforge.net/projects/mystic-gsi-updates/files/)
 
-## Use cases
-
-- Validate and compare GSI images on the desktop
-- Develop and debug vendor HALs, graphics stacks, and system services
-- Wire CI for automated compile / smoke of GSI + HAL changes
-
 ## Supported hosts
 
 | Host | Notes |
 | --- | --- |
-| **macOS ARM64** (Apple silicon, M1–M4) | Recommended; HVF + VirGL verified |
+| **macOS ARM64** (Apple Silicon, M1–M4) | Recommended; HVF + gfxstream / VirGL verified |
 | **Linux ARM64** | Native build and run (KVM) |
 | **Linux x86_64** | Primarily for cross-compiling Android ARM64 guests |
 | **Windows x86_64** | Native QEMU/VirGL PE runtime |
-
-The guest is an **aarch64 Android GSI**. A usable GPU and graphical session are recommended.
-
-## Screenshots
-
-<p align="center">
-  <img src="screenshots/launched.png" width="240" alt="tebox launched">
-</p>
 
 ## Clone
 
@@ -82,10 +67,13 @@ git lfs pull
 
 ```bash
 bash .ci/install-deps.sh
-FORCE_VIRGL=1 SNAPSHOT=1 ./run
+source build/envsetup.sh
+lunch aosp_arm64-BP4A.251205.006
+m
+SNAPSHOT=1 ./run aosp_arm64-BP4A.251205.006
 ```
 
-This boots the built-in AOSP GSI example. Replace `src/aosp/<variant>/images/system.img` to try another GSI.
+GSI variant trees live on the matching `GSI/...` branches (AOSP example: `GSI/AOSP/aosp_arm64-BP4A.251205.006`). After checkout, replace `src/aosp/<variant>/images/system.img` to try another GSI.
 
 ## AI-assisted development
 

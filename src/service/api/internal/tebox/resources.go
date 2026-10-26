@@ -2,58 +2,42 @@ package tebox
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
+
+	"tebox-api/internal/constants"
+	"tebox-api/internal/tebox/types"
+	"tebox-api/internal/utils"
 )
 
-const (
-	StateStopped  = "stopped"
-	StateStarting = "starting"
-	StateRunning  = "running"
-	StateStopping = "stopping"
-
-	DefaultCPUCores = 4
-	DefaultMemoryMB = 4096
-	DefaultDiskMB   = 8192
-
-	// Old instances were created before sizes were stored; boot-qemu.sh
-	// then used SMP=4, MEM=4096 and USERDATA_MB=1024.
-	legacyDiskMB = 1024
-)
-
-// ErrInvalidOptions wraps CreateOptions validation failures.
-var ErrInvalidOptions = errors.New("invalid instance options")
-
-func (o *CreateOptions) normalize() error {
+func (m *Manager) normalizeCreate(o *types.CreateOptions) error {
 	if o.CPUCores == 0 {
-		o.CPUCores = DefaultCPUCores
+		o.CPUCores = constants.DefaultCPUCores
 	}
 	if o.MemoryMB == 0 {
-		o.MemoryMB = DefaultMemoryMB
+		o.MemoryMB = constants.DefaultMemoryMB
 	}
 	if o.DiskMB == 0 {
-		o.DiskMB = DefaultDiskMB
+		o.DiskMB = constants.DefaultDiskMB
 	}
 	if o.CPUCores < 1 || o.CPUCores > runtime.NumCPU() {
-		return fmt.Errorf("%w: cpu_cores must be 1..%d (host cores)", ErrInvalidOptions, runtime.NumCPU())
+		return fmt.Errorf("%w: cpu_cores must be 1..%d (host cores)", constants.ErrInvalidOptions, runtime.NumCPU())
 	}
 	if o.MemoryMB < 1024 || o.MemoryMB > 65536 {
-		return fmt.Errorf("%w: memory_mb must be 1024..65536", ErrInvalidOptions)
+		return fmt.Errorf("%w: memory_mb must be 1024..65536", constants.ErrInvalidOptions)
 	}
 	if o.DiskMB < 1024 || o.DiskMB > 1024*1024 {
-		return fmt.Errorf("%w: disk_mb must be 1024..1048576", ErrInvalidOptions)
+		return fmt.Errorf("%w: disk_mb must be 1024..1048576", constants.ErrInvalidOptions)
 	}
 	o.Name = strings.TrimSpace(o.Name)
 	if o.InstanceDir = strings.TrimSpace(o.InstanceDir); o.InstanceDir != "" {
-		if err := checkInstanceDir(&o.InstanceDir); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidOptions, err)
+		if err := m.checkInstanceDir(o); err != nil {
+			return fmt.Errorf("%w: %v", constants.ErrInvalidOptions, err)
 		}
 	}
 	for _, img := range []*string{&o.SystemImage, &o.VendorImage, &o.InitramfsImage} {
@@ -61,24 +45,19 @@ func (o *CreateOptions) normalize() error {
 			continue
 		}
 		if !filepath.IsAbs(*img) {
-			return fmt.Errorf("%w: image path must be absolute: %s", ErrInvalidOptions, *img)
+			return fmt.Errorf("%w: image path must be absolute: %s", constants.ErrInvalidOptions, *img)
 		}
 		*img = filepath.Clean(*img)
-		if err := checkImage(*img); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidOptions, err)
+		if err := utils.CheckReadableImage(*img); err != nil {
+			return fmt.Errorf("%w: %v", constants.ErrInvalidOptions, err)
 		}
 	}
 	return nil
 }
 
-// Unix socket paths (sun_path) hold 104 bytes on macOS, 108 on Linux; the
-// longest socket in an instance directory is "/qmp-input.sock".
-const maxInstanceDirLen = 103 - len("/qmp-input.sock")
-
-// checkInstanceDir requires an absolute path whose sockets fit sun_path and
-// that is absent or an empty directory, so Delete only removes what the
-// instance created.
-func checkInstanceDir(dir *string) error {
+func (m *Manager) checkInstanceDir(o *types.CreateOptions) error {
+	_ = m
+	dir := &o.InstanceDir
 	if !filepath.IsAbs(*dir) {
 		return fmt.Errorf("instance_dir must be absolute: %s", *dir)
 	}
@@ -86,8 +65,8 @@ func checkInstanceDir(dir *string) error {
 	if *dir == "/" {
 		return fmt.Errorf("instance_dir cannot be /")
 	}
-	if len(*dir) > maxInstanceDirLen {
-		return fmt.Errorf("instance_dir is %d bytes; at most %d fit the instance's Unix sockets", len(*dir), maxInstanceDirLen)
+	if len(*dir) > constants.MaxInstanceDirLen {
+		return fmt.Errorf("instance_dir is %d bytes; at most %d fit the instance's Unix sockets", len(*dir), constants.MaxInstanceDirLen)
 	}
 	entries, err := os.ReadDir(*dir)
 	if err != nil {
@@ -102,51 +81,32 @@ func checkInstanceDir(dir *string) error {
 	return nil
 }
 
-// checkImage requires a non-empty regular file the API can read.
-func checkImage(path string) error {
-	st, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("image %s: %w", path, err)
-	}
-	if !st.Mode().IsRegular() || st.Size() == 0 {
-		return fmt.Errorf("image %s is not a non-empty file", path)
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("image %s: %w", path, err)
-	}
-	return f.Close()
-}
-
-// fillResources applies defaults for old metadata and measures disk use.
-func (item *Instance) fillResources() {
+func (m *Manager) fillResources(item *types.Instance) {
+	_ = m
 	if item.CPUCores <= 0 {
-		item.CPUCores = DefaultCPUCores
+		item.CPUCores = constants.DefaultCPUCores
 	}
 	if item.MemoryMB <= 0 {
-		item.MemoryMB = DefaultMemoryMB
+		item.MemoryMB = constants.DefaultMemoryMB
 	}
 	img := filepath.Join(item.Dir, "userdata.img")
 	st, err := os.Stat(img)
 	if item.DiskMB <= 0 {
-		item.DiskMB = legacyDiskMB
+		item.DiskMB = constants.LegacyDiskMB
 		if err == nil {
 			item.DiskMB = int(st.Size() >> 20)
 		}
 	}
 	if err == nil {
-		item.DiskUsedMB = usedMB(img)
+		item.DiskUsedMB = utils.FileUsedMB(img)
 	}
 	if item.State == "" {
-		item.State = StateStopped
+		item.State = constants.StateStopped
 	}
 }
 
-// watchBoot marks the instance running once Android reports
-// sys.boot_completed=1 over adb, polling until then or until this QEMU
-// process is no longer the instance's.
 func (m *Manager) watchBoot(id string, cmd *exec.Cmd, target string) {
-	adb := adbBinary()
+	adb := utils.ADBBinary()
 	for {
 		time.Sleep(2 * time.Second)
 		m.mu.Lock()
@@ -168,17 +128,4 @@ func (m *Manager) watchBoot(id string, cmd *exec.Cmd, target string) {
 			return
 		}
 	}
-}
-
-// usedMB is the host space a (sparse or cloned) file occupies.
-func usedMB(path string) int {
-	st, err := os.Stat(path)
-	if err != nil {
-		return 0
-	}
-	used := st.Size()
-	if sys, ok := st.Sys().(*syscall.Stat_t); ok {
-		used = int64(sys.Blocks) * 512
-	}
-	return int((used + 1<<20 - 1) >> 20)
 }
