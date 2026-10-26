@@ -56,6 +56,9 @@ int cast_encoder_push_dmabuf(struct cast_encoder *enc, uint32_t format, int fd,
 void cast_encoder_free_packets(struct cast_packet *pkts, int count);
 
 int cast_encoder_force_idr(struct cast_encoder *enc);
+/* Drop the V4L2 device (if any) so another client — guest venc / another
+ * cast encoder — can open it. Safe to call while idle. */
+void cast_encoder_release_hw(struct cast_encoder *enc);
 int cast_encoder_reconfigure(struct cast_encoder *enc,
                              const struct cast_encoder_cfg *cfg);
 

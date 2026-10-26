@@ -70,7 +70,10 @@ public:
 
     // width/height are coded picture size. Returns false if pipe/video
     // unavailable (caller should fail the Codec2 start()).
-    bool open(Entrypoint ep, Profile profile, uint32_t width, uint32_t height);
+    // |castCodec|: CAST_CODEC_* for host venc (0=H264); ignored for decode /
+    // VirGL encode.
+    bool open(Entrypoint ep, Profile profile, uint32_t width, uint32_t height,
+              uint32_t castCodec = 0);
     void close();
 
     bool isOpen() const { return mOpen; }
@@ -117,6 +120,7 @@ private:
     int mHostFd = -1;
     uint32_t mHostSession = 0;  // this encoder's id on the shared tebox.venc port
     uint64_t mHostIndex = 0;    // next frame index within the session
+    uint32_t mCastCodec = 0;    // CAST_CODEC_* for host CONFIG
     unsigned pollFeedback(void* feedback, std::unique_lock<std::mutex>* lock);
     bool createCodec();
 

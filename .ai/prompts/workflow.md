@@ -8,7 +8,7 @@
 2. 确认 variant 目录 `src/aosp/<variant>/`：`device.mk`、`KERNEL`、`GPU`、`FETCHED_FROM`、`images/`。停正在跑的 QEMU 再换镜像。
 3. 依赖：`bash .ci/install-deps.sh`。客体编译：`source build/envsetup.sh && lunch <variant> && m`。
 4. 若换 GSI → 用 gki-gsi；厂家镜像再开 oem-adapt + 家族 prompt。
-5. 若缺 HAL / VINTF → 用 gki-hal：先 common（`src/common/hardware/interfaces/` + `common.mk`）；common 没有或不适用再在本变体 `src/aosp/<variant>/hardware/` 写自己的，并在 `device.mk` 里 `PRODUCT_PACKAGES +=`（细则见 `.ai/prompts/hal.md`）。**用不到的函数和文件当场删掉**，不要拷一整棵 AOSP HAL 再留着。函数 `camelCase`、类 `PascalCase`；只有一处用的逻辑不要拆成 tools/util；常量放文件顶 `#define` 或独立 `.h`。
+5. 若缺 HAL / VINTF → 用 gki-hal：先 common（`src/common/hardware/interfaces/` + `common.mk`）；common 没有或不适用再在本变体 `src/aosp/<variant>/hardware/` 写自己的，并在 `device.mk` 里 `PRODUCT_PACKAGES +=`（细则见 `.ai/prompts/hal.md`）。**用不到的函数和文件当场删掉**，不要拷一整棵 AOSP HAL 再留着。函数 `camelCase`、类 `PascalCase`；共用 helper 按职责拆 `.h/.cpp`（勿杂烩 `tools/`/`util`）；常量放文件顶 `#define` 或独立 `.h`。
 6. 宿主用 gki-build + `.ci/build-host.sh`。停 QEMU 后打 vendor/initramfs；日常 `SNAPSHOT=1 ./run <variant>`。
 7. 验证：`python3 .ci/validate.py`（配置/锁）；真开机用 `scripts/qemu-console.py` 看 boot、renderer、1080×2400@420、触摸。进不了桌面对 `.ai/prompts/boot-issues.md`。
 8. 汇报命令、产物路径、实测结果；编译成功不要写成已开机。不要擅自 git init / 推送 / 发 Release。

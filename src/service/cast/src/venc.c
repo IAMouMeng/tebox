@@ -296,6 +296,7 @@ static void configure(struct cast_venc *v, const struct cast_venc_config *c)
 {
     struct cast_encoder_cfg cfg = { 0 };
     struct venc_session *s = find_session(v, c->session);
+    uint32_t codec = c->codec;
 
     if (!s) {
         /* A free slot, or the least recently used session (a guest client
@@ -312,7 +313,11 @@ static void configure(struct cast_venc *v, const struct cast_venc_config *c)
         }
     }
     end_session(s);
-    cfg.codec = CAST_CODEC_H264;
+    if (codec != CAST_CODEC_H264 && codec != CAST_CODEC_HEVC &&
+        codec != CAST_CODEC_VP8 && codec != CAST_CODEC_VP9) {
+        codec = CAST_CODEC_H264;
+    }
+    cfg.codec = (enum cast_codec)codec;
     cfg.width = (int)c->width;
     cfg.height = (int)c->height;
     cfg.fps = c->fps ? (int)c->fps : 30;
@@ -324,8 +329,9 @@ static void configure(struct cast_venc *v, const struct cast_venc_config *c)
     s->last_use = ++v->clock;
     s->cfg = cfg;
     s->enc = cast_encoder_create(&cfg);
-    fprintf(stderr, "venc: session %u %ux%u %u kbit/s %u fps encoder=%s\n", c->session,
-            c->width, c->height, (unsigned)(cfg.bitrate / 1000), (unsigned)cfg.fps,
+    fprintf(stderr, "venc: session %u %ux%u %u kbit/s %u fps codec=%s encoder=%s\n",
+            c->session, c->width, c->height, (unsigned)(cfg.bitrate / 1000),
+            (unsigned)cfg.fps, cast_codec_name(cfg.codec),
             s->enc ? cast_encoder_name(s->enc) : "(none)");
 }
 
@@ -352,8 +358,12 @@ static void *venc_thread(void *opaque)
             end_all(v);
             continue;
         }
-        if (hdr.type == CAST_VENC_CONFIG && hdr.size >= sizeof(struct cast_venc_config)) {
-            configure(v, (const struct cast_venc_config *)payload);
+        /* Pre-codec guests send 24 bytes (no codec field); pad to H264. */
+        if (hdr.type == CAST_VENC_CONFIG && hdr.size >= 24) {
+            struct cast_venc_config cfg = { 0 };
+
+            memcpy(&cfg, payload, hdr.size < sizeof(cfg) ? hdr.size : sizeof(cfg));
+            configure(v, &cfg);
         } else if (hdr.type == CAST_VENC_FRAME && hdr.size >= sizeof(struct cast_venc_frame)) {
             encode_frame(v, (const struct cast_venc_frame *)payload);
         } else if (hdr.type == CAST_VENC_CLOSE && hdr.size >= sizeof(uint32_t)) {

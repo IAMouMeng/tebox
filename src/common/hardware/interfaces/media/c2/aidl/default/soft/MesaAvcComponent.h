@@ -27,7 +27,8 @@ public:
                      std::shared_ptr<ComponentInterface> intf,
                      std::shared_ptr<Configurable> cfg,
                      std::shared_ptr<aidl::android::hardware::media::c2::IComponentListener>
-                             listener);
+                             listener,
+                     uint32_t castCodec = 0);
     ~MesaAvcComponent() override;
 
     ndk::ScopedAStatus configureVideoTunnel(
@@ -85,6 +86,7 @@ private:
 
     const MesaCodecKind mKind;
     const std::string mName;
+    const uint32_t mCastCodec;
     std::shared_ptr<ComponentInterface> mIntf;
     std::shared_ptr<Configurable> mCfg;
     std::shared_ptr<aidl::android::hardware::media::c2::IComponentListener> mListener;

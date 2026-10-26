@@ -4,6 +4,7 @@
 #include "Configurable.h"
 #include "MesaAvcComponent.h"
 #include "HostDecComponent.h"
+#include "TeboxAencComponent.h"
 #include "mesa_pipe_video.h"
 
 #include <aidl/android/hardware/media/c2/Status.h>
@@ -58,8 +59,7 @@ public:
     }
 };
 
-constexpr const char* kDecName = "c2.mesa.avc.decoder";
-constexpr const char* kEncName = "c2.mesa.avc.encoder";
+constexpr const char* kDecName = "c2.tebox.avc.decoder";
 constexpr const char* kMime = "video/avc";
 
 // Host hardware decoders (gfxstream): name, media type, V4L2 fourcc.
@@ -71,6 +71,31 @@ struct HostDecoder {
 constexpr HostDecoder kHostDecoders[] = {
     {"c2.tebox.hevc.decoder", "video/hevc", 0x43564548u /* 'HEVC' */},
     {"c2.tebox.avc.decoder", "video/avc", 0x34363248u /* 'H264' */},
+};
+
+// Host V4L2 encoders over tebox.venc (CAST_CODEC_*).
+struct HostEncoder {
+    const char* name;
+    const char* mime;
+    uint32_t castCodec;
+};
+constexpr HostEncoder kHostEncoders[] = {
+    {"c2.tebox.avc.encoder", "video/avc", 0},
+    {"c2.tebox.hevc.encoder", "video/hevc", 1},
+    {"c2.tebox.vp8.encoder", "video/x-vnd.on2.vp8", 2},
+    {"c2.tebox.vp9.encoder", "video/x-vnd.on2.vp9", 3},
+};
+
+// Host FFmpeg audio over tebox.aenc (CAST_AENC_*).
+struct HostAudioEncoder {
+    const char* name;
+    const char* mime;
+    uint32_t aencCodec;
+};
+constexpr HostAudioEncoder kHostAudioEncoders[] = {
+    {"c2.tebox.aac.encoder", "audio/mp4a-latm", 0},
+    {"c2.tebox.opus.encoder", "audio/opus", 1},
+    {"c2.tebox.flac.encoder", "audio/flac", 2},
 };
 
 IComponentStore::ComponentTraits makeTraits(const char* name, IComponentStore::ComponentTraits::Kind kind,
@@ -102,21 +127,27 @@ ComponentStore::ComponentStore() {
           caps.max_width, caps.max_height);
     // A capset is only an advertisement. Publish a component after the
     // Gallium pipe-video bridge reports that it can create a real codec.
-    if (caps.avc_decode && mesa_video::backendAvailable(mesa_video::Entrypoint::kDecode)) {
+    if (caps.avc_decode && mesa_video::backendAvailable(mesa_video::Entrypoint::kDecode) &&
+        !mCatalog.count(kDecName)) {
         ComponentDesc d;
         d.traits = makeTraits(kDecName, IComponentStore::ComponentTraits::Kind::DECODER, 16);
         d.kind = MesaCodecKind::kDecoder;
         mCatalog[kDecName] = d;
     }
-    // Probe the real Gallium encoder even if the capset query raced guest
-    // device initialization; backendAvailable is the authoritative gate.
+    // Probe the real Gallium / host encoder; backendAvailable is authoritative.
     if (mesa_video::backendAvailable(mesa_video::Entrypoint::kEncode)) {
-        ComponentDesc d;
-        d.traits = makeTraits(kEncName, IComponentStore::ComponentTraits::Kind::ENCODER, 16);
-        d.kind = MesaCodecKind::kEncoder;
-        mCatalog[kEncName] = d;
+        for (const HostEncoder& enc : kHostEncoders) {
+            ComponentDesc d;
+            d.traits = makeTraits(enc.name, IComponentStore::ComponentTraits::Kind::ENCODER, 16,
+                                  enc.mime);
+            d.kind = MesaCodecKind::kEncoder;
+            d.castCodec = enc.castCodec;
+            mCatalog[enc.name] = d;
+        }
+        mHostEncoders = true;
     }
     addHostDecoders();
+    addHostEncoders();
     ALOGI("catalog size=%zu (caps dec=%d enc=%d)", mCatalog.size(),
           caps.avc_decode ? 1 : 0, caps.avc_encode ? 1 : 0);
 }
@@ -140,6 +171,41 @@ void ComponentStore::addHostDecoders() {
     ALOGI("host decoders available (tebox.vdec)");
 }
 
+void ComponentStore::addHostEncoders() {
+    std::lock_guard<std::mutex> lock(mLock);
+    if (!mHostEncoders && mesa_video::backendAvailable(mesa_video::Entrypoint::kEncode)) {
+        for (const HostEncoder& enc : kHostEncoders) {
+            if (mCatalog.count(enc.name)) continue;
+            ComponentDesc d;
+            d.traits = makeTraits(enc.name, IComponentStore::ComponentTraits::Kind::ENCODER, 16,
+                                  enc.mime);
+            d.kind = MesaCodecKind::kEncoder;
+            d.castCodec = enc.castCodec;
+            mCatalog[enc.name] = d;
+        }
+        mHostEncoders = true;
+        ALOGI("host video encoders available (tebox.venc)");
+    }
+    if (!TeboxAencComponent::available()) {
+        return;
+    }
+    for (const HostAudioEncoder& enc : kHostAudioEncoders) {
+        if (mCatalog.count(enc.name)) continue;
+        ComponentDesc d;
+        d.traits.name = enc.name;
+        d.traits.domain = IComponentStore::ComponentTraits::Domain::AUDIO;
+        d.traits.kind = IComponentStore::ComponentTraits::Kind::ENCODER;
+        d.traits.rank = 16;
+        d.traits.mediaType = enc.mime;
+        d.traits.aliases = {};
+        d.kind = MesaCodecKind::kEncoder;
+        d.audio = true;
+        d.aencCodec = enc.aencCodec;
+        mCatalog[enc.name] = d;
+    }
+    ALOGI("host audio encoders available (tebox.aenc)");
+}
+
 std::shared_ptr<Configurable> ComponentStore::storeConfigurable() {
     std::lock_guard<std::mutex> lock(mLock);
     if (!mStoreCfg) {
@@ -159,10 +225,13 @@ std::shared_ptr<Configurable> ComponentStore::interfaceFor(const std::string& na
     if (it != mInterfaces.end()) return it->second;
     int32_t id = mNextId++;
     auto desc = mCatalog.find(name);
-    const bool host = desc != mCatalog.end() && desc->second.hostCodec;
-    auto cfg = host ? SharedRefBase::make<Configurable>(id, name, true,
-                                                        desc->second.traits.mediaType)
-                    : SharedRefBase::make<Configurable>(id, name);
+    const bool decoder = desc != mCatalog.end() &&
+                         desc->second.traits.kind ==
+                                 IComponentStore::ComponentTraits::Kind::DECODER;
+    const std::string mime =
+            desc != mCatalog.end() ? desc->second.traits.mediaType : std::string(kMime);
+    const bool audio = desc != mCatalog.end() && desc->second.audio;
+    auto cfg = SharedRefBase::make<Configurable>(id, name, decoder, mime, audio);
     mInterfaces[name] = cfg;
     return cfg;
 }
@@ -170,6 +239,7 @@ std::shared_ptr<Configurable> ComponentStore::interfaceFor(const std::string& na
 ScopedAStatus ComponentStore::listComponents(
         std::vector<IComponentStore::ComponentTraits>* out) {
     addHostDecoders();
+    addHostEncoders();
     out->clear();
     std::lock_guard<std::mutex> lock(mLock);
     for (const auto& [name, desc] : mCatalog) {
@@ -182,6 +252,7 @@ ScopedAStatus ComponentStore::listComponents(
 ScopedAStatus ComponentStore::createInterface(const std::string& name,
                                             std::shared_ptr<IComponentInterface>* out) {
     addHostDecoders();
+    addHostEncoders();
     if (!hasComponent(name)) {
         return ScopedAStatus::fromServiceSpecificError(Status::NOT_FOUND);
     }
@@ -194,6 +265,7 @@ ScopedAStatus ComponentStore::createComponent(
         const std::string& name, const std::shared_ptr<IComponentListener>& listener,
         const std::shared_ptr<IClientManager>& /*pool*/, std::shared_ptr<IComponent>* out) {
     addHostDecoders();
+    addHostEncoders();
     ComponentDesc desc;
     {
         std::lock_guard<std::mutex> lock(mLock);
@@ -205,11 +277,16 @@ ScopedAStatus ComponentStore::createComponent(
     }
     auto cfg = interfaceFor(name);
     auto intf = SharedRefBase::make<ComponentInterface>(cfg->id(), name, cfg);
+    if (desc.audio) {
+        *out = SharedRefBase::make<TeboxAencComponent>(name, desc.aencCodec, intf, cfg, listener);
+        return ScopedAStatus::ok();
+    }
     if (desc.hostCodec) {
         *out = SharedRefBase::make<HostDecComponent>(name, desc.hostCodec, intf, cfg, listener);
         return ScopedAStatus::ok();
     }
-    auto comp = SharedRefBase::make<MesaAvcComponent>(desc.kind, name, intf, cfg, listener);
+    auto comp = SharedRefBase::make<MesaAvcComponent>(desc.kind, name, intf, cfg, listener,
+                                                      desc.castCodec);
     *out = comp;
     return ScopedAStatus::ok();
 }
