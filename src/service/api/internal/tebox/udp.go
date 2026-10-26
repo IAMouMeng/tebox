@@ -7,22 +7,13 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"tebox-api/internal/constants"
+	"tebox-api/internal/tebox/types"
+	"tebox-api/internal/utils"
 )
 
-// UDP input: each datagram carries one or more JSON lines (InputEvent). On a
-// per-instance control_port the instance is implied; on the shared endpoint
-// (ServeInputUDP) every event names its target with "id" or "ids" ("*" = all
-// running instances), which makes one datagram drive a whole group.
-//
-// Replies go back to the sender: {"ok":false,...} for rejected events and
-// {"type":"clipboard","id":...,"text":...} for guest clipboard changes. A
-// sender receives clipboard updates for udpSubscriberTTL after its last
-// datagram; idle clients keep it alive with {"type":"ping"}.
-
-const (
-	udpSubscriberTTL = 15 * time.Second
-	udpMaxDatagram   = 64 * 1024
-)
+// UDP input on the shared endpoint: each datagram names targets with id/ids.
 
 type udpSubscriber struct {
 	cancel  func()
@@ -32,11 +23,11 @@ type udpSubscriber struct {
 
 type udpServer struct {
 	conn    *net.UDPConn
-	resolve func(InputEvent) []*inputInstance
+	resolve func(types.InputEvent) []*inputInstance
 	ids     func(*inputInstance) string
 
 	mu   sync.Mutex
-	subs map[string]*udpSubscriber // addr + "|" + instance
+	subs map[string]*udpSubscriber
 }
 
 // ServeInputUDP serves the shared UDP input endpoint until the socket fails.
@@ -49,7 +40,14 @@ func (m *Manager) ServeInputUDP(addr string) error {
 	if err != nil {
 		return err
 	}
-	go serveUDPWithIDs(conn, m.input.resolve, m.input.idOf)
+	srv := &udpServer{
+		conn:    conn,
+		resolve: m.input.resolve,
+		ids:     m.input.idOf,
+		subs:    map[string]*udpSubscriber{},
+	}
+	go srv.expire()
+	go srv.loop()
 	return nil
 }
 
@@ -64,17 +62,10 @@ func (h *inputHub) idOf(inst *inputInstance) string {
 	return ""
 }
 
-func serveUDP(conn *net.UDPConn, resolve func(InputEvent) []*inputInstance) {
-	serveUDPWithIDs(conn, resolve, nil)
-}
-
-func serveUDPWithIDs(conn *net.UDPConn, resolve func(InputEvent) []*inputInstance,
-	ids func(*inputInstance) string) {
-	srv := &udpServer{conn: conn, resolve: resolve, ids: ids, subs: map[string]*udpSubscriber{}}
-	go srv.expire()
-	buf := make([]byte, udpMaxDatagram)
+func (srv *udpServer) loop() {
+	buf := make([]byte, constants.UDPMaxDatagram)
 	for {
-		n, addr, err := conn.ReadFromUDP(buf)
+		n, addr, err := srv.conn.ReadFromUDP(buf)
 		if err != nil {
 			srv.closeAll()
 			return
@@ -88,33 +79,38 @@ func serveUDPWithIDs(conn *net.UDPConn, resolve func(InputEvent) []*inputInstanc
 }
 
 func (srv *udpServer) reply(addr *net.UDPAddr, v any) {
-	if data, err := json.Marshal(v); err == nil {
-		_, _ = srv.conn.WriteToUDP(append(data, '\n'), addr)
-	}
+	_ = utils.WriteJSONLine(udpAddrWriter{srv.conn, addr}, v)
+}
+
+type udpAddrWriter struct {
+	conn *net.UDPConn
+	addr *net.UDPAddr
+}
+
+func (w udpAddrWriter) Write(p []byte) (int, error) {
+	return w.conn.WriteToUDP(p, w.addr)
 }
 
 func (srv *udpServer) handle(addr *net.UDPAddr, line []byte) {
-	var ev InputEvent
+	var ev types.InputEvent
 	if err := json.Unmarshal(line, &ev); err != nil {
-		srv.reply(addr, map[string]any{"ok": false, "error": "bad json"})
+		srv.reply(addr, utils.ReplyError("bad json", "", 0))
 		return
 	}
 	targets := srv.resolve(ev)
 	if len(targets) == 0 {
-		srv.reply(addr, map[string]any{"ok": false, "error": ErrInputNotRunning.Error(),
-			"id": ev.ID, "seq": ev.Seq})
+		srv.reply(addr, utils.ReplyError(constants.ErrInputNotRunning.Error(), ev.ID, ev.Seq))
 		return
 	}
 	for _, inst := range targets {
 		if !srv.track(addr, inst, ev.Seq) {
-			continue // stale or duplicate datagram
+			continue
 		}
-		if ev.Type == "ping" || ev.Type == "subscribe" {
+		if ev.Type == constants.EventPing || ev.Type == constants.EventSubscribe {
 			continue
 		}
 		if err := inst.send(ev); err != nil {
-			srv.reply(addr, map[string]any{"ok": false, "error": err.Error(),
-				"id": srv.idFor(inst), "seq": ev.Seq})
+			srv.reply(addr, utils.ReplyError(err.Error(), srv.idFor(inst), ev.Seq))
 		}
 	}
 }
@@ -126,9 +122,8 @@ func (srv *udpServer) idFor(inst *inputInstance) string {
 	return srv.ids(inst)
 }
 
-// track refreshes the sender's clipboard subscription and applies seq order.
 func (srv *udpServer) track(addr *net.UDPAddr, inst *inputInstance, seq uint64) bool {
-	key := addr.String() + "|" + srvKey(inst)
+	key := addr.String() + "|" + fmt.Sprintf("%p", inst)
 	srv.mu.Lock()
 	sub := srv.subs[key]
 	if sub == nil {
@@ -138,15 +133,9 @@ func (srv *udpServer) track(addr *net.UDPAddr, inst *inputInstance, seq uint64) 
 		id := srv.idFor(inst)
 		go func() {
 			for text := range ch {
-				msg := map[string]any{"type": "clipboard", "text": text}
-				if id != "" {
-					msg["id"] = id
-				}
-				srv.reply(addr, msg)
+				srv.reply(addr, utils.ReplyClipboard(text, id))
 			}
 		}()
-		// The agent pushes guest clipboard changes only once it runs.
-		go func() { _, _ = inst.ensureAgent() }()
 	}
 	sub.seen = time.Now()
 	ok := seq == 0 || seq > sub.lastSeq
@@ -157,13 +146,8 @@ func (srv *udpServer) track(addr *net.UDPAddr, inst *inputInstance, seq uint64) 
 	return ok
 }
 
-// srvKey is per instance object, so a restarted instance resubscribes.
-func srvKey(inst *inputInstance) string {
-	return fmt.Sprintf("%p", inst)
-}
-
 func (srv *udpServer) expire() {
-	tick := time.NewTicker(5 * time.Second)
+	tick := time.NewTicker(constants.UDPExpireInterval)
 	defer tick.Stop()
 	for range tick.C {
 		srv.mu.Lock()
@@ -172,7 +156,7 @@ func (srv *udpServer) expire() {
 			return
 		}
 		for key, sub := range srv.subs {
-			if time.Since(sub.seen) > udpSubscriberTTL {
+			if time.Since(sub.seen) > constants.UDPSubscriberTTL {
 				sub.cancel()
 				delete(srv.subs, key)
 			}

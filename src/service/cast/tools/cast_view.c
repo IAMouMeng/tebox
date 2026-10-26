@@ -1189,6 +1189,7 @@ static const char *nav_key_for(SDL_Keycode sym)
     case SDLK_HOME:
     case SDLK_F1:       return "home";
     case SDLK_F2:       return "menu";
+    case SDLK_F3:       return "recent"; /* overview / APP_SWITCH */
     case SDLK_F5:       return "power";
     case SDLK_PAGEUP:   return "volume_up";
     case SDLK_PAGEDOWN: return "volume_down";
@@ -1250,7 +1251,7 @@ static void usage(const char *argv0)
             "                avfoundation:N (macOS camera N, e.g. avfoundation:0)\n"
             "                or a video/image file, looped (30 fps max)\n"
             "Mouse: touch.  Esc / right click back, Home/F1 home, F2 menu,\n"
-            "F5 power, PgUp/PgDn volume.  Typing (any IME) goes to the\n"
+            "F3 recent, F5 power, PgUp/PgDn volume.  Typing goes to the\n"
             "focused field; Cmd+A/C/X/Z/Y act in the guest, Cmd+V pastes the\n"
             "host clipboard.  Clipboards sync both ways.\n",
             argv0);
