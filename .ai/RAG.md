@@ -77,7 +77,7 @@ QEMU 专用仍走脚本的用 `gki_custom`（graphics、keymint、audio、camera
 
 - 用不到的函数、文件当场删。`Android.bp` `srcs` / `gki_custom` `build.sh` 没列的文件删掉。
 - 类 `PascalCase`，函数 `camelCase`，`#define` `SCREAMING_SNAKE`。
-- 只有一处调用的逻辑不要拆 `util.cpp` / `tools.cpp` / `helpers.h`。
+- **共用 helper 按职责拆 TU**（C++/AOSP）：`FdIo.h`、`C2Blocks.h` 等与组件同级；公共 API 进命名空间，实现细节进匿名命名空间。不要杂烩 `tools/`、`util.cpp`。组件只留生命周期与编解码，禁止各文件复制同一套 helper。细则见 `AGENTS.md`。
 - 常量：该文件最上方 `#define`，或多文件共用就单独 `.h`。不要写在函数肚子里。
 - AIDL 必须 override 的 `Bn*` 可以 `EX_UNSUPPORTED_OPERATION`；那是接口，不是死代码。
 

@@ -53,10 +53,14 @@ private:
         aidl::android::hardware::media::c2::IComponentStore::ComponentTraits traits;
         MesaCodecKind kind;
         uint32_t hostCodec = 0;  // V4L2 fourcc: decoded by the host (HostDecComponent)
+        uint32_t castCodec = 0;  // CAST_CODEC_* for host venc encoders
+        bool audio = false;      // host aenc (TeboxAencComponent)
+        uint32_t aencCodec = 0;  // CAST_AENC_*: aac/opus/flac
     };
 
     std::shared_ptr<Configurable> storeConfigurable();
     void addHostDecoders();
+    void addHostEncoders();
     bool hasComponent(const std::string& name);
     std::shared_ptr<Configurable> interfaceFor(const std::string& name);
 
@@ -66,6 +70,7 @@ private:
     std::map<std::string, std::shared_ptr<Configurable>> mInterfaces;
     std::map<std::string, ComponentDesc> mCatalog;  // guarded by mLock
     bool mHostDecoders = false;
+    bool mHostEncoders = false;
 };
 
 }  // namespace gki

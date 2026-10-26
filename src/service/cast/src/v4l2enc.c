@@ -1,9 +1,10 @@
-/* Direct V4L2 M2M H.264 encoder (Linux), used ahead of FFmpeg.
+/* Direct V4L2 M2M video encoder (Linux), used ahead of FFmpeg.
  *
  * FFmpeg's h264_v4l2m2m crashes in avcodec_send_frame on the CIX Sky1
  * "mvx" encoder, so frames go to the device here: RGBA/BGRA input as
- * AB24/AR24 (the VPU converts colour), one frame in flight, SPS/PPS cached
- * and re-sent with every IDR. Mirrors virglrenderer's vrend_video_v4l2.c.
+ * AB24/AR24 (the VPU converts colour), one frame in flight. H.264/HEVC
+ * cache SPS(/VPS)/PPS and re-send with every IDR; VP8/VP9 return raw
+ * frames. Mirrors virglrenderer's vrend_video_v4l2.c.
  */
 #include "v4l2enc.h"
 
@@ -25,6 +26,16 @@
 #define NUM_CAPTURE 4
 #define ENCODE_TIMEOUT_MS 500
 
+#ifndef V4L2_PIX_FMT_HEVC
+#define V4L2_PIX_FMT_HEVC v4l2_fourcc('H', 'E', 'V', 'C')
+#endif
+#ifndef V4L2_PIX_FMT_VP8
+#define V4L2_PIX_FMT_VP8 v4l2_fourcc('V', 'P', '8', '0')
+#endif
+#ifndef V4L2_PIX_FMT_VP9
+#define V4L2_PIX_FMT_VP9 v4l2_fourcc('V', 'P', '9', '0')
+#endif
+
 struct plane_map {
     void *ptr;
     size_t length;
@@ -39,7 +50,9 @@ struct cast_v4l2 {
     int fd;
     char path[64];
     int width, height;
-    uint32_t fourcc;
+    enum cast_codec codec;
+    uint32_t out_fourcc;
+    uint32_t fourcc; /* input RGBA/BGRA fourcc */
     struct v4l2_format in_fmt;
     uint32_t out_memory; /* MMAP, or DMABUF for frames already in a dma-buf */
     struct buf_map output[NUM_OUTPUT], capture[NUM_CAPTURE];
@@ -51,6 +64,26 @@ struct cast_v4l2 {
     unsigned frames;
 };
 
+static uint32_t codec_pixelformat(enum cast_codec codec)
+{
+    switch (codec) {
+    case CAST_CODEC_HEVC:
+        return V4L2_PIX_FMT_HEVC;
+    case CAST_CODEC_VP8:
+        return V4L2_PIX_FMT_VP8;
+    case CAST_CODEC_VP9:
+        return V4L2_PIX_FMT_VP9;
+    case CAST_CODEC_H264:
+    default:
+        return V4L2_PIX_FMT_H264;
+    }
+}
+
+static bool codec_is_annexb(enum cast_codec codec)
+{
+    return codec == CAST_CODEC_H264 || codec == CAST_CODEC_HEVC;
+}
+
 static int xioctl(int fd, unsigned long request, void *arg)
 {
     int r;
@@ -61,7 +94,7 @@ static int xioctl(int fd, unsigned long request, void *arg)
     return r;
 }
 
-static bool encodes_h264(const char *path)
+static bool encodes_pixelformat(const char *path, uint32_t pixelformat)
 {
     struct v4l2_capability cap;
     int fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
@@ -83,14 +116,14 @@ static bool encodes_h264(const char *path)
             if (xioctl(fd, VIDIOC_ENUM_FMT, &desc)) {
                 break;
             }
-            ok = desc.pixelformat == V4L2_PIX_FMT_H264;
+            ok = desc.pixelformat == pixelformat;
         }
     }
     close(fd);
     return ok;
 }
 
-static bool find_device(char *path, size_t size)
+static bool find_device(char *path, size_t size, uint32_t pixelformat)
 {
     const char *forced = getenv("TEBOX_CAST_V4L2_DEVICE");
     DIR *dir;
@@ -99,7 +132,7 @@ static bool find_device(char *path, size_t size)
 
     if (forced && forced[0]) {
         snprintf(path, size, "%s", forced);
-        return encodes_h264(path);
+        return encodes_pixelformat(path, pixelformat);
     }
     dir = opendir("/dev");
     if (!dir) {
@@ -108,7 +141,7 @@ static bool find_device(char *path, size_t size)
     while (!found && (e = readdir(dir))) {
         if (!strncmp(e->d_name, "video", 5) && strlen(e->d_name) < size - 6) {
             snprintf(path, size, "/dev/%s", e->d_name);
-            found = encodes_h264(path);
+            found = encodes_pixelformat(path, pixelformat);
         }
     }
     closedir(dir);
@@ -197,7 +230,7 @@ static bool append(uint8_t **data, size_t *size, size_t *cap,
 }
 
 /* Bitmask of the H.264 NAL unit types in an Annex-B buffer. */
-static uint32_t nal_types(const uint8_t *d, size_t n)
+static uint32_t h264_nal_types(const uint8_t *d, size_t n)
 {
     uint32_t mask = 0;
 
@@ -210,9 +243,31 @@ static uint32_t nal_types(const uint8_t *d, size_t n)
     return mask;
 }
 
-#define NAL_SLICE_MASK ((1u << 1) | (1u << 5))
-#define NAL_IDR_MASK   (1u << 5)
-#define NAL_SPS_MASK   (1u << 7)
+#define H264_SLICE_MASK ((1u << 1) | (1u << 5))
+#define H264_IDR_MASK   (1u << 5)
+#define H264_SPS_MASK   (1u << 7)
+
+static void hevc_scan(const uint8_t *d, size_t n, bool *has_slice, bool *has_idr,
+                      bool *has_param)
+{
+    *has_slice = *has_idr = *has_param = false;
+    for (size_t i = 0; i + 4 < n; i++) {
+        if (d[i] == 0 && d[i + 1] == 0 && d[i + 2] == 1) {
+            uint8_t t = (d[i + 3] >> 1) & 0x3f;
+
+            if (t <= 9 || (t >= 16 && t <= 21)) {
+                *has_slice = true;
+            }
+            if (t == 19 || t == 20) {
+                *has_idr = true;
+            }
+            if (t == 32 || t == 33 || t == 34) {
+                *has_param = true;
+            }
+            i += 2;
+        }
+    }
+}
 
 void cast_v4l2_close(struct cast_v4l2 *e)
 {
@@ -245,9 +300,9 @@ void cast_v4l2_close(struct cast_v4l2 *e)
     free(e);
 }
 
-struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
-                                 int64_t bitrate, int gop_frames, bool dmabuf_input,
-                                 int stride)
+struct cast_v4l2 *cast_v4l2_open(enum cast_codec codec, int width, int height,
+                                 bool rgba, int fps, int64_t bitrate,
+                                 int gop_frames, bool dmabuf_input, int stride)
 {
     struct cast_v4l2 *e = calloc(1, sizeof(*e));
     struct v4l2_format fmt;
@@ -257,8 +312,14 @@ struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
     if (!e) {
         return NULL;
     }
+    if (codec != CAST_CODEC_H264 && codec != CAST_CODEC_HEVC &&
+        codec != CAST_CODEC_VP8 && codec != CAST_CODEC_VP9) {
+        codec = CAST_CODEC_H264;
+    }
     e->fd = -1;
-    if (!find_device(e->path, sizeof(e->path))) {
+    e->codec = codec;
+    e->out_fourcc = codec_pixelformat(codec);
+    if (!find_device(e->path, sizeof(e->path), e->out_fourcc)) {
         free(e);
         return NULL;
     }
@@ -274,7 +335,7 @@ struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
 
     memset(&fmt, 0, sizeof(fmt));
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-    fmt.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_H264;
+    fmt.fmt.pix_mp.pixelformat = e->out_fourcc;
     fmt.fmt.pix_mp.width = width;
     fmt.fmt.pix_mp.height = height;
     fmt.fmt.pix_mp.num_planes = 1;
@@ -302,7 +363,15 @@ struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
     parm.parm.output.timeperframe.denominator = fps > 0 ? fps : 60;
     xioctl(e->fd, VIDIOC_S_PARM, &parm);
 
-    set_ctrl(e, V4L2_CID_MPEG_VIDEO_H264_PROFILE, V4L2_MPEG_VIDEO_H264_PROFILE_MAIN);
+    if (codec == CAST_CODEC_H264) {
+        set_ctrl(e, V4L2_CID_MPEG_VIDEO_H264_PROFILE,
+                 V4L2_MPEG_VIDEO_H264_PROFILE_MAIN);
+#ifdef V4L2_CID_MPEG_VIDEO_HEVC_PROFILE
+    } else if (codec == CAST_CODEC_HEVC) {
+        set_ctrl(e, V4L2_CID_MPEG_VIDEO_HEVC_PROFILE,
+                 V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN);
+#endif
+    }
     set_ctrl(e, V4L2_CID_MPEG_VIDEO_B_FRAMES, 0);
     set_ctrl(e, V4L2_CID_MPEG_VIDEO_GOP_SIZE, gop_frames > 0 ? gop_frames : 60);
     set_ctrl(e, V4L2_CID_MPEG_VIDEO_BITRATE_MODE, V4L2_MPEG_VIDEO_BITRATE_MODE_CBR);
@@ -340,8 +409,9 @@ struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
     if (xioctl(e->fd, VIDIOC_STREAMON, &type)) {
         goto fail;
     }
-    fprintf(stderr, "cast-v4l2: %s %dx%d input=%.4s stride=%u%s\n", e->path,
-            width, height, (const char *)&e->fourcc,
+    fprintf(stderr, "cast-v4l2: %s %s %dx%d input=%.4s out=%.4s stride=%u%s\n",
+            e->path, cast_codec_name(codec), width, height,
+            (const char *)&e->fourcc, (const char *)&e->out_fourcc,
             e->in_fmt.fmt.pix_mp.plane_fmt[0].bytesperline,
             dmabuf_input ? " dma-buf (zero-copy)" : "");
     return e;
@@ -456,12 +526,13 @@ bool cast_v4l2_dmabuf_input(const struct cast_v4l2 *e)
     return e && e->out_memory == V4L2_MEMORY_DMABUF;
 }
 
-/* Waits for the encoded slice of the frame just queued. */
+/* Waits for the encoded slice/frame of the buffer just queued. */
 static int collect(struct cast_v4l2 *e, const uint8_t **out, size_t *out_size, bool *key)
 {
     uint8_t *frame = NULL;
     size_t frame_size = 0, frame_cap = 0;
     bool have_slice = false;
+    bool key_flag = false;
 
     /* Parameter sets may arrive in a buffer of their own before the slice. */
     while (!have_slice) {
@@ -473,7 +544,7 @@ static int collect(struct cast_v4l2 *e, const uint8_t **out, size_t *out_size, b
         };
 
         if (poll(&pfd, 1, ENCODE_TIMEOUT_MS) <= 0 || (pfd.revents & POLLERR)) {
-            fprintf(stderr, "cast-v4l2: no H.264 output\n");
+            fprintf(stderr, "cast-v4l2: no encoded output\n");
             break;
         }
         memset(cplanes, 0, sizeof(cplanes));
@@ -489,18 +560,47 @@ static int collect(struct cast_v4l2 *e, const uint8_t **out, size_t *out_size, b
                                   cplanes[0].data_offset;
             size_t len = cplanes[0].bytesused > cplanes[0].data_offset
                              ? cplanes[0].bytesused - cplanes[0].data_offset : 0;
-            uint32_t types = nal_types(data, len);
 
-            if (types & NAL_SLICE_MASK) {
-                append(&frame, &frame_size, &frame_cap, data, len);
-                have_slice = true;
-            } else if (len && (types & NAL_SPS_MASK)) {
-                size_t hcap = 0;
+            if (cbuf.flags & V4L2_BUF_FLAG_KEYFRAME) {
+                key_flag = true;
+            }
+            if (!codec_is_annexb(e->codec)) {
+                if (len) {
+                    append(&frame, &frame_size, &frame_cap, data, len);
+                    have_slice = true;
+                }
+            } else if (e->codec == CAST_CODEC_HEVC) {
+                bool slice = false, idr = false, param = false;
 
-                free(e->headers);
-                e->headers = NULL;
-                e->headers_size = 0;
-                append(&e->headers, &e->headers_size, &hcap, data, len);
+                hevc_scan(data, len, &slice, &idr, &param);
+                if (slice) {
+                    append(&frame, &frame_size, &frame_cap, data, len);
+                    have_slice = true;
+                    if (idr) {
+                        key_flag = true;
+                    }
+                } else if (len && param) {
+                    size_t hcap = 0;
+
+                    free(e->headers);
+                    e->headers = NULL;
+                    e->headers_size = 0;
+                    append(&e->headers, &e->headers_size, &hcap, data, len);
+                }
+            } else {
+                uint32_t types = h264_nal_types(data, len);
+
+                if (types & H264_SLICE_MASK) {
+                    append(&frame, &frame_size, &frame_cap, data, len);
+                    have_slice = true;
+                } else if (len && (types & H264_SPS_MASK)) {
+                    size_t hcap = 0;
+
+                    free(e->headers);
+                    e->headers = NULL;
+                    e->headers_size = 0;
+                    append(&e->headers, &e->headers_size, &hcap, data, len);
+                }
             }
             queue_capture(e, cbuf.index);
         }
@@ -511,17 +611,17 @@ static int collect(struct cast_v4l2 *e, const uint8_t **out, size_t *out_size, b
     }
 
     e->encoded_size = 0;
-    {
-        uint32_t types = nal_types(frame, frame_size);
+    *key = key_flag;
+    if (e->codec == CAST_CODEC_H264) {
+        uint32_t types = h264_nal_types(frame, frame_size);
 
-        *key = (types & NAL_IDR_MASK) != 0;
-        if (types & NAL_SPS_MASK) {
-            /* In-band parameter sets: keep them for later forced IDRs. */
+        *key = (types & H264_IDR_MASK) != 0;
+        if (types & H264_SPS_MASK) {
             size_t end = 0, hcap = 0;
 
             for (size_t i = 0; i + 3 < frame_size; i++) {
                 if (frame[i] == 0 && frame[i + 1] == 0 && frame[i + 2] == 1 &&
-                    ((1u << (frame[i + 3] & 0x1f)) & NAL_SLICE_MASK)) {
+                    ((1u << (frame[i + 3] & 0x1f)) & H264_SLICE_MASK)) {
                     end = i > 0 && frame[i - 1] == 0 ? i - 1 : i;
                     break;
                 }
@@ -533,26 +633,50 @@ static int collect(struct cast_v4l2 *e, const uint8_t **out, size_t *out_size, b
                 append(&e->headers, &e->headers_size, &hcap, frame, end);
             }
         } else if (*key && e->headers_size) {
-            /* Every IDR carries SPS/PPS so a viewer can join at any keyframe. */
             append(&e->encoded, &e->encoded_size, &e->encoded_cap, e->headers,
                    e->headers_size);
         }
+    } else if (e->codec == CAST_CODEC_HEVC) {
+        bool slice = false, idr = false, param = false;
+
+        hevc_scan(frame, frame_size, &slice, &idr, &param);
+        *key = idr || key_flag;
+        if (param) {
+            size_t end = 0, hcap = 0;
+
+            for (size_t i = 0; i + 4 < frame_size; i++) {
+                if (frame[i] == 0 && frame[i + 1] == 0 && frame[i + 2] == 1) {
+                    uint8_t t = (frame[i + 3] >> 1) & 0x3f;
+
+                    if (t <= 9 || (t >= 16 && t <= 21)) {
+                        end = i > 0 && frame[i - 1] == 0 ? i - 1 : i;
+                        break;
+                    }
+                }
+            }
+            if (end) {
+                free(e->headers);
+                e->headers = NULL;
+                e->headers_size = 0;
+                append(&e->headers, &e->headers_size, &hcap, frame, end);
+            }
+        } else if (*key && e->headers_size) {
+            append(&e->encoded, &e->encoded_size, &e->encoded_cap, e->headers,
+                   e->headers_size);
+        }
+    } else if (e->codec == CAST_CODEC_VP8 && frame_size > 0) {
+        /* VP8: keyframe when frame tag bit 0 is clear. */
+        *key = key_flag || ((frame[0] & 1) == 0);
+    } else if (e->codec == CAST_CODEC_VP9 && frame_size > 0) {
+        /* VP9: uncompressed header frame_type bit after marker. */
+        *key = key_flag || ((frame[0] & 0x4) == 0);
     }
     append(&e->encoded, &e->encoded_size, &e->encoded_cap, frame, frame_size);
     free(frame);
     if (e->frames++ < 3) {
-        char nals[64] = "";
-        size_t used = 0;
-
-        for (size_t i = 0; i + 3 < e->encoded_size && used + 4 < sizeof(nals); i++) {
-            if (e->encoded[i] == 0 && e->encoded[i + 1] == 0 && e->encoded[i + 2] == 1) {
-                used += snprintf(nals + used, sizeof(nals) - used, "%u ",
-                                 e->encoded[i + 3] & 0x1f);
-                i += 2;
-            }
-        }
-        fprintf(stderr, "cast-v4l2: frame %u bytes=%zu nal=[%s] headers=%zu\n",
-                e->frames - 1, e->encoded_size, nals, e->headers_size);
+        fprintf(stderr, "cast-v4l2: frame %u %s bytes=%zu key=%d headers=%zu\n",
+                e->frames - 1, cast_codec_name(e->codec), e->encoded_size,
+                *key ? 1 : 0, e->headers_size);
     }
     *out = e->encoded;
     *out_size = e->encoded_size;
@@ -564,13 +688,18 @@ const char *cast_v4l2_device(const struct cast_v4l2 *e)
     return e ? e->path : "";
 }
 
+enum cast_codec cast_v4l2_codec(const struct cast_v4l2 *e)
+{
+    return e ? e->codec : CAST_CODEC_H264;
+}
+
 #else /* !__linux__ */
 
-struct cast_v4l2 *cast_v4l2_open(int width, int height, bool rgba, int fps,
-                                 int64_t bitrate, int gop_frames, bool dmabuf_input,
-                                 int stride)
+struct cast_v4l2 *cast_v4l2_open(enum cast_codec codec, int width, int height,
+                                 bool rgba, int fps, int64_t bitrate,
+                                 int gop_frames, bool dmabuf_input, int stride)
 {
-    (void)width; (void)height; (void)rgba; (void)fps; (void)bitrate;
+    (void)codec; (void)width; (void)height; (void)rgba; (void)fps; (void)bitrate;
     (void)gop_frames; (void)dmabuf_input; (void)stride;
     return NULL;
 }
@@ -613,6 +742,12 @@ const char *cast_v4l2_device(const struct cast_v4l2 *e)
 {
     (void)e;
     return "";
+}
+
+enum cast_codec cast_v4l2_codec(const struct cast_v4l2 *e)
+{
+    (void)e;
+    return CAST_CODEC_H264;
 }
 
 #endif

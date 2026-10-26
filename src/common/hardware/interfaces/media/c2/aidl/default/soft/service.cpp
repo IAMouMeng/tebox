@@ -1,5 +1,5 @@
 /*
- * Vendor Codec2 store: Mesa / VirGL Gallium video (c2.mesa.avc.*).
+ * Vendor Codec2 store: host tebox.venc / tebox.aenc / VirGL (c2.tebox.*).
  */
 
 #include "ComponentStore.h"

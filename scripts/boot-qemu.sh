@@ -257,7 +257,7 @@ elif [[ "$FORCE_RUTABAGA" == 1 ]]; then
   fi
 else
   # VirGL: selected when src/aosp/<variant>/GPU is "virgl" (or FORCE_RUTABAGA=0).
-  # video_encode selects media_codecs_tebox_video.xml so c2.mesa.* appears
+  # video_encode selects media_codecs_tebox_video.xml so c2.tebox.* appears
   # (host needs VIRGL_VIDEO=1). GPU_DEV is virtio-gpu-gl-pci when FORCE_VIRGL=1.
   # stub allocator GBM handles match VirGL kms_display setTarget.
   APPEND+=(androidboot.tebox.gpu=virgl androidboot.hardwareegl=mesa
@@ -265,7 +265,7 @@ else
     androidboot.hwui.renderer="${HWUI_RENDERER:-skiagl}"
     androidboot.hardware.gralloc=stub
     androidboot.tebox.video_encode=1 androidboot.tebox.video_decode=1)
-  echo "gpu:     virgl (Mesa + stub gralloc + c2.mesa; from GPU file / FORCE_RUTABAGA=0)"
+  echo "gpu:     virgl (Mesa + stub gralloc + c2.tebox; from GPU file / FORCE_RUTABAGA=0)"
 fi
 # Display refresh rate (graphics HAL vsync). It caps every app's frame rate,
 # benchmarks included; 120 lets the GPU run past 60 fps.
@@ -313,7 +313,7 @@ if [[ "${TEBOX_CAST:-0}" == 1 ]]; then
     # gfxstream has no VirGL video: the guest Codec2 encoder sends resource
     # ids over tebox.venc and tebox-cast encodes on the host, reading the
     # frames from QEMU's resource server (res.sock, virtio-gpu-rutabaga.c).
-    MEDIA_PORTS+=" venc:tebox.venc"
+    MEDIA_PORTS+=" venc:tebox.venc aenc:tebox.aenc"
     export TEBOX_RES_SOCK="$MEDIA_DIR/res.sock"
     APPEND+=(androidboot.tebox.video_encode=1)
     if [[ "$HOST_OS" == linux ]]; then

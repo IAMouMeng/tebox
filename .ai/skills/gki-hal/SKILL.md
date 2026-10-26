@@ -87,8 +87,9 @@ often reuses `hal_keymint_system_exec` under permissive).
   stay. See `.ai/AGENTS.md` Code conventions.
 - **Names:** classes `PascalCase`, functions `camelCase`, `#define` constants
   `SCREAMING_SNAKE`. Do not mint `tools_` / `utils_` helpers.
-- **One caller → inline.** Do not split a helper that only one function uses.
-  No `util.cpp` / `tools.cpp` for a single user.
+- **Shared helpers:** purpose-named `.h`/`.cpp` next to callers (`FdIo`,
+  `C2Blocks`, …); public API in the module namespace. No catch-all
+  `tools/` / `util.cpp`. Feature-only logic stays in the component.
 - **Constants** are `#define` at the top of the `.c/.cpp`, or a dedicated
   `.h` if several files share them. No magic numbers in function bodies.
 - KeyMint must do real crypto: common

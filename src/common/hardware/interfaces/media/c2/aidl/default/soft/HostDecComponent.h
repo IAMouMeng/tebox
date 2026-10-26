@@ -79,7 +79,6 @@ private:
     };
 
     void workerLoop();
-    static void portReader(int fd);
     bool provideTargets();
     bool allocateTarget(Target* target);
     void releaseTarget(Target* target, bool returnToPool);

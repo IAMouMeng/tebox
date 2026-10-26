@@ -22,14 +22,55 @@
         </MediaCodec>
     </Decoders>
     <Encoders>
-        <MediaCodec name="c2.mesa.avc.encoder" type="video/avc">
-            <Alias name="OMX.mesa.avc.encoder"/>
+        <MediaCodec name="c2.tebox.avc.encoder" type="video/avc">
+            <Alias name="OMX.tebox.avc.encoder"/>
             <Limit name="size" min="16x16" max="4096x4096"/>
             <Limit name="alignment" value="2x2"/>
             <Limit name="block-size" value="16x16"/>
             <Limit name="blocks-per-second" range="1-244140"/>
             <Limit name="bitrate" range="1-50000000"/>
             <Feature name="intra-refresh"/>
+        </MediaCodec>
+        <MediaCodec name="c2.tebox.hevc.encoder" type="video/hevc">
+            <Alias name="OMX.tebox.hevc.encoder"/>
+            <Limit name="size" min="16x16" max="4096x4096"/>
+            <Limit name="alignment" value="2x2"/>
+            <Limit name="block-size" value="16x16"/>
+            <Limit name="blocks-per-second" range="1-244140"/>
+            <Limit name="bitrate" range="1-50000000"/>
+            <Feature name="intra-refresh"/>
+        </MediaCodec>
+        <MediaCodec name="c2.tebox.vp8.encoder" type="video/x-vnd.on2.vp8">
+            <Alias name="OMX.tebox.vp8.encoder"/>
+            <Limit name="size" min="16x16" max="4096x4096"/>
+            <Limit name="alignment" value="2x2"/>
+            <Limit name="block-size" value="16x16"/>
+            <Limit name="blocks-per-second" range="1-244140"/>
+            <Limit name="bitrate" range="1-50000000"/>
+        </MediaCodec>
+        <MediaCodec name="c2.tebox.vp9.encoder" type="video/x-vnd.on2.vp9">
+            <Alias name="OMX.tebox.vp9.encoder"/>
+            <Limit name="size" min="16x16" max="4096x4096"/>
+            <Limit name="alignment" value="2x2"/>
+            <Limit name="block-size" value="16x16"/>
+            <Limit name="blocks-per-second" range="1-244140"/>
+            <Limit name="bitrate" range="1-50000000"/>
+        </MediaCodec>
+        <!-- Host FFmpeg over tebox.aenc (listed when the port exists). -->
+        <MediaCodec name="c2.tebox.aac.encoder" type="audio/mp4a-latm">
+            <Limit name="channel-count" max="2"/>
+            <Limit name="sample-rate" ranges="8000,11025,12000,16000,22050,24000,32000,44100,48000"/>
+            <Limit name="bitrate" range="8000-512000"/>
+        </MediaCodec>
+        <MediaCodec name="c2.tebox.opus.encoder" type="audio/opus">
+            <Limit name="channel-count" max="2"/>
+            <Limit name="sample-rate" ranges="8000,12000,16000,24000,48000"/>
+            <Limit name="bitrate" range="6000-510000"/>
+        </MediaCodec>
+        <MediaCodec name="c2.tebox.flac.encoder" type="audio/flac">
+            <Limit name="channel-count" max="2"/>
+            <Limit name="sample-rate" ranges="8000,11025,12000,16000,22050,24000,32000,44100,48000"/>
+            <Limit name="bitrate" range="1-21000000"/>
         </MediaCodec>
     </Encoders>
 </MediaCodecs>

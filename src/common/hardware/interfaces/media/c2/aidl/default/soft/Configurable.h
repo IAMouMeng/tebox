@@ -9,10 +9,10 @@ namespace gki {
 
 class Configurable : public aidl::android::hardware::media::c2::BnConfigurable {
 public:
-    // |decoder|: a decoder of |mime| (bitstream in, RGBA pictures out);
-    // otherwise the AVC encoder (pictures in, bitstream out).
+    // |decoder|: bitstream in, pictures/PCM out; otherwise encoder.
+    // |audio|: DOMAIN_AUDIO + audio/raw (otherwise DOMAIN_VIDEO + video/raw).
     Configurable(int32_t id, std::string name, bool decoder = false,
-                 std::string mime = "video/avc");
+                 std::string mime = "video/avc", bool audio = false);
 
     ndk::ScopedAStatus config(
             const aidl::android::hardware::media::c2::Params& inParams, bool mayBlock,
@@ -44,6 +44,7 @@ private:
     const int32_t mId;
     const std::string mName;
     const bool mDecoder;
+    const bool mAudio;
     const std::string mMime;
     mutable std::mutex mLock;
     uint32_t mWidth = 1080;
