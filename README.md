@@ -33,14 +33,15 @@
 
 > 说明：能否完整启动取决于目标 GSI 的 Treble / VINTF 要求；厂商专有分区与闭源服务需自行适配。基座提供的是可扩展的运行与 HAL 框架，而不是某一机型的一键刷机包。从设备提取或使用第三方 / 厂商镜像、固件与闭源组件时，请自行确认并遵守当地法律、厂商许可协议与版权要求；相关合规与法律风险由使用者自行承担。
 
+## 启动截图
+
+<p align="center">
+  <img src="docs/screenshots/ops-coffee-1793007973066.jpg" width="720" alt="">
+</p>
+
 ### 相关资源
 
 - 各类社区 GSI 镜像汇总下载：[Mystic GSI Updates（SourceForge）](https://sourceforge.net/projects/mystic-gsi-updates/files/)
-
-## 适用场景
-
-- 在桌面环境验证 / 对比不同 GSI 镜像
-- 开发与调试 vendor HAL、图形栈与系统服务
 
 ## 运行环境
 
@@ -50,49 +51,6 @@
 | **Linux ARM64** | 支持原生构建与运行（KVM） |
 | **Linux x86_64** | 主要用于交叉编译 Android ARM64 客体 |
 | **Windows x86_64** | 原生 QEMU/VirGL PE 运行时 |
-
-客体为 **aarch64 Android GSI**；推荐配备可用 GPU 与图形会话。
-
-## 启动截图
-
-<p align="center">
-  <img src="docs/screenshots/launched.png" width="240" alt="AOSP GSI 启动界面">
-  <img src="docs/screenshots/coloros_launched.png" width="240" alt="厂商 ROM 示例：ColorOS GSI">
-  <img src="docs/screenshots/antutu_on_myt_r1p_cix6187.png" width="240" alt="安兔兔跑分：R1P（CIX 6187）">
-</p>
-
-<p align="center">
-  左：AOSP GSI　中：厂商 ROM 示例（ColorOS GSI）　右：安兔兔 V12 跑分（R1P / CIX 6187，gfxstream：ANGLE + Vulkan on Mali-G720）
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/originos_launched.png" width="240" alt="厂商 ROM 示例：OriginOS GSI">
-  <img src="docs/screenshots/magicos_launched.png" width="240" alt="厂商 ROM 示例：MagicOS GSI">
-  <img src="docs/screenshots/oneui_tab_s9_launched.png" width="240" alt="厂商 ROM 示例：OneUI GSI">
-</p>
-
-<p align="center">
-  左：OriginOS GSI（vivo，Android 15）　中：MagicOS GSI（荣耀，Android 16）　右：OneUI GSI（三星 Galaxy Tab S9，Android 16）
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/flyme_launched.png" width="240" alt="厂商 ROM 示例：Flyme GSI">
-  <img src="docs/screenshots/oneui_s25ultra_launched.png" width="240" alt="厂商 ROM 示例：OneUI GSI（Galaxy S25 Ultra）">
-</p>
-
-<p align="center">
-  左：Flyme GSI（魅族 22，Android 15）　右：OneUI GSI（三星 Galaxy S25 Ultra，Android 16）
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/Gigaset-13-1693462027-AB-20230918-MysticGSI.png" width="240" alt="厂商 ROM 示例：Gigaset GSI">
-  <img src="docs/screenshots/Oppo-lahaina-13-1694594759862-AB-20231007-MysticGSI.png" width="240" alt="厂商 ROM 示例：OPPO GSI">
-  <img src="docs/screenshots/RogUI-rogphone7-13-33.0820.0810.217-0-AB-20230907-MysticGSI.png" width="240" alt="厂商 ROM 示例：RogUI GSI">
-</p>
-
-<p align="center">
-  左：Gigaset GSI（Android 13）　中：OPPO GSI（lahaina，Android 13）　右：RogUI GSI（ROG Phone 7，Android 13）
-</p>
 
 ## 正确拉取源码
 
