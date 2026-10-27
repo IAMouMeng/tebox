@@ -120,11 +120,24 @@ compile_one() {
 }
 
 for f in \
+  "$HAL/soft/FdIo.cpp" \
+  "$HAL/soft/C2Blocks.cpp" \
+  "$HAL/soft/C2ParamBlob.cpp" \
+  "$HAL/soft/C2AidlDup.cpp" \
+  "$HAL/soft/ColorConvert.cpp" \
+  "$HAL/soft/C2Graphic.cpp" \
+  "$HAL/soft/AvcAnnexB.cpp" \
+  "$HAL/soft/VirtGpuResource.cpp" \
+  "$HAL/soft/VirtioSerial.cpp" \
+  "$HAL/soft/VencPort.cpp" \
+  "$HAL/soft/VdecPort.cpp" \
+  "$HAL/soft/VirglCaps.cpp" \
   "$HAL/soft/mesa_pipe_video.cpp" \
   "$HAL/soft/Configurable.cpp" \
   "$HAL/soft/ComponentInterface.cpp" \
   "$HAL/soft/MesaAvcComponent.cpp" \
   "$HAL/soft/HostDecComponent.cpp" \
+  "$HAL/soft/TeboxAencComponent.cpp" \
   "$HAL/soft/ComponentStore.cpp" \
   "$HAL/soft/service.cpp"; do
   compile_one "$f"

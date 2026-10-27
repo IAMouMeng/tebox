@@ -95,10 +95,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(TeboxMali, TEBOX_MALI)
 #define TBXM_KBASE_NR_QUEUE_REGISTER 36    /* struct kbase_ioctl_cs_queue_register */
 #define TBXM_KBASE_NR_QUEUE_REGISTER_EX 40 /* register_ex: same buffer_gpu_addr */
 #define TBXM_KBASE_NR_QUEUE_BIND     39    /* union kbase_ioctl_cs_queue_bind   */
-#define TBXM_KBASE_NR_QUEUE_KICK     37    /* struct kbase_ioctl_cs_queue_kick  */
 #define TBXM_KBASE_NR_QUEUE_TERMINATE 41   /* terminate by buffer_gpu_addr (ring) */
 #define TBXM_KBASE_NR_GROUP_TERMINATE 43   /* struct kbase_ioctl_cs_queue_group_term */
-#define TBXM_KBASE_NR_CS_EVENT_SIGNAL 44   /* wake CSF MCU to notice USER_IO    */
 #define TBXM_KBASE_NR_HEAP_INIT      48    /* out.gpu_heap_va at offset 0       */
 #define TBXM_KBASE_NR_HEAP_TERM      49    /* struct kbase_ioctl_cs_tiler_heap_term */
 #define TBXM_MAX_HEAPS               16
@@ -115,6 +113,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(TeboxMali, TEBOX_MALI)
 #define TBXM_COOKIE_FIRST            0x40  /* BASE_MEM_COOKIE_BASE >> PAGE_SHIFT */
 #define TBXM_NR_COOKIES              64
 #define TBXM_COOKIE_KNOWN            0x80  /* cookie_prot[] entry is valid      */
+#define TBXM_WIN_OFF_NONE            UINT64_MAX  /* win_off[]: no pending import */
 
 /* kbase MEM_IMPORT (USER_BUFFER) — see mali_kbase_ioctl.h. */
 #define TBXM_KBASE_IOCTL_MEM_IMPORT  0xc0188016u  /* _IOWR(0x80,22,24) */
@@ -1013,8 +1012,9 @@ static int tbxm_op_open(TeboxMali *m, void *out, uint32_t *out_len)
     m->ctx[idx].owner = m;
     m->ctx[idx].watching = false;
     memset(m->ctx[idx].cookie_prot, 0, sizeof(m->ctx[idx].cookie_prot));
+    memset(m->ctx[idx].win_off, 0xff, sizeof(m->ctx[idx].win_off));
+    memset(m->ctx[idx].win_size, 0, sizeof(m->ctx[idx].win_size));
     memset(m->ctx[idx].heap_va, 0, sizeof(m->ctx[idx].heap_va));
-    memset(m->ctx[idx].queue, 0, sizeof(m->ctx[idx].queue));
     memset(m->ctx[idx].queue, 0, sizeof(m->ctx[idx].queue));
     tbxm_ctx_watch(&m->ctx[idx], true);
     struct tebox_mali_open_resp *r = out;
@@ -1030,166 +1030,6 @@ static int tbxm_op_open(TeboxMali *m, void *out, uint32_t *out_len)
 static bool tbxm_is_user_io(const TeboxMaliMap *mp)
 {
     return mp->pgoff >= TBXM_USER_IO_FIRST && mp->pgoff < TBXM_COOKIE_FIRST;
-}
-
-/*
- * Guest USER_IO doorbell stores share the host kbase pages, but KVM Stage-2
- * maps the hostmem BAR as Normal-WB while host/GPU doorbells are WC/NC.
- * Clean+invalidate the CPU cache lines so the MCU sees the guest stores.
- */
-static void tbxm_dcache_clean_poc(void *addr, uint64_t size)
-{
-#if defined(__aarch64__)
-    uintptr_t start = (uintptr_t)addr & ~((uintptr_t)63);
-    uintptr_t end = ((uintptr_t)addr + (uintptr_t)size + 63) & ~((uintptr_t)63);
-
-    for (uintptr_t p = start; p < end; p += 64) {
-        __asm__ __volatile__("dc civac, %0" : : "r"(p) : "memory");
-    }
-    __asm__ __volatile__("dsb sy" ::: "memory");
-#else
-    __builtin___clear_cache((char *)addr, (char *)addr + size);
-    __sync_synchronize();
-#endif
-}
-
-static void tbxm_flush_user_io(TeboxMali *m, int ctx)
-{
-    for (int i = 0; i < TEBOX_MALI_MAX_MAPS; i++) {
-        TeboxMaliMap *mp = &m->map[i];
-
-        if (!mp->used || mp->ctx != ctx || !tbxm_is_user_io(mp) ||
-            !mp->host_ptr || !mp->size) {
-            continue;
-        }
-        tbxm_dcache_clean_poc(mp->host_ptr, mp->size);
-    }
-}
-
-/* Vulkan often only writes USER_IO doorbells (no guest QUEUE_KICK). If those
- * stores are still invisible to the MCU, kernel-side QUEUE_KICK on each
- * registered ring forces CSF to notice pending work. */
-static void tbxm_kick_all_queues(TeboxMaliCtx *c)
-{
-    if (!c || c->fd < 0) {
-        return;
-    }
-    for (int i = 0; i < TBXM_MAX_QUEUES; i++) {
-        uint64_t ring = c->queue[i].ring_va;
-
-        if (!ring) {
-            continue;
-        }
-        ioctl(c->fd,
-              _IOW(TBXM_KBASE_IOCTL_TYPE, TBXM_KBASE_NR_QUEUE_KICK, ring),
-              &ring);
-    }
-}
-
-static unsigned tbxm_user_io_nonzero(TeboxMali *m, int ctx)
-{
-    unsigned nz = 0;
-
-    for (int i = 0; i < TEBOX_MALI_MAX_MAPS; i++) {
-        TeboxMaliMap *mp = &m->map[i];
-        const volatile uint32_t *p;
-
-        if (!mp->used || mp->ctx != ctx || !tbxm_is_user_io(mp) ||
-            !mp->host_ptr || mp->size < 4) {
-            continue;
-        }
-        /* Word0 is the CSF doorbell register libmali rings. */
-        p = mp->host_ptr;
-        if (p[0] != 0) {
-            nz++;
-        }
-    }
-    return nz;
-}
-
-static void tbxm_kick_timer(void *opaque)
-{
-    TeboxMali *m = opaque;
-    static unsigned kick_ticks, doorbell_nz_acc;
-
-    if (m->kick_ms <= 0) {
-        return;
-    }
-    for (int i = 0; i < TEBOX_MALI_MAX_CTX; i++) {
-        TeboxMaliCtx *c = &m->ctx[i];
-        int nq = 0;
-
-        if (!c->used || c->fd < 0) {
-            continue;
-        }
-        for (int q = 0; q < TBXM_MAX_QUEUES; q++) {
-            if (c->queue[q].ring_va) {
-                nq++;
-            }
-        }
-        if (!nq) {
-            continue;
-        }
-        tbxm_flush_user_io(m, i);
-        doorbell_nz_acc += tbxm_user_io_nonzero(m, i);
-        ioctl(c->fd, _IO(TBXM_KBASE_IOCTL_TYPE, TBXM_KBASE_NR_CS_EVENT_SIGNAL),
-              NULL);
-        tbxm_kick_all_queues(c);
-    }
-    if (++kick_ticks >= (unsigned)(1000 / (m->kick_ms > 0 ? m->kick_ms : 16))) {
-        FILE *f = fopen("/tmp/tbxmali.log", "a");
-        if (f) {
-            unsigned nuio_now = 0;
-            static unsigned dump_every;
-
-            for (int mi = 0; mi < TEBOX_MALI_MAX_MAPS; mi++) {
-                if (m->map[mi].used && tbxm_is_user_io(&m->map[mi])) {
-                    nuio_now++;
-                }
-            }
-            fprintf(f, "kick: doorbell_nz=%u ticks=%u nuio=%u\n",
-                    doorbell_nz_acc, kick_ticks, nuio_now);
-            /* Dump a few USER_IO pages every ~10s while Unreal is up. */
-            if (++dump_every >= 10 && nuio_now > 0) {
-                int left = 4;
-                dump_every = 0;
-                for (int mi = 0; left > 0 && mi < TEBOX_MALI_MAX_MAPS; mi++) {
-                    TeboxMaliMap *mp = &m->map[mi];
-                    const volatile uint32_t *p;
-                    size_t n, j, shown = 0;
-
-                    if (!mp->used || !tbxm_is_user_io(mp)) {
-                        continue;
-                    }
-                    fprintf(f,
-                            "user_io map=%d ctx=%d ptr=%p size=%" PRIu64
-                            " pgoff=0x%" PRIx64,
-                            mi, mp->ctx, mp->host_ptr, mp->size, mp->pgoff);
-                    if (!mp->host_ptr || mp->size < 4) {
-                        fprintf(f, " (no ptr)\n");
-                        left--;
-                        continue;
-                    }
-                    p = mp->host_ptr;
-                    n = (size_t)mp->size / 4;
-                    fprintf(f, " word0=0x%x", p[0]);
-                    for (j = 0; j < n && shown < 6; j++) {
-                        if (p[j]) {
-                            fprintf(f, " [0x%zx]=0x%x", j * 4, p[j]);
-                            shown++;
-                        }
-                    }
-                    fprintf(f, "%s\n", shown ? "" : " (all zero)");
-                    left--;
-                }
-            }
-            fclose(f);
-        }
-        kick_ticks = 0;
-        doorbell_nz_acc = 0;
-    }
-    timer_mod(m->kick_timer,
-              qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + m->kick_ms);
 }
 
 /*
@@ -1783,169 +1623,6 @@ fail:
     return 1;
 }
 
-/* Mid-VAS base for WIN_IMPORT USER_BUFFER pages (prefer arena — not KVM RAM). */
-static void *tbxm_win_base(TeboxMali *m)
-{
-    if (m->arena && m->arena_ptr) {
-        return m->arena_ptr;
-    }
-    return m->hostmem_mmap;
-}
-
-/*
- * WIN_IMPORT: anonymous pages at mid-VAS → MEM_IMPORT USER_BUFFER → SAME_VA
- * cookie. Prefer the arena over hostmem_background (KVM RAM).
- */
-static int tbxm_win_try_alloc(TeboxMali *m, TeboxMaliCtx *c,
-                              uint8_t *buf, uint32_t size, unsigned nr)
-{
-    uint64_t va_pages, commit_pages, extension = 0, flags;
-    uint64_t bytes;
-    int64_t hm_off;
-    void *ptr;
-    void *base = tbxm_win_base(m);
-    union tbxm_kbase_ioctl_mem_import u;
-    struct tbxm_base_mem_import_user_buffer ub;
-    uint64_t cookie, pg;
-    int ci;
-
-    if (!m->win_import || !base) {
-        return -ENOTSUP;
-    }
-    if (nr == TBXM_KBASE_NR_MEM_ALLOC_EX && size >= 32) {
-        memcpy(&va_pages, buf + 0, 8);
-        memcpy(&commit_pages, buf + 8, 8);
-        memcpy(&extension, buf + 16, 8);
-        memcpy(&flags, buf + 24, 8);
-    } else if (nr == TBXM_KBASE_NR_MEM_ALLOC && size >= 24) {
-        memcpy(&va_pages, buf + 0, 8);
-        memcpy(&commit_pages, buf + 8, 8);
-        memcpy(&flags, buf + 16, 8);
-    } else {
-        return -ENOTSUP;
-    }
-    /* Narrow filter: fixed CPU-visible heaps only. Growable / GPU_EX stay native.
-     * Skip small allocs: SF/gralloc boot used WIN_IMPORT and wedged adb.
-     * TEBOX_MALI_WIN_MIN_PAGES (default 1024 = 4MiB) tunes the floor. */
-    if (!va_pages || va_pages != commit_pages || extension) {
-        m->win_rej_grow++;
-        return -ENOTSUP;
-    }
-    /* Runtime override (boot uses high floor; Unreal drops to 1 via this file). */
-    {
-        static int64_t last_poll_ms;
-        int64_t now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
-
-        if (now - last_poll_ms > 500) {
-            FILE *f = fopen("/tmp/tebox-mali-win-min", "r");
-
-            last_poll_ms = now;
-            if (f) {
-                unsigned long long v = 0;
-
-                if (fscanf(f, "%llu", &v) == 1) {
-                    m->win_min_pages = v;
-                }
-                fclose(f);
-            }
-        }
-    }
-    if (va_pages < m->win_min_pages) {
-        m->win_rej_small++;
-        return -ENOTSUP;
-    }
-    if (!(flags & (TBXM_BASE_MEM_PROT_CPU_RD | TBXM_BASE_MEM_PROT_CPU_WR))) {
-        m->win_rej_flags++;
-        return -ENOTSUP; /* GPU-only: native PROT_NONE needs no KVM slot */
-    }
-    if (flags & (TBXM_BASE_MEM_PROT_GPU_EX | TBXM_BASE_MEM_GROW_ON_GPF)) {
-        m->win_rej_flags++;
-        return -ENOTSUP;
-    }
-    if (va_pages > (m->hostmem_size / TEBOX_MALI_PAGE)) {
-        return -ENOMEM;
-    }
-    bytes = va_pages * TEBOX_MALI_PAGE;
-    if (m->arena && m->arena_ptr) {
-        /* Full hostmem GPA space; CPU pages live in the arena VA reserve. */
-        hm_off = tbxm_hm_alloc_range(m, bytes, 0,
-                                     m->hostmem_size / TEBOX_MALI_PAGE,
-                                     &m->hm_cursor);
-    } else {
-        hm_off = tbxm_hm_alloc_win(m, bytes);
-    }
-    if (hm_off < 0) {
-        m->win_rej_full++;
-        {
-            static int64_t last_full_ms;
-            int64_t now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
-
-            if (now - last_full_ms > 2000) {
-                warn_report("tebox-mali: WIN window full need=%" PRIu64
-                            " MiB", bytes >> 20);
-                last_full_ms = now;
-            }
-        }
-        return -ENOTSUP; /* window full — fall back to native + per-buffer MR */
-    }
-    ptr = (uint8_t *)base + (uint64_t)hm_off;
-    /* Soft arena has no pre-map — materialize anonymous pages for import. */
-    if (m->arena && m->arena_ptr && base == m->arena_ptr) {
-        void *mp = mmap(ptr, (size_t)bytes, PROT_READ | PROT_WRITE,
-                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_NORESERVE,
-                        -1, 0);
-        if (mp != ptr) {
-            bitmap_clear(m->hm_used, (unsigned long)(hm_off / TEBOX_MALI_PAGE),
-                         (unsigned long)(bytes / TEBOX_MALI_PAGE));
-            m->win_rej_imp++;
-            return -ENOTSUP;
-        }
-    }
-    memset(ptr, 0, bytes > 4096 ? 4096 : bytes); /* touch first page */
-
-    memset(&u, 0, sizeof(u));
-    ub.ptr = (uint64_t)(uintptr_t)ptr;
-    ub.length = bytes;
-    u.in.flags = flags | TBXM_BASE_MEM_CACHED_CPU | TBXM_BASE_MEM_COHERENT_SYSTEM;
-    u.in.phandle = (uint64_t)(uintptr_t)&ub;
-    u.in.type = TBXM_BASE_MEM_IMPORT_TYPE_USER_BUFFER;
-    if (tbxm_ioctl(c->fd, TBXM_KBASE_IOCTL_MEM_IMPORT, &u)) {
-        bitmap_clear(m->hm_used, (unsigned long)(hm_off / TEBOX_MALI_PAGE),
-                     (unsigned long)(bytes / TEBOX_MALI_PAGE));
-        m->win_rej_imp++;
-        return -ENOTSUP;
-    }
-    cookie = u.out.gpu_va;
-    pg = cookie >> 12;
-    if ((cookie & 0xfff) || pg < TBXM_COOKIE_FIRST ||
-        pg >= TBXM_COOKIE_FIRST + TBXM_NR_COOKIES) {
-        /* Unexpected non-cookie VA — free import mapping path via MEM_FREE. */
-        uint64_t free_va = cookie;
-        tbxm_ioctl(c->fd, _IOW(TBXM_KBASE_IOCTL_TYPE, TBXM_KBASE_NR_MEM_FREE,
-                               uint64_t), &free_va);
-        bitmap_clear(m->hm_used, (unsigned long)(hm_off / TEBOX_MALI_PAGE),
-                     (unsigned long)(bytes / TEBOX_MALI_PAGE));
-        m->win_rej_imp++;
-        return -ENOTSUP;
-    }
-    ci = (int)(pg - TBXM_COOKIE_FIRST);
-    /* Cookie reuse without mmap would leak the prior window reservation. */
-    if (c->win_off[ci] != TBXM_WIN_OFF_NONE) {
-        tbxm_win_release_pending(m, c, ci);
-    }
-    c->win_off[ci] = (uint64_t)hm_off;
-    c->win_size[ci] = bytes;
-    c->cookie_prot[ci] = TBXM_COOKIE_KNOWN |
-        ((flags & TBXM_BASE_MEM_PROT_CPU_RD) ? PROT_READ : 0) |
-        ((flags & TBXM_BASE_MEM_PROT_CPU_WR) ? PROT_WRITE : 0);
-    /* MEM_ALLOC(_EX) out layout: flags + gpu_va at the start of the union. */
-    memset(buf, 0, size);
-    memcpy(buf + 0, &u.out.flags, 8);
-    memcpy(buf + 8, &cookie, 8);
-    m->win_ok++;
-    return 0;
-}
-
 /* the headers; the (possibly modified) struct is written back to in_sg. */
 static int tbxm_op_ioctl(TeboxMali *m, uint32_t ctx,
                          const struct tebox_mali_ioctl_req *req,
@@ -2117,7 +1794,6 @@ static int tbxm_op_ioctl(TeboxMali *m, uint32_t ctx,
         ret = -errno;
         goto out_free;
     }
-ioctl_ok:
     tbxm_note_alloc(c, req->cmd, buf, size);
     tbxm_note_heap(c, req->cmd, buf, size);
     tbxm_note_queue(c, req->cmd, buf, size);
@@ -2349,108 +2025,8 @@ static uintptr_t tbxm_host_vma_end(void *addr, uint64_t fallback)
     return want + fallback;
 }
 
-static uint64_t tbxm_zone_seq;
-
-/* Rebuild the one slot so it starts at new_host / new_hm. Old GPA stays. */
-static bool tbxm_zone_move(TeboxMali *m, TeboxMaliZone *z, void *new_host,
-                           uint64_t new_size, uint64_t new_hm)
-{
-    uint64_t ram_max = z->hm_base + z->max - new_hm;
-    g_autofree char *name = NULL;
-    MemoryRegion *nm;
-    Error *err = NULL;
-
-    if (!new_size || new_hm < z->hm_base || ram_max < new_size) {
-        return false;
-    }
-    name = g_strdup_printf("tebox-mali-zone-%" PRIu64, ++tbxm_zone_seq);
-    nm = g_new0(MemoryRegion, 1);
-    if (!memory_region_init_ram_ptr_resizeable(nm, OBJECT(m), name,
-                                               new_size, ram_max, new_host,
-                                               &err)) {
-        error_free(err);
-        g_free(nm);
-        return false;
-    }
-    if (memory_region_is_rom(z->mr)) {
-        memory_region_set_readonly(nm, true);
-    }
-    memory_region_transaction_begin();
-    memory_region_del_subregion(&m->hostmem, z->mr);
-    memory_region_add_subregion(&m->hostmem, new_hm, nm);
-    memory_region_transaction_commit();
-    object_unparent(OBJECT(z->mr));
-    g_free(z->mr);
-    z->mr = nm;
-    z->base = new_host;
-    z->size = new_size;
-    z->hm_off = new_hm;
-    return true;
-}
-
-static bool tbxm_zone_create(TeboxMali *m, TeboxMaliZone *z, int idx,
-                             void *p, uint64_t cover, int host_prot)
-{
-    /* Modest reservation: early islands must not eat the BAR before the
-     * long descending run gets a slot. A full zone chains into the next. */
-    static const uint64_t caps[] = {
-        512ull << 20, 256ull << 20, 128ull << 20, 64ull << 20
-    };
-    Error *err = NULL;
-
-    for (int i = 0; i < 4; i++) {
-        uint64_t max = caps[i];
-        uint64_t head, ram_max, hm;
-        int64_t off;
-        MemoryRegion *mr;
-
-        if (max < cover) {
-            continue;
-        }
-        head = TBXM_ZONE_HEADROOM;
-        if (head > max - cover) {
-            head = max - cover;
-        }
-        ram_max = cover + head;
-        off = tbxm_hm_alloc(m, max);
-        if (off < 0) {
-            continue;
-        }
-        hm = (uint64_t)off + (max - ram_max);
-        {
-            g_autofree char *name =
-                g_strdup_printf("tebox-mali-zone-%" PRIu64, ++tbxm_zone_seq);
-
-            mr = g_new0(MemoryRegion, 1);
-            if (!memory_region_init_ram_ptr_resizeable(mr, OBJECT(m), name,
-                                                       cover, ram_max, p,
-                                                       &err)) {
-                error_free(err);
-                err = NULL;
-                g_free(mr);
-                tbxm_hm_free(m, (uint64_t)off, max);
-                continue;
-            }
-        }
-        if (!(host_prot & PROT_WRITE)) {
-            memory_region_set_readonly(mr, true);
-        }
-        memory_region_add_subregion(&m->hostmem, hm, mr);
-        z->used = true;
-        z->mr = mr;
-        z->base = p;
-        z->size = cover;
-        z->max = max;
-        z->hm_base = (uint64_t)off;
-        z->hm_off = hm;
-        tbxm_prof.n_zone_new++;
-        info_report("tebox-mali: zone %d base=%p cover=0x%" PRIx64
-                    " max=0x%" PRIx64 " hm=0x%" PRIx64 " base_hm=0x%" PRIx64,
-                    idx, p, cover, max, z->hm_off, z->hm_base);
-        return true;
-    }
-    return false;
-}
+/* Growable-zone helpers (init_ram_ptr_resizeable) are unfinished; arena/window
+ * cover the boot path. Zone slots still tear down in realize/unrealize. */
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -2820,8 +2396,8 @@ static int tbxm_op_mmap(TeboxMali *m, uint32_t ctx,
     if (pg >= TBXM_COOKIE_FIRST && pg < TBXM_COOKIE_FIRST + TBXM_NR_COOKIES &&
         r->gpu_va < 0x100000000ULL) {
         tbxm_warn_rl("ctx %u BAD SAME_VA pgoff=0x%" PRIx64 " gpu_va=0x%" PRIx64
-                     " size=%" PRIu64 " arena=%d win=%d",
-                     ctx, pg, r->gpu_va, size, in_arena, in_window);
+                     " size=%" PRIu64,
+                     ctx, pg, r->gpu_va, size);
     }
     return 0;
 }
@@ -2846,42 +2422,6 @@ static int tbxm_op_munmap(TeboxMali *m, uint32_t ctx,
      */
     (void)c;
     tbxm_unmap_slot(m, mp);
-    return 0;
-}
-
-/* One virtio round-trip for a free storm (guest ko coalesces VMA closes). */
-static int tbxm_op_munmap_batch(TeboxMali *m, uint32_t ctx,
-                                const struct tebox_mali_munmap_batch_req *req,
-                                VirtQueueElement *elem)
-{
-    uint32_t n = req->n;
-    uint32_t handles[TEBOX_MALI_MUNMAP_BATCH_MAX];
-    size_t need;
-
-    if (!n || n > TEBOX_MALI_MUNMAP_BATCH_MAX) {
-        return -EINVAL;
-    }
-    need = sizeof(*req) + (size_t)n * sizeof(uint32_t);
-    if (iov_to_buf(elem->out_sg, elem->out_num,
-                   sizeof(struct tebox_mali_cmd_hdr) + sizeof(*req),
-                   handles, n * sizeof(uint32_t)) !=
-        n * sizeof(uint32_t)) {
-        return -EINVAL;
-    }
-    (void)need;
-    /* One FlatView/KVM rebuild for the whole free storm instead of per handle. */
-    memory_region_transaction_begin();
-    for (uint32_t i = 0; i < n; i++) {
-        struct tebox_mali_munmap_req one = { .handle = handles[i] };
-        int r = tbxm_op_munmap(m, ctx, &one);
-
-        /* Skip already-gone handles; abort only on hard errors. */
-        if (r && r != -ENOENT && r != -EINVAL) {
-            memory_region_transaction_commit();
-            return r;
-        }
-    }
-    memory_region_transaction_commit();
     return 0;
 }
 
@@ -3165,8 +2705,7 @@ static void tebox_mali_handle_cmd(VirtIODevice *vdev, VirtQueue *vq)
         resp.seq = hdr.seq;
 
         mr_op = (hdr.op == TEBOX_MALI_OP_MMAP ||
-                 hdr.op == TEBOX_MALI_OP_MUNMAP ||
-                 hdr.op == TEBOX_MALI_OP_MUNMAP_BATCH);
+                 hdr.op == TEBOX_MALI_OP_MUNMAP);
         if (mr_op && !mr_txn) {
             memory_region_transaction_begin();
             mr_txn = true;
@@ -3207,17 +2746,19 @@ static void tebox_mali_handle_cmd(VirtIODevice *vdev, VirtQueue *vq)
                     fprintf(f, "ops/s: ioctl=%u mmap=%u munmap=%u import=%u "
                             "read=%u open=%u close=%u top_nr=%u:%u "
                             "fixed_ok=%" PRIu64 " fixed_miss=%" PRIu64
-                            " miss_errno=%d\n",
+                            " miss_errno=%d wok=%" PRIu64 " wfail=%" PRIu64
+                            "\n",
                             cnt[TEBOX_MALI_OP_IOCTL], cnt[TEBOX_MALI_OP_MMAP],
                             cnt[TEBOX_MALI_OP_MUNMAP], cnt[TEBOX_MALI_OP_IMPORT],
                             cnt[TEBOX_MALI_OP_READ], cnt[TEBOX_MALI_OP_OPEN],
                             cnt[TEBOX_MALI_OP_CLOSE], top_nr, top_n,
                             tbxm_fixed_ok, tbxm_fixed_miss,
-                            tbxm_fixed_miss_errno);
+                            tbxm_fixed_miss_errno, tbxm_win_ok, tbxm_win_fail);
                     fclose(f);
                 }
                 memset(cnt, 0, sizeof(cnt));
                 memset(nr_cnt, 0, sizeof(nr_cnt));
+                tbxm_win_ok = tbxm_win_fail = 0;
                 next_us = now + 1000000;
             }
         }
@@ -3260,16 +2801,6 @@ static void tebox_mali_handle_cmd(VirtIODevice *vdev, VirtQueue *vq)
             resp.result = tbxm_op_munmap(m, hdr.ctx, &req);
             break;
         }
-        case TEBOX_MALI_OP_MUNMAP_BATCH: {
-            struct tebox_mali_munmap_batch_req req;
-            if (iov_to_buf(elem->out_sg, elem->out_num, sizeof(hdr), &req,
-                           sizeof(req)) != sizeof(req)) {
-                resp.result = -EINVAL;
-                break;
-            }
-            resp.result = tbxm_op_munmap_batch(m, hdr.ctx, &req, elem);
-            break;
-        }
         case TEBOX_MALI_OP_IMPORT: {
             struct tebox_mali_import_req req;
             if (iov_to_buf(elem->out_sg, elem->out_num, sizeof(hdr), &req,
@@ -3292,80 +2823,6 @@ static void tebox_mali_handle_cmd(VirtIODevice *vdev, VirtQueue *vq)
         }
         default:
             resp.result = -EINVAL;
-        }
-
-        if (t0) {
-            int64_t dt = g_get_monotonic_time() - t0;
-            if (hdr.op == TEBOX_MALI_OP_MMAP) {
-                mmap_us_acc += (uint64_t)dt;
-                mmap_n_acc++;
-            } else if (hdr.op == TEBOX_MALI_OP_IOCTL) {
-                ioctl_us_acc += (uint64_t)dt;
-                ioctl_n_acc++;
-            }
-        }
-        {
-            int64_t now = g_get_monotonic_time();
-            if (now >= next_us) {
-                FILE *f = fopen("/tmp/tbxmali.log", "a");
-                if (f) {
-                    unsigned top_nr = 0, top_n = 0;
-                    for (unsigned i = 0; i < 256; i++) {
-                        if (nr_cnt[i] > top_n) {
-                            top_n = nr_cnt[i];
-                            top_nr = i;
-                        }
-                    }
-                    unsigned nq = 0, nuio = 0, naren = 0, nwin = 0, nmap = 0;
-                    for (int ci = 0; ci < TEBOX_MALI_MAX_CTX; ci++) {
-                        if (!m->ctx[ci].used) {
-                            continue;
-                        }
-                        for (int qi = 0; qi < TBXM_MAX_QUEUES; qi++) {
-                            if (m->ctx[ci].queue[qi].ring_va) {
-                                nq++;
-                            }
-                        }
-                    }
-                    for (int mi = 0; mi < TEBOX_MALI_MAX_MAPS; mi++) {
-                        if (!m->map[mi].used) {
-                            continue;
-                        }
-                        nmap++;
-                        if (tbxm_is_user_io(&m->map[mi])) {
-                            nuio++;
-                        }
-                        if (m->map[mi].in_arena) {
-                            naren++;
-                        }
-                        if (m->map[mi].in_window) {
-                            nwin++;
-                        }
-                    }
-                    fprintf(f, "ops/s: ioctl=%u mmap=%u munmap=%u import=%u "
-                            "read=%u open=%u close=%u top_nr=%u:%u "
-                            "mmap_us=%llu/%u ioctl_us=%llu/%u queues=%u "
-                            "user_io=%u maps=%u arena=%u win=%u "
-                            "wok=%u ws=%u wg=%u wf=%u wfull=%u wimp=%u\n",
-                            cnt[TEBOX_MALI_OP_IOCTL], cnt[TEBOX_MALI_OP_MMAP],
-                            cnt[TEBOX_MALI_OP_MUNMAP], cnt[TEBOX_MALI_OP_IMPORT],
-                            cnt[TEBOX_MALI_OP_READ], cnt[TEBOX_MALI_OP_OPEN],
-                            cnt[TEBOX_MALI_OP_CLOSE], top_nr, top_n,
-                            (unsigned long long)mmap_us_acc, mmap_n_acc,
-                            (unsigned long long)ioctl_us_acc, ioctl_n_acc,
-                            nq, nuio, nmap, naren, nwin,
-                            m->win_ok, m->win_rej_small, m->win_rej_grow,
-                            m->win_rej_flags, m->win_rej_full, m->win_rej_imp);
-                    fclose(f);
-                }
-                memset(cnt, 0, sizeof(cnt));
-                memset(nr_cnt, 0, sizeof(nr_cnt));
-                mmap_us_acc = ioctl_us_acc = 0;
-                mmap_n_acc = ioctl_n_acc = 0;
-                m->win_ok = m->win_rej_small = m->win_rej_grow = 0;
-                m->win_rej_flags = m->win_rej_full = m->win_rej_imp = 0;
-                next_us = now + 1000000;
-            }
         }
 
     reply:
@@ -3422,10 +2879,6 @@ static void tebox_mali_unrealize(DeviceState *dev)
 {
     VirtIODevice *vdev = VIRTIO_DEVICE(dev);
     TeboxMali *m = TEBOX_MALI(dev);
-    if (m->kick_timer) {
-        timer_free(m->kick_timer);
-        m->kick_timer = NULL;
-    }
     for (int i = 0; i < TEBOX_MALI_MAX_CTX; i++) {
         if (m->ctx[i].used) {
             tbxm_drop_ctx_maps(m, i);

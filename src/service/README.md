@@ -76,15 +76,14 @@ Guest input (touch and keys) has three entry points, all feeding one
 dedicated QMP monitor per instance (`qmp-input.sock`, from `QMP_INPUT_SOCKET`),
 so input never holds the lifecycle QMP socket:
 
-- `Instance.control_port`: plain TCP on 127.0.0.1. The server greets with
-  `{"ok":true}`, then reads one JSON object per line and answers only on
-  errors (`{"ok":false,"error":...}`).
-- `TEBOX-CTRL/1 <instance-id>\n` on the control endpoint (9905), then the same lines.
-- UDP datagrams to the control port number (9905), each event naming its
+- `TEBOX-CTRL/1 <instance-id>\n` on the control endpoint (9905), then JSON
+  lines. The server greets with `{"ok":true}`, and answers only on errors
+  (`{"ok":false,"error":...}`). No per-instance listen port (`control_port` is 0).
+- UDP datagrams to the same control port number, each event naming its
   instance with `"id"` (plus an increasing `"seq"`).
 
-Navigation keys, Android keycodes, text and clipboard use this TCP/UDP
-path (`Instance.control_port`, `TEBOX-CTRL/1`, UDP on the same port).
+Navigation keys, Android keycodes, text and clipboard use this shared TCP/UDP
+path (`TEBOX-CTRL/1`, UDP on the control listen port).
 gRPC `GetPreview` returns a still of the guest display (`size` / `format` /
 `quality`). `GetInstance` returns the same `Instance` as `ListInstances`,
 including `adb_port`, `disk_mb`, `disk_used_mb` and `disk_free_mb`.
@@ -94,18 +93,17 @@ One JSON object per line:
 
 | Event | Example | Path |
 |------|---------|------|
-| touch | `{"type":"touch","action":"down","x":0.5,"y":0.25}` (`down`/`move`/`up`, 0..1 from top-left) | QEMU virtio touchscreen |
-| key | `{"type":"key","key":"home"}` (`home`, `back`, `menu`, `power`, `volume_up`, `volume_down`, `mute`, or a QEMU qcode) | QEMU virtio keyboard |
-| text | `{"type":"text","text":"hi 你好"}` (ASCII is typed; other text is pasted) | guest agent |
-| keycode | `{"type":"keycode","keycode":67,"meta":0,"action":"press"}` (Android `KEYCODE_*`/`META_*`; `down`/`up`/`press`) | guest agent |
-| clipboard | `{"type":"clipboard","text":"...","paste":false}` | guest agent |
+| touch | `{"type":"touch","action":"down","x":0.5,"y":0.25}` (`down`/`move`/`up`, 0..1 from top-left) | QEMU virtio-tablet (QMP) |
+| key | `{"type":"key","key":"home"}` (`home`, `back`, `menu`, `recent`/`app_switch`, `power`, `volume_up`, `volume_down`, `mute`) | QEMU virtio-keyboard (QMP) |
+| text | `{"type":"text","text":"hello"}` (ASCII / printable Latin; same as typing in the QEMU window) | QEMU virtio-keyboard (QMP) |
+| keycode | `{"type":"keycode","keycode":67,"meta":0,"action":"press"}` (mapped Android `KEYCODE_*`/`META_*`; `down`/`up`/`press`) | QEMU virtio-keyboard (QMP) |
+| clipboard | `{"type":"clipboard","text":"...","paste":false}` | typed as text over virtio; `paste:true` appends Enter |
 
-Guest clipboard changes come back on the same connection as
-`{"type":"clipboard","text":"..."}`; text set from the
-host is not echoed back. The guest agent is the unmodified scrcpy-server in
-`prebuilts/android-arm64/scrcpy/`, which tebox-api pushes and starts over adb on
-first use (video and audio off; only its control socket is used). Touch and
-navigation keys keep working without it, also before Android finishes booting.
+All control-port input uses the same QEMU QMP `input-send-event` path as the
+local QEMU display window (virtio-tablet / virtio-keyboard). No guest jar,
+scrcpy, or adb agent. Client JSON is unchanged. Guest→host clipboard sync and
+non-ASCII IME paste are not available on this path (type ASCII, or use the
+QEMU window / a guest IME for CJK).
 
 Client integration (gRPC, cast stream, UDP/group input), in Chinese:
 [`INTEGRATION.md`](INTEGRATION.md).
@@ -113,10 +111,8 @@ Client integration (gRPC, cast stream, UDP/group input), in Chinese:
 `make -C src/service/cast viewer` builds the desktop viewer;
 `./out/service/tebox-cast-view [--host H] --id <instance-id>` opens a window with the live
 cast and forwards input: the mouse is the finger, right click / Esc is Back,
-Home or F1 is Home, F2 Menu, F5 Power, PgUp/PgDn volume. Typing (including a
-Chinese IME) goes to the focused field, Backspace/Delete/Enter/Tab/arrows edit,
-Cmd+A/C/X/Z/Y act in the guest and Cmd+V pastes the host clipboard. Clipboards
-sync both ways while the window is open.
+Home or F1 is Home, F2 Menu, F5 Power, PgUp/PgDn volume. Typing goes through
+virtio (ASCII); Cmd+V types the host clipboard as key events.
 
 `ResetInstance` performs a QMP Android reboot by default. Set `wipe_data` to
 `true` to stop the instance, remove its per-instance `userdata.img`, and boot it

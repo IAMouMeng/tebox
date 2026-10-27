@@ -63,6 +63,20 @@ static void scale_dims(int src_w, int src_h, int max_w, int max_h,
     *out_h = h;
 }
 
+static bool prefer_v4l2(const struct cast_encoder_cfg *cfg)
+{
+#if defined(__linux__)
+    if (!cfg || !cfg->prefer_hw || (cfg->force_encoder && cfg->force_encoder[0])) {
+        return false;
+    }
+    return cfg->codec == CAST_CODEC_H264 || cfg->codec == CAST_CODEC_HEVC ||
+           cfg->codec == CAST_CODEC_VP8 || cfg->codec == CAST_CODEC_VP9;
+#else
+    (void)cfg;
+    return false;
+#endif
+}
+
 static const char *pick_encoder(enum cast_codec codec, bool prefer_hw,
                                 const char *force)
 {
@@ -263,20 +277,28 @@ struct cast_encoder *cast_encoder_create(const struct cast_encoder_cfg *cfg)
     if (enc->cfg.bitrate <= 0) {
         enc->cfg.bitrate = 4000000;
     }
-    /* Defer open_codec until the first real frame so capture can set size. */
+    /* Defer codec open until the first real frame so capture can set size.
+     * On Linux prefer_hw H264/HEVC/VP8/VP9 uses v4l2enc.c (products FFmpeg
+     * has no libx264/vaapi); skip open_codec so create never fails for venc. */
     if (cfg->width > 0 && cfg->height > 0) {
         enc->enc_w = cfg->width;
         enc->enc_h = cfg->height;
         scale_dims(enc->enc_w, enc->enc_h, enc->cfg.max_width,
                    enc->cfg.max_height, &enc->enc_w, &enc->enc_h);
-        if (open_codec(enc) < 0) {
+        if (prefer_v4l2(&enc->cfg)) {
+            snprintf(enc->encoder_name, sizeof(enc->encoder_name), "v4l2");
+        } else if (open_codec(enc) < 0) {
             free(enc);
             return NULL;
         }
     } else {
-        snprintf(enc->encoder_name, sizeof(enc->encoder_name), "%s",
-                 pick_encoder(enc->cfg.codec, enc->cfg.prefer_hw,
-                              enc->cfg.force_encoder));
+        if (prefer_v4l2(&enc->cfg)) {
+            snprintf(enc->encoder_name, sizeof(enc->encoder_name), "v4l2");
+        } else {
+            snprintf(enc->encoder_name, sizeof(enc->encoder_name), "%s",
+                     pick_encoder(enc->cfg.codec, enc->cfg.prefer_hw,
+                                  enc->cfg.force_encoder));
+        }
     }
     return enc;
 }
@@ -313,6 +335,19 @@ int cast_encoder_force_idr(struct cast_encoder *enc)
     return 0;
 }
 
+void cast_encoder_release_hw(struct cast_encoder *enc)
+{
+    if (!enc) {
+        return;
+    }
+    cast_v4l2_close(enc->v4l2);
+    enc->v4l2 = NULL;
+    enc->v4l2_w = enc->v4l2_h = 0;
+    enc->v4l2_format = 0;
+    enc->v4l2_failed = false;
+    enc->v4l2_no_dmabuf = false;
+}
+
 int cast_encoder_reconfigure(struct cast_encoder *enc,
                              const struct cast_encoder_cfg *cfg)
 {
@@ -344,6 +379,10 @@ int cast_encoder_reconfigure(struct cast_encoder *enc,
     }
     enc->next_pts = 0;
     enc->force_idr = true;
+    if (prefer_v4l2(&enc->cfg)) {
+        snprintf(enc->encoder_name, sizeof(enc->encoder_name), "v4l2");
+        return 0;
+    }
     return open_codec(enc);
 }
 
@@ -422,9 +461,7 @@ static int push_v4l2(struct cast_encoder *enc, uint32_t format,
     bool key;
     uint8_t *copy;
 
-    if (enc->v4l2_failed || !enc->cfg.prefer_hw ||
-        enc->cfg.codec != CAST_CODEC_H264 ||
-        (enc->cfg.force_encoder && enc->cfg.force_encoder[0]) ||
+    if (enc->v4l2_failed || !prefer_v4l2(&enc->cfg) ||
         (enc->cfg.max_width > 0 && width > enc->cfg.max_width) ||
         (enc->cfg.max_height > 0 && height > enc->cfg.max_height) ||
         (width & 1) || (height & 1)) {
@@ -434,15 +471,17 @@ static int push_v4l2(struct cast_encoder *enc, uint32_t format,
         return 1;
     }
     if (!enc->v4l2 || enc->v4l2_w != width || enc->v4l2_h != height ||
-        enc->v4l2_format != format || cast_v4l2_dmabuf_input(enc->v4l2) != dmabuf ||
+        enc->v4l2_format != format || cast_v4l2_codec(enc->v4l2) != enc->cfg.codec ||
+        cast_v4l2_dmabuf_input(enc->v4l2) != dmabuf ||
         (dmabuf && cast_v4l2_input_stride(enc->v4l2) != stride)) {
         int fps = enc->cfg.fps > 0 ? enc->cfg.fps : 30;
         int gop_sec = enc->cfg.gop_sec > 0 ? enc->cfg.gop_sec : 2;
 
         cast_v4l2_close(enc->v4l2);
-        enc->v4l2 = cast_v4l2_open(width, height, format == CAST_FMT_RGBA8888,
-                                   fps, enc->cfg.bitrate > 0 ? enc->cfg.bitrate
-                                                             : 4000000,
+        enc->v4l2 = cast_v4l2_open(enc->cfg.codec, width, height,
+                                   format == CAST_FMT_RGBA8888, fps,
+                                   enc->cfg.bitrate > 0 ? enc->cfg.bitrate
+                                                        : 4000000,
                                    fps * gop_sec, dmabuf, dmabuf ? stride : 0);
         if (!enc->v4l2) {
             if (dmabuf) {
@@ -484,7 +523,7 @@ static int push_v4l2(struct cast_encoder *enc, uint32_t format,
         return -1;
     }
     memcpy(copy, data, size);
-    (*out)->codec = CAST_CODEC_H264;
+    (*out)->codec = enc->cfg.codec;
     (*out)->flags = key ? CAST_FLAG_KEY : 0;
     (*out)->pts_us = pts_us;
     (*out)->data = copy;

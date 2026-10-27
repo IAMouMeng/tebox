@@ -1,7 +1,16 @@
 #include "HostDecComponent.h"
 
+#include "C2AidlDup.h"
+#include "C2Blocks.h"
+#include "C2ParamBlob.h"
+#include "C2Status.h"
+#include "ColorConvert.h"
 #include "ComponentInterface.h"
 #include "Configurable.h"
+#include "FdIo.h"
+#include "VdecPort.h"
+#include "VdecWire.h"
+#include "VirtGpuResource.h"
 
 #include <aidl/android/hardware/media/c2/FrameData.h>
 #include <aidl/android/hardware/media/c2/Status.h>
@@ -9,22 +18,10 @@
 #include <aidl/android/hardware/media/c2/WorkBundle.h>
 #include <android/hardware_buffer_aidl.h>
 #include <android/log.h>
-#include <cutils/native_handle.h>
-#include <drm/drm.h>
-#include <drm/virtgpu_drm.h>
-#include <sys/system_properties.h>
-
-#include <dirent.h>
-#include <dlfcn.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <unistd.h>
 
 #include <cstring>
 #include <map>
+#include <mutex>
 
 #undef LOG_TAG
 #define LOG_TAG "tebox-vdec"
@@ -56,368 +53,14 @@ namespace gki {
 
 namespace {
 
-// ---- CAST_VDEC_* (src/service/cast/include/cast/protocol.h) ----
-constexpr uint32_t kVdecMagic = 0x43454456u;  // 'VDEC'
-enum : uint32_t {
-    kVdecConfig = 1, kVdecInput = 2, kVdecOutput = 3, kVdecFlush = 4, kVdecClose = 5,
-    kVdecPicture = 16, kVdecFlushed = 17,
-};
-constexpr uint32_t kVdecFlagEos = 1, kVdecFlagConfig = 2;
-
-struct __attribute__((packed)) VdecHdr { uint32_t magic, type, size; };
-// Every payload starts with the session id (several decoders share the port).
-struct __attribute__((packed)) VdecConfig { uint32_t session, codec, width, height; };
-struct __attribute__((packed)) VdecInput {
-    uint32_t session;
-    uint64_t index;
-    int64_t pts_us;
-    uint32_t flags;
-};
-struct __attribute__((packed)) VdecOutput {
-    uint32_t session;
-    uint64_t id;
-    uint32_t resource_id, width, height;
-};
-struct __attribute__((packed)) VdecPicture {
-    uint32_t session;
-    uint64_t id, index;
-    int64_t pts_us;
-    int32_t status;
-    uint32_t flags, width, height;
-};
-
-// Output buffers lent to the host at a time; also the advertised output delay.
 constexpr size_t kTargets = 8;
-// Works the decoder may hold without a picture (reordering) before the
-// oldest is completed empty (a frame that is never displayed).
 constexpr size_t kMaxAwaiting = 32;
 constexpr int kAllocWaitMs = 1000;
 constexpr int kFlushWaitMs = 1000;
 
-// The virtio-serial port has one opener at a time and every component lives
-// in this process: the port is opened once and shared. Each decoder is a
-// session; one reader thread hands the host's replies to their sessions.
-std::mutex gPortWrite;  // whole messages
-std::mutex gPortMu;     // guards the state below
-int gPortFd = -1;
-uint32_t gNextSession = 1;
-
-int openPort() {
-    DIR* dir = opendir("/sys/class/virtio-ports");
-    if (!dir) return -1;
-    int fd = -1;
-    while (dirent* e = readdir(dir)) {
-        if (e->d_name[0] == '.') continue;
-        char path[256], name[64] = "";
-        snprintf(path, sizeof(path), "/sys/class/virtio-ports/%s/name", e->d_name);
-        FILE* f = fopen(path, "re");
-        if (!f) continue;
-        if (fgets(name, sizeof(name), f)) name[strcspn(name, "\n")] = 0;
-        fclose(f);
-        if (strcmp(name, "tebox.vdec") == 0) {
-            snprintf(path, sizeof(path), "/dev/%s", e->d_name);
-            fd = open(path, O_RDWR | O_CLOEXEC);
-            break;
-        }
-    }
-    closedir(dir);
-    return fd;
-}
-
-bool writeFull(int fd, const void* data, size_t size) {
-    const uint8_t* p = static_cast<const uint8_t*>(data);
-    while (size) {
-        ssize_t w = write(fd, p, size);
-        if (w < 0 && errno == EINTR) continue;
-        if (w <= 0) return false;
-        p += w;
-        size -= static_cast<size_t>(w);
-    }
-    return true;
-}
-
-bool readFull(int fd, void* data, size_t size) {
-    uint8_t* p = static_cast<uint8_t*>(data);
-    while (size) {
-        ssize_t r = read(fd, p, size);
-        if (r < 0 && errno == EINTR) continue;
-        if (r <= 0) return false;
-        p += r;
-        size -= static_cast<size_t>(r);
-    }
-    return true;
-}
-
-bool send(uint32_t type, const void* a, uint32_t asize, const void* b = nullptr,
-          uint32_t bsize = 0) {
-    std::lock_guard<std::mutex> lock(gPortWrite);
-    int fd;
-    {
-        std::lock_guard<std::mutex> state(gPortMu);
-        if (gPortFd < 0) return false;
-        fd = gPortFd;
-    }
-    VdecHdr hdr = {kVdecMagic, type, asize + bsize};
-    return writeFull(fd, &hdr, sizeof(hdr)) && (!asize || writeFull(fd, a, asize)) &&
-           (!bsize || writeFull(fd, b, bsize));
-}
-
-// virtio-gpu resource id behind a dma-buf (our allocator's gfxstream buffers).
-uint32_t resourceIdFromFd(int dmabuf) {
-    static int render = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
-    if (render < 0) return 0;
-    drm_prime_handle prime = {};
-    prime.fd = dmabuf;
-    if (ioctl(render, DRM_IOCTL_PRIME_FD_TO_HANDLE, &prime)) return 0;
-    drm_virtgpu_resource_info info = {};
-    info.bo_handle = prime.handle;
-    const int ret = ioctl(render, DRM_IOCTL_VIRTGPU_RESOURCE_INFO, &info);
-    drm_gem_close close_handle = {};
-    close_handle.handle = prime.handle;
-    ioctl(render, DRM_IOCTL_GEM_CLOSE, &close_handle);
-    return ret ? 0 : info.res_handle;
-}
-
-// AHardwareBuffer_getNativeHandle (LLNDK, vndk/hardware_buffer.h; not in the
-// NDK stubs): the gralloc handle, whose first fd is the dma-buf.
-const native_handle_t* nativeHandle(const AHardwareBuffer* buffer) {
-    using Fn = const native_handle_t* (*)(const AHardwareBuffer*);
-    static Fn fn = reinterpret_cast<Fn>(dlsym(RTLD_DEFAULT, "AHardwareBuffer_getNativeHandle"));
-    return fn ? fn(buffer) : nullptr;
-}
-
-ScopedAStatus badState() { return ScopedAStatus::fromServiceSpecificError(Status::BAD_STATE); }
-
-bool waitFd(int fd, int timeoutMs) {
-    if (fd < 0) return true;
-    pollfd p = {fd, POLLIN, 0};
-    int r;
-    do {
-        r = poll(&p, 1, timeoutMs);
-    } while (r < 0 && errno == EINTR);
-    return r > 0;
-}
-
-// ---- Codec2 params (C2Param layout: u32 size, u32 index, payload) ----
-void appendParam(std::vector<uint8_t>* blob, uint32_t index, const void* payload, size_t size) {
-    const uint32_t total = static_cast<uint32_t>(8 + size);
-    const size_t at = blob->size();
-    blob->resize(at + ((total + 7u) & ~7u), 0);
-    memcpy(blob->data() + at, &total, 4);
-    memcpy(blob->data() + at + 4, &index, 4);
-    memcpy(blob->data() + at + 8, payload, size);
-}
-
-// C2Hal_RangeInfo (codec2/common/BufferTypes.h): the bytes of a linear block.
-constexpr uint32_t kRangeInfoIndex = 0xE0000000u;
-// C2Hal_RectInfo: the crop of a graphic block.
-constexpr uint32_t kRectInfoIndex = 0xE0000001u;
-// C2StreamPictureSizeInfo::output, C2StreamCropRectInfo::output.
-constexpr uint32_t kPictureSizeOut = 0xD2001800u;
-constexpr uint32_t kCropRectOut = 0xD2001801u;
-
-bool findParam(const std::vector<uint8_t>& blob, uint32_t index, void* out, size_t size) {
-    for (size_t at = 0; at + 8 <= blob.size();) {
-        uint32_t psize = 0, pindex = 0;
-        memcpy(&psize, blob.data() + at, 4);
-        memcpy(&pindex, blob.data() + at + 4, 4);
-        if (psize < 8 || at + psize > blob.size()) break;
-        if (pindex == index && psize >= 8 + size) {
-            memcpy(out, blob.data() + at + 8, size);
-            return true;
-        }
-        at += (psize + 7u) & ~7u;
-    }
-    return false;
-}
-
-// The bytes of an input buffer: linear blocks arrive as dma-buf / ashmem
-// native handles (the input allocator we ask for keeps them out of BufferPool).
-bool readInput(const FrameData& frame, const std::vector<BaseBlock>& baseBlocks,
-               std::vector<uint8_t>* out) {
-    for (const Buffer& buffer : frame.buffers) {
-        for (const Block& block : buffer.blocks) {
-            if (block.index < 0 || static_cast<size_t>(block.index) >= baseBlocks.size())
-                continue;
-            const BaseBlock& base = baseBlocks[static_cast<size_t>(block.index)];
-            if (base.getTag() != BaseBlock::nativeBlock) {
-                ALOGE("input block type %d not supported", static_cast<int>(base.getTag()));
-                return false;
-            }
-            const NativeHandle& nh = base.get<BaseBlock::nativeBlock>();
-            if (nh.fds.empty()) return false;
-            struct { uint32_t offset, length; } range = {0, 0};
-            if (!findParam(block.meta.params, kRangeInfoIndex, &range, sizeof(range))) {
-                off_t end = lseek(nh.fds[0].get(), 0, SEEK_END);
-                range.length = end > 0 ? static_cast<uint32_t>(end) : 0;
-            }
-            if (!range.length) continue;
-            const size_t mapLen = static_cast<size_t>(range.offset) + range.length;
-            void* map = mmap(nullptr, mapLen, PROT_READ, MAP_SHARED, nh.fds[0].get(), 0);
-            if (map == MAP_FAILED) return false;
-            const uint8_t* p = static_cast<const uint8_t*>(map) + range.offset;
-            out->insert(out->end(), p, p + range.length);
-            munmap(map, mapLen);
-        }
-    }
-    return true;
-}
-
-NativeHandle dupHandle(const NativeHandle& src) {
-    NativeHandle out;
-    out.ints = src.ints;
-    for (const auto& fd : src.fds) out.fds.emplace_back(fd.get() >= 0 ? dup(fd.get()) : -1);
-    return out;
-}
-
-FrameData dupFrame(const FrameData& src) {
-    FrameData out;
-    out.flags = src.flags;
-    out.ordinal = src.ordinal;
-    out.configUpdate = src.configUpdate;
-    for (const Buffer& b : src.buffers) {
-        Buffer copy;
-        copy.info = b.info;
-        for (const Block& blk : b.blocks) {
-            Block c;
-            c.index = blk.index;
-            c.meta = blk.meta;
-            c.fence = dupHandle(blk.fence);
-            copy.blocks.push_back(std::move(c));
-        }
-        out.buffers.push_back(std::move(copy));
-    }
-    return out;
-}
-
-BaseBlock dupBaseBlock(const BaseBlock& src) {
-    if (src.getTag() == BaseBlock::nativeBlock)
-        return BaseBlock::make<BaseBlock::nativeBlock>(dupHandle(src.get<BaseBlock::nativeBlock>()));
-    if (src.getTag() == BaseBlock::hwbBlock) {
-        const HardwareBuffer& source = src.get<BaseBlock::hwbBlock>();
-        HardwareBuffer copy;
-        if (source) {
-            AHardwareBuffer_acquire(source.get());
-            copy.reset(source.get());
-        }
-        return BaseBlock::make<BaseBlock::hwbBlock>(std::move(copy));
-    }
-    return BaseBlock();
-}
-
-// ByteBuffer clients read YUV: CCodec converts a YUV block to the flexible
-// format they get, but cannot convert RGBA. The host renders RGBA on the GPU;
-// here (CPU mode only) it becomes YV12, BT.601 limited range.
-AHardwareBuffer* rgbaToYv12(AHardwareBuffer* rgba, uint32_t width, uint32_t height) {
-    constexpr uint32_t kFormatYv12 = 0x32315659;  // HAL_PIXEL_FORMAT_YV12
-    AHardwareBuffer_Desc desc = {};
-    desc.width = width;
-    desc.height = height;
-    desc.layers = 1;
-    desc.format = kFormatYv12;
-    desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN | AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN;
-    AHardwareBuffer* yuv = nullptr;
-    if (AHardwareBuffer_allocate(&desc, &yuv) != 0) return nullptr;
-    AHardwareBuffer_Desc srcDesc;
-    AHardwareBuffer_describe(rgba, &srcDesc);
-    void* src = nullptr;
-    AHardwareBuffer_Planes planes;
-    if (AHardwareBuffer_lock(rgba, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, nullptr, &src) != 0) {
-        AHardwareBuffer_release(yuv);
-        return nullptr;
-    }
-    if (AHardwareBuffer_lockPlanes(yuv, AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN, -1, nullptr,
-                                   &planes) != 0 || planes.planeCount < 3) {
-        AHardwareBuffer_unlock(rgba, nullptr);
-        AHardwareBuffer_release(yuv);
-        return nullptr;
-    }
-    const uint8_t* in = static_cast<const uint8_t*>(src);
-    const size_t inStride = static_cast<size_t>(srcDesc.stride) * 4;
-    const AHardwareBuffer_Plane& py = planes.planes[0];
-    const AHardwareBuffer_Plane& pu = planes.planes[1];
-    const AHardwareBuffer_Plane& pv = planes.planes[2];
-    for (uint32_t y = 0; y < height; ++y) {
-        const uint8_t* row = in + y * inStride;
-        uint8_t* out = static_cast<uint8_t*>(py.data) + y * py.rowStride;
-        for (uint32_t x = 0; x < width; ++x) {
-            const int r = row[4 * x], g = row[4 * x + 1], b = row[4 * x + 2];
-            out[x] = static_cast<uint8_t>(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
-        }
-    }
-    for (uint32_t y = 0; y + 1 < height; y += 2) {
-        const uint8_t* r0 = in + y * inStride;
-        const uint8_t* r1 = r0 + inStride;
-        uint8_t* u = static_cast<uint8_t*>(pu.data) + (y / 2) * pu.rowStride;
-        uint8_t* v = static_cast<uint8_t*>(pv.data) + (y / 2) * pv.rowStride;
-        for (uint32_t x = 0; x + 1 < width; x += 2) {
-            const int r = r0[4 * x] + r0[4 * x + 4] + r1[4 * x] + r1[4 * x + 4];
-            const int g = r0[4 * x + 1] + r0[4 * x + 5] + r1[4 * x + 1] + r1[4 * x + 5];
-            const int b = r0[4 * x + 2] + r0[4 * x + 6] + r1[4 * x + 2] + r1[4 * x + 6];
-            u[(x / 2) * pu.pixelStride] =
-                    static_cast<uint8_t>(((-38 * r - 74 * g + 112 * b + 512) >> 10) + 128);
-            v[(x / 2) * pv.pixelStride] =
-                    static_cast<uint8_t>(((112 * r - 94 * g - 18 * b + 512) >> 10) + 128);
-        }
-    }
-    AHardwareBuffer_unlock(yuv, nullptr);
-    AHardwareBuffer_unlock(rgba, nullptr);
-    return yuv;
-}
-
 }  // namespace
 
-// Open sessions, by id (weak: a reply never keeps a component alive).
-std::map<uint32_t, std::weak_ptr<HostDecComponent>>& sessions() {
-    static auto* map = new std::map<uint32_t, std::weak_ptr<HostDecComponent>>;
-    return *map;
-}
-
-bool HostDecComponent::available() {
-    char value[PROP_VALUE_MAX] = "";
-    __system_property_get("ro.boot.tebox.gpu", value);
-    if (strcmp(value, "gfxstream") != 0) return false;  // RGBA resources only there
-    std::lock_guard<std::mutex> state(gPortMu);
-    if (gPortFd >= 0) return true;
-    const int fd = openPort();
-    if (fd < 0) return false;
-    gPortFd = fd;  // kept: the port has one opener at a time
-    std::thread(portReader, fd).detach();
-    return true;
-}
-
-// Hands every reply to its session. On a port error the open sessions fail
-// (their pictures never come) and the HAL keeps the port closed.
-void HostDecComponent::portReader(int fd) {
-    std::vector<uint8_t> payload;
-    for (;;) {
-        VdecHdr hdr;
-        if (!readFull(fd, &hdr, sizeof(hdr)) || hdr.magic != kVdecMagic ||
-            hdr.size > (1u << 20) || hdr.size < sizeof(uint32_t))
-            break;
-        payload.resize(hdr.size);
-        if (!readFull(fd, payload.data(), hdr.size)) break;
-        uint32_t session;
-        memcpy(&session, payload.data(), sizeof(session));
-        std::shared_ptr<HostDecComponent> comp;
-        {
-            std::lock_guard<std::mutex> state(gPortMu);
-            auto it = sessions().find(session);
-            if (it != sessions().end()) comp = it->second.lock();
-        }
-        if (!comp) continue;  // closed meanwhile: a late reply
-        if (hdr.type == kVdecPicture && hdr.size >= sizeof(VdecPicture)) {
-            comp->onPicture(payload.data());
-        } else if (hdr.type == kVdecFlushed) {
-            std::lock_guard<std::mutex> lock(comp->mLock);
-            comp->mFlushed = true;
-            comp->mCv.notify_all();
-        }
-    }
-    ALOGE("tebox.vdec read failed");
-    std::lock_guard<std::mutex> state(gPortMu);
-    if (gPortFd == fd) gPortFd = -1;
-}
+bool HostDecComponent::available() { return vdecAvailable(); }
 
 HostDecComponent::HostDecComponent(std::string name, uint32_t codec,
                                    std::shared_ptr<ComponentInterface> intf,
@@ -439,17 +82,21 @@ ScopedAStatus HostDecComponent::getInterface(std::shared_ptr<IComponentInterface
 ScopedAStatus HostDecComponent::start() {
     std::unique_lock<std::mutex> lock(mLock);
     if (mStarted) return ScopedAStatus::ok();
-    if (!available()) return ScopedAStatus::fromServiceSpecificError(Status::CANNOT_DO);
-    {
-        std::lock_guard<std::mutex> state(gPortMu);
-        mSession = gNextSession++;
-        sessions()[mSession] = ref<HostDecComponent>();
-    }
+    if (!vdecEnsure()) return ScopedAStatus::fromServiceSpecificError(Status::CANNOT_DO);
+    mSession = vdecAllocSession([this](uint32_t type, const uint8_t* payload, size_t size) {
+        if (type == kVdecPicture && size >= sizeof(VdecPicture)) {
+            onPicture(payload);
+        } else if (type == kVdecFlushed) {
+            std::lock_guard<std::mutex> lock(mLock);
+            mFlushed = true;
+            mCv.notify_all();
+        }
+    });
     const VdecConfig cfg = {mSession, mCodec, mCfg->width(), mCfg->height()};
-    if (!send(kVdecConfig, &cfg, sizeof(cfg))) {
+    if (!vdecSend(kVdecConfig, &cfg, sizeof(cfg))) {
         ALOGE("%s: tebox.vdec unavailable (%s)", mName.c_str(), strerror(errno));
-        std::lock_guard<std::mutex> state(gPortMu);
-        sessions().erase(mSession);
+        vdecFreeSession(mSession);
+        mSession = 0;
         return ScopedAStatus::fromServiceSpecificError(Status::CANNOT_DO);
     }
     mStarted = mRunning = true;
@@ -475,11 +122,9 @@ void HostDecComponent::closeSession() {
         mSavedCsd.clear();
     }
     mCv.notify_all();
-    {
-        std::lock_guard<std::mutex> state(gPortMu);
-        sessions().erase(mSession);
-    }
-    send(kVdecClose, &mSession, sizeof(mSession));
+    vdecFreeSession(mSession);
+    vdecSend(kVdecClose, &mSession, sizeof(mSession));
+    mSession = 0;
     if (mWorker.joinable()) mWorker.join();
     for (Target& t : targets) releaseTarget(&t, true);
 }
@@ -505,17 +150,18 @@ ScopedAStatus HostDecComponent::release() {
 
 ScopedAStatus HostDecComponent::queue(const WorkBundle& bundle) {
     std::lock_guard<std::mutex> lock(mLock);
-    if (!mStarted) return badState();
+    if (!mStarted) return c2BadState();
     // AIDL owns the incoming descriptors; duplicate what outlives this call.
     for (const Work& src : bundle.works) {
         PendingWork pending;
         pending.work.chainInfo = src.chainInfo;
-        pending.work.input = dupFrame(src.input);
+        pending.work.input = duplicateFrameData(src.input);
         pending.work.worklets.resize(1);
         if (!src.worklets.empty()) pending.work.worklets[0].componentId = src.worklets[0].componentId;
         pending.work.workletsProcessed = 0;
         pending.work.result.status = Status::OK;
-        for (const BaseBlock& block : bundle.baseBlocks) pending.baseBlocks.push_back(dupBaseBlock(block));
+        for (const BaseBlock& block : bundle.baseBlocks)
+            pending.baseBlocks.push_back(duplicateBaseBlock(block));
         mQueued.push_back(std::move(pending));
     }
     mCv.notify_all();
@@ -606,8 +252,9 @@ bool HostDecComponent::provideTargets() {
         }
         Target target;
         if (!allocateTarget(&target)) return false;
-        const native_handle_t* nh = nativeHandle(target.buffer);
-        const uint32_t resource = nh && nh->numFds > 0 ? resourceIdFromFd(nh->data[0]) : 0;
+        const native_handle_t* nh = ahardwareBufferNativeHandle(target.buffer);
+        const uint32_t resource =
+                nh && nh->numFds > 0 ? virtGpuResourceIdFromFd(nh->data[0]) : 0;
         if (!resource) {
             ALOGE("%s: output buffer is not a virtio-gpu resource", mName.c_str());
             {
@@ -630,7 +277,7 @@ bool HostDecComponent::provideTargets() {
             return true;
         }
         const VdecOutput out = {mSession, id, resource, target.width, target.height};
-        if (!send(kVdecOutput, &out, sizeof(out))) return false;
+        if (!vdecSend(kVdecOutput, &out, sizeof(out))) return false;
     }
 }
 
@@ -666,7 +313,7 @@ void HostDecComponent::workerLoop() {
         const FrameData& in = pending.work.input;
         const bool config = (in.flags & FrameData::CODEC_CONFIG) != 0;
         const bool eos = (in.flags & FrameData::END_OF_STREAM) != 0;
-        bool ok = readInput(in, pending.baseBlocks, &data);
+        bool ok = readInputFrame(in, pending.baseBlocks, &data);
         std::vector<PendingWork> done;
         if (ok && config) {
             // Parameter sets travel with the next frame (one access unit per
@@ -692,8 +339,8 @@ void HostDecComponent::workerLoop() {
             }
             // Never hold mLock while writing: the reader needs it to drain
             // the host's replies, and the host waits for those.
-            ok = send(kVdecInput, &hdr, sizeof(hdr), data.data(),
-                      static_cast<uint32_t>(data.size()));
+            ok = vdecSend(kVdecInput, &hdr, sizeof(hdr), data.data(),
+                          static_cast<uint32_t>(data.size()));
             if (ok && mListener) {
                 // The bitstream is with the host: Codec2 may reuse the buffer.
                 IComponentListener::InputBuffer released;
@@ -853,7 +500,7 @@ ScopedAStatus HostDecComponent::flush(WorkBundle* out) {
     std::vector<Target> targets;
     {
         std::unique_lock<std::mutex> lock(mLock);
-        if (!mStarted) return badState();
+        if (!mStarted) return c2BadState();
         mFlushed = false;
         // Not yet sent: return as is.
         for (PendingWork& p : mQueued) {
@@ -871,7 +518,7 @@ ScopedAStatus HostDecComponent::flush(WorkBundle* out) {
         // config: decode the first frame after a seek with them again.
         mCsd = mSavedCsd;
     }
-    send(kVdecFlush, &mSession, sizeof(mSession));
+    vdecSend(kVdecFlush, &mSession, sizeof(mSession));
     std::unique_lock<std::mutex> lock(mLock);
     mCv.wait_for(lock, std::chrono::milliseconds(kFlushWaitMs), [&] { return mFlushed; });
     // Sent but without a picture: flushed with no output.

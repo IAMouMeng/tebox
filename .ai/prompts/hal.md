@@ -50,9 +50,9 @@ $(call inherit-product, src/common/hardware/interfaces/common.mk)
 - AIDL 接口上必须 override 的 `Bn*` 可以返回 `EX_UNSUPPORTED_OPERATION`，那是接口；接口以外多出来的 helper / 整份 Cuttlefish 默认实现不要带进来。
 - 不要整目录复制 AOSP HAL。对照 `light`：能开机的最小实现。注释只写非显而易见的约束（冻结 AIDL hash、SELinux、QEMU 限制）。
 - 改完自检：每个留下的 `.cpp/.h/.sh` 都在 `Android.bp` 或 `gki_custom` 的 `build.sh` 里用到；每个留下的函数都有调用点。
-- **命名**：类型/类 `PascalCase`，函数/方法 `camelCase`，`#define` 常量 `SCREAMING_SNAKE`。不要 `do_stuff_impl2`、`utils_helper`、`tools_xxx`。
-- **不要拆只有自己用的工具函数**。一段逻辑只有这一处调用，就写在该函数里，不要再抽 `util.cpp` / `tools.cpp` / `helpers.h`。第二个调用点出现了再拆。
-- **常量**：魔法数字和路径字符串要么放在该 `.c/.cpp` **文件最上方** `#define`，要么新建一个 `.h` 给共用方 include。不要写在函数肚子里。
+- **命名**：类型/类 `PascalCase`，函数/方法 `camelCase`，`#define` 常量 `SCREAMING_SNAKE`。不要 `do_stuff_impl2`、`utils_helper`。
+- **共用 helper**：按职责命名的 `.h`/`.cpp`（`FdIo`、`C2Blocks`、`VirtioSerial`…）与组件同级；对外 API 进命名空间。不要杂烩 `tools/` / `util.cpp`。仅一处且不复用的逻辑留在组件内。
+- **常量**：魔法数字和路径字符串要么放在该 `.c/.cpp` **文件最上方** `#define`，要么新建 `.h` 给共用方 include。不要写在函数肚子里。
 
 细则见 `.ai/AGENTS.md` 的 Code conventions。
 

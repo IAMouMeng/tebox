@@ -99,17 +99,23 @@ unless asked. Local dirty-branch commits are required (see below).
   `camelCase` (`setLightState`, `flushPipe`). `#define` constants
   `SCREAMING_SNAKE` (`PIPE_MS`, `SAMPLE_RATE_HZ`). Files: `foo.cpp` /
   `Foo.h` matching the class, or `android.hardware.<hal>-service.*` for
-  rc/xml. Do not invent `do_stuff_impl2`, `utils_helper`, `tools_xxx`.
-- **Do not extract a helper that has one caller.** If a “tool” / util
-  function is only used inside one feature, keep the logic in that
-  function. Split only when a second call site already exists, or the
-  compiler requires a separate TU (JNI, AIDL Bn*). No `util.cpp` /
-  `tools.cpp` / `helpers.h` for a single user.
+  rc/xml. Do not invent `do_stuff_impl2`, `utils_helper`.
+- **Shared helpers = purpose-named TUs (C++/AOSP style).** Reusable free
+  functions (IO, status shims, block packing, virtio-port open, …) live
+  in a `.h` + `.cpp` named for the *job* (`FdIo.h`, `C2Blocks.h`,
+  `VirtioSerial.h`), **next to the callers** — not a catch-all
+  `tools/` directory, not `util.cpp` / `helpers.h`. Public API in the
+  module namespace (`gki::`); TU-private detail in an anonymous
+  namespace in the `.cpp`. Tiny one-liners may be `inline` in the header.
+  Component `.cpp` keeps lifecycle / queue / encode-decode; do not
+  copy the same helper into each component’s anonymous namespace.
+  Feature-only logic that will never be shared stays in that component.
+  Delete a helper symbol when nothing calls it.
 - **Constants live in one place.** Magic numbers and strings go either
   as `#define` at the **top of that .c/.cpp** (after `LOG_TAG`, before
   includes that need them), or in a dedicated `.h` included by the
   files that share them. Do not scatter `85`, `48000`, path strings
-  inside function bodies. Do not hide constants in a util function.
+  inside function bodies.
 
 ## Graphics and boot invariants
 

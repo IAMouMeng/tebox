@@ -107,6 +107,56 @@ struct cast_venc_config {
     uint32_t bitrate;   /* bits/s */
     uint32_t fps;
     uint32_t gop_sec;
+    /* CAST_CODEC_H264/HEVC/VP8/VP9. Older guests omit this (size 24); treat
+     * as H264. Newer guests send size 28. */
+    uint32_t codec;
+} __attribute__((packed));
+
+/* Host audio encoder for the guest Codec2 HAL: virtio-serial tebox.aenc
+ * (aenc.sock). Guest sends PCM s16le; host returns encoded frames. */
+#define CAST_AENC_MAGIC 0x434e4541u /* 'AENC' */
+
+enum cast_aenc_codec {
+    CAST_AENC_AAC = 0,  /* ADTS AAC-LC */
+    CAST_AENC_OPUS = 1, /* raw Opus packets */
+    CAST_AENC_FLAC = 2, /* raw FLAC frames */
+};
+
+enum cast_aenc_type {
+    CAST_AENC_CONFIG = 1,     /* guest -> host: struct cast_aenc_config */
+    CAST_AENC_PCM = 2,        /* guest -> host: struct cast_aenc_pcm + samples */
+    CAST_AENC_CLOSE = 3,      /* guest -> host: u32 session */
+    CAST_AENC_BITSTREAM = 16, /* host -> guest: struct cast_aenc_out + payload */
+};
+
+struct cast_aenc_hdr {
+    uint32_t magic;
+    uint32_t type;
+    uint32_t size;
+} __attribute__((packed));
+
+struct cast_aenc_config {
+    uint32_t session;
+    uint32_t sample_rate; /* Hz, typically 48000 */
+    uint32_t channels;    /* 1 or 2 */
+    uint32_t bitrate;     /* bits/s */
+    /* CAST_AENC_*. Older guests omit this (size 16); treat as AAC. */
+    uint32_t codec;
+} __attribute__((packed));
+
+struct cast_aenc_pcm {
+    uint32_t session;
+    uint64_t index;
+    int64_t pts_us;
+    uint32_t nbytes; /* PCM payload bytes following this header */
+} __attribute__((packed));
+
+struct cast_aenc_out {
+    uint32_t session;
+    uint64_t index;
+    int64_t pts_us;
+    int32_t status;
+    uint32_t flags;
 } __attribute__((packed));
 
 struct cast_venc_frame {

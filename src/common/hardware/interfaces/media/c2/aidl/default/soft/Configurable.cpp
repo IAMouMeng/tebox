@@ -18,8 +18,13 @@ using ndk::ScopedAStatus;
 
 namespace gki {
 
-Configurable::Configurable(int32_t id, std::string name, bool decoder, std::string mime)
-    : mId(id), mName(std::move(name)), mDecoder(decoder), mMime(std::move(mime)) {}
+Configurable::Configurable(int32_t id, std::string name, bool decoder, std::string mime,
+                           bool audio)
+    : mId(id),
+      mName(std::move(name)),
+      mDecoder(decoder),
+      mAudio(audio),
+      mMime(std::move(mime)) {}
 
 uint32_t Configurable::width() const {
     std::lock_guard<std::mutex> lock(mLock);
@@ -87,23 +92,28 @@ ScopedAStatus Configurable::query(const std::vector<int32_t>& indices, bool /*ma
             blob = c2param::makePictureSize(uidx, w, h);
             returnedPicture = true;
         } else if (core == c2param::kParamIndexBufferType) {
-            // Encoder: graphic input is required by the AIDL
-            // GraphicBufferSource path; the output is linear (Annex-B).
-            // Decoder: the other way round.
+            // Video encoder: graphic in, linear out. Audio encoder: linear both.
+            // Decoder: the other way round for video.
             const uint32_t graphic = 3;  // C2BufferData::GRAPHIC
             const uint32_t linear = 1;   // C2BufferData::LINEAR
             const bool output = (uidx & 0x10000000u) != 0;
-            blob = c2param::makeU32(uidx, output != mDecoder ? linear : graphic);
+            if (mAudio) {
+                blob = c2param::makeU32(uidx, linear);
+            } else {
+                blob = c2param::makeU32(uidx, output != mDecoder ? linear : graphic);
+            }
         } else if (core == c2param::kParamIndexKind) {
             // C2Component::KIND_DECODER / KIND_ENCODER
             blob = c2param::makeU32(uidx, mDecoder ? 1 : 2);
         } else if (core == c2param::kParamIndexDomain) {
-            blob = c2param::makeU32(uidx, 1);  // C2Component::DOMAIN_VIDEO
+            // C2Component::DOMAIN_VIDEO=1, DOMAIN_AUDIO=2
+            blob = c2param::makeU32(uidx, mAudio ? 2 : 1);
         } else if (core == c2param::kParamIndexStoreDmaBufUsage) {
             blob = c2param::makeDmaBufUsage(uidx, "system");
         } else if (core == c2param::kParamIndexMediaType) {
             const bool output = (uidx & 0x10000000u) != 0;
-            blob = c2param::makeString(uidx, output != mDecoder ? mMime.c_str() : "video/raw");
+            const char* raw = mAudio ? "audio/raw" : "video/raw";
+            blob = c2param::makeString(uidx, output != mDecoder ? mMime.c_str() : raw);
         } else if (mDecoder && core == c2param::kParamIndexPixelFormat) {
             blob = c2param::makeU32(uidx, 1);  // HAL_PIXEL_FORMAT_RGBA_8888
         } else if (mDecoder && core == c2param::kParamIndexDelay) {

@@ -1,7 +1,8 @@
 /* Local tebox host cast bridge; not for upstream QEMU.
  *
- * UI thread: GPU blit to small FBO + async PBO readback, hand off to sender.
- * Never block display on socket I/O. Target up to 60 FPS while casting.
+ * UI thread: GPU blit to small FBO, then either dma-buf hand-off or a single
+ * glReadPixels into the sender-owned buffer (no staging memcpy). Sender uses
+ * writev for header+pixels. Never block display on socket I/O.
  */
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
@@ -12,6 +13,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -215,6 +217,60 @@ static bool tebox_write_all_fd(int fd, const uint8_t *buf, size_t len)
     return true;
 }
 
+/* Header + pixel body without a contiguous staging buffer. */
+static bool tebox_writev_all_fd(int fd, const uint8_t *hdr, size_t hdr_len,
+                                const uint8_t *body, size_t body_len)
+{
+    struct iovec iov[2] = {
+        { .iov_base = (void *)hdr, .iov_len = hdr_len },
+        { .iov_base = (void *)body, .iov_len = body_len },
+    };
+    size_t done = 0;
+    size_t total = hdr_len + body_len;
+#ifdef MSG_NOSIGNAL
+    const int flags = MSG_NOSIGNAL;
+#else
+    const int flags = 0;
+#endif
+
+    while (done < total) {
+        struct msghdr msg = { 0 };
+        struct iovec cur[2];
+        size_t skip = done;
+        int vi = 0;
+        ssize_t n;
+        int i;
+
+        for (i = 0; i < 2; i++) {
+            if (skip >= iov[i].iov_len) {
+                skip -= iov[i].iov_len;
+                continue;
+            }
+            cur[vi].iov_base = (uint8_t *)iov[i].iov_base + skip;
+            cur[vi].iov_len = iov[i].iov_len - skip;
+            vi++;
+            skip = 0;
+        }
+        if (vi == 0) {
+            break;
+        }
+        msg.msg_iov = cur;
+        msg.msg_iovlen = vi;
+        n = sendmsg(fd, &msg, flags);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (n == 0) {
+            return false;
+        }
+        done += (size_t)n;
+    }
+    return true;
+}
+
 static void tebox_flip_vertical(uint8_t *pixels, int width, int height)
 {
     size_t stride = (size_t)width * 4;
@@ -310,9 +366,8 @@ static bool tebox_ensure_scale_fbo(int w, int h)
 
     tebox_cast.out_w = w;
     tebox_cast.out_h = h;
-    g_free(tebox_cast.readback);
-    tebox_cast.readback = g_try_malloc(nbytes);
-    return tebox_cast.readback != NULL;
+    (void)nbytes;
+    return true;
 }
 
 static void tebox_queue_frame(uint8_t *pixels, size_t nbytes, int dmabuf_fd,
@@ -535,8 +590,6 @@ static gpointer tebox_sender_thread(gpointer opaque)
     g_mutex_lock(&tebox_cast.lock);
     while (!tebox_cast.stop) {
         TeboxCastFrame fr;
-        uint8_t *pkt;
-        size_t pkt_len;
         int fd;
         int wr;
 
@@ -583,27 +636,22 @@ static gpointer tebox_sender_thread(gpointer opaque)
         }
 #endif
 
-        pkt_len = 36 + fr.nbytes;
-        pkt = g_try_malloc(pkt_len);
-        if (!pkt) {
-            g_free(fr.pixels);
-            g_mutex_lock(&tebox_cast.lock);
-            tebox_cast.busy = false;
-            continue;
-        }
-        tebox_w32be(pkt + 0, TEBOX_CAST_MAGIC);
-        tebox_w32be(pkt + 4, TEBOX_CAST_VERSION);
-        tebox_w32be(pkt + 8, (uint32_t)fr.width);
-        tebox_w32be(pkt + 12, (uint32_t)fr.height);
-        tebox_w32be(pkt + 16, (uint32_t)fr.width * 4);
-        tebox_w32be(pkt + 20, fr.format);
-        tebox_w64be(pkt + 24, fr.pts_us);
-        tebox_w32be(pkt + 32, (uint32_t)fr.nbytes);
-        memcpy(pkt + 36, fr.pixels, fr.nbytes);
-        g_free(fr.pixels);
+        {
+            uint8_t hdr[36];
 
-        wr = tebox_write_all_fd(fd, pkt, pkt_len) ? 1 : -1;
-        g_free(pkt);
+            tebox_w32be(hdr + 0, TEBOX_CAST_MAGIC);
+            tebox_w32be(hdr + 4, TEBOX_CAST_VERSION);
+            tebox_w32be(hdr + 8, (uint32_t)fr.width);
+            tebox_w32be(hdr + 12, (uint32_t)fr.height);
+            tebox_w32be(hdr + 16, (uint32_t)fr.width * 4);
+            tebox_w32be(hdr + 20, fr.format);
+            tebox_w64be(hdr + 24, fr.pts_us);
+            tebox_w32be(hdr + 32, (uint32_t)fr.nbytes);
+            /* writev: no second full-frame copy into a contiguous packet. */
+            wr = tebox_writev_all_fd(fd, hdr, sizeof(hdr), fr.pixels, fr.nbytes)
+                     ? 1 : -1;
+            g_free(fr.pixels);
+        }
 
         g_mutex_lock(&tebox_cast.lock);
         if (wr < 0) {
@@ -701,6 +749,11 @@ void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
         return;
     }
     nbytes = (size_t)out_w * (size_t)out_h * 4;
+    /* Own buffer for the sender thread — no staging readback + memcpy. */
+    copy = g_try_malloc(nbytes);
+    if (!copy) {
+        return;
+    }
 
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw_fb);
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
@@ -736,7 +789,7 @@ void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
     format = epoxy_is_desktop_gl() ? TEBOX_CAST_BGRA : TEBOX_CAST_RGBA;
     glReadPixels(0, 0, out_w, out_h,
                  format == TEBOX_CAST_BGRA ? GL_BGRA : GL_RGBA,
-                 GL_UNSIGNED_BYTE, tebox_cast.readback);
+                 GL_UNSIGNED_BYTE, copy);
 
     glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer);
     glPixelStorei(GL_PACK_ALIGNMENT, alignment);
@@ -754,14 +807,9 @@ void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
     flip_env = getenv("TEBOX_CAST_FLIP");
     cpu_flip = !(flip_env && flip_env[0] == '0');
     if (cpu_flip) {
-        tebox_flip_vertical(tebox_cast.readback, out_w, out_h);
+        tebox_flip_vertical(copy, out_w, out_h);
     }
 
-    copy = g_try_malloc(nbytes);
-    if (!copy) {
-        return;
-    }
-    memcpy(copy, tebox_cast.readback, nbytes);
     tebox_queue_frame(copy, nbytes, -1, out_w, out_h, format, now);
     tebox_cast.last_us = now;
 }
