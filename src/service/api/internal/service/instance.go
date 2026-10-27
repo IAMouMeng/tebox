@@ -1,4 +1,4 @@
-package tebox
+package service
 
 import (
 	"encoding/json"
@@ -11,8 +11,9 @@ import (
 	"sync"
 	"time"
 
+	api "tebox-api/api/v1"
 	"tebox-api/internal/constants"
-	"tebox-api/internal/tebox/types"
+	"tebox-api/internal/service/types"
 	"tebox-api/internal/utils"
 )
 
@@ -95,17 +96,17 @@ func (m *Manager) Get(id string) (types.Instance, error) {
 }
 
 func (m *Manager) liveLocked(item types.Instance) types.Instance {
-	item.State = constants.StateStopped
+	item.State = api.InstanceState_INSTANCE_STATE_STOPPED
 	if cmd := m.procs[item.ID]; cmd != nil && cmd.Process != nil {
 		item.PID = cmd.Process.Pid
 		item.Running = true
 		switch {
 		case m.stopping[item.ID]:
-			item.State = constants.StateStopping
+			item.State = api.InstanceState_INSTANCE_STATE_STOPPING
 		case m.booted[item.ID]:
-			item.State = constants.StateRunning
+			item.State = api.InstanceState_INSTANCE_STATE_RUNNING
 		default:
-			item.State = constants.StateStarting
+			item.State = api.InstanceState_INSTANCE_STATE_STARTING
 		}
 	}
 	item.CastPort = m.castPorts[item.ID]
@@ -126,7 +127,7 @@ func (m *Manager) Create(opts types.CreateOptions) (types.Instance, error) {
 		CPUCores: opts.CPUCores,
 		MemoryMB: opts.MemoryMB,
 		DiskMB:   opts.DiskMB,
-		State:    constants.StateStopped,
+		State:    api.InstanceState_INSTANCE_STATE_STOPPED,
 
 		SystemImage:    opts.SystemImage,
 		VendorImage:    opts.VendorImage,
@@ -571,22 +572,7 @@ func (m *Manager) readMetadata(dir string) (types.Instance, error) {
 }
 
 func (m *Manager) writeMetadata(item types.Instance) error {
-	data, err := json.Marshal(struct {
-		ID       string        `json:"id"`
-		Name     string        `json:"name"`
-		Variant  string        `json:"variant"`
-		AdbPort  int           `json:"adbPort"`
-		Profile  types.DeviceProfile `json:"profile"`
-		CPUCores int           `json:"cpuCores"`
-		MemoryMB int           `json:"memoryMb"`
-		DiskMB   int           `json:"diskMb"`
-
-		SystemImage    string `json:"systemImage,omitempty"`
-		VendorImage    string `json:"vendorImage,omitempty"`
-		InitramfsImage string `json:"initramfsImage,omitempty"`
-		RunDir         string `json:"runDir,omitempty"`
-	}{item.ID, item.Name, item.Variant, item.AdbPort, item.Profile, item.CPUCores, item.MemoryMB, item.DiskMB,
-		item.SystemImage, item.VendorImage, item.InitramfsImage, item.RunDir})
+	data, err := json.Marshal(item.Metadata())
 	if err != nil {
 		return err
 	}
@@ -631,5 +617,3 @@ func (m *Manager) allocateAdbPortLocked(skipID string) (int, error) {
 	}
 	return 0, fmt.Errorf("no free ADB port available")
 }
-
-

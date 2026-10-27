@@ -1,39 +1,19 @@
-package tebox
+package service
 
 import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"tebox-client/internal/service/types"
+	"tebox-client/internal/utils"
 )
-
-type Instance struct {
-	ID      string        `json:"id"`
-	Name    string        `json:"name"`
-	Variant string        `json:"variant"`
-	Dir     string        `json:"dir"`
-	AdbPort int           `json:"adbPort"`
-	PID     int           `json:"pid"`
-	Running bool          `json:"running"`
-	Profile DeviceProfile `json:"profile"`
-}
-
-type DeviceProfile struct {
-	Latitude        float64 `json:"latitude"`
-	Longitude       float64 `json:"longitude"`
-	Country         string  `json:"country"`
-	OperatorNumeric string  `json:"operatorNumeric"`
-	OperatorName    string  `json:"operatorName"`
-	CellId          string  `json:"cellId"`
-	PhoneNumber     string  `json:"phoneNumber"`
-	Root            bool    `json:"root"`
-}
 
 type Manager struct {
 	ProjectRoot string
@@ -45,7 +25,7 @@ type Manager struct {
 }
 
 func NewManager(projectRoot, dataRoot string) (*Manager, error) {
-	variant, err := ChooseVariant(projectRoot)
+	variant, err := utils.ChooseVariant(projectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -61,54 +41,11 @@ func NewManager(projectRoot, dataRoot string) (*Manager, error) {
 	return m, nil
 }
 
-func ChooseVariant(root string) (string, error) {
-	if preferred := os.Getenv("TEBOX_VARIANT"); preferred != "" {
-		if _, err := os.Stat(filepath.Join(root, "src", "aosp", preferred, "KERNEL")); err == nil {
-			return preferred, nil
-		}
-	}
-	entries, err := os.ReadDir(filepath.Join(root, "src", "aosp"))
-	if err != nil {
-		return "", fmt.Errorf("no Android variant under %s/src/aosp", root)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(root, "src", "aosp", entry.Name(), "KERNEL")); err == nil {
-			return entry.Name(), nil
-		}
-	}
-	return "", fmt.Errorf("no Android variant under %s/src/aosp", root)
-}
-
-func DefaultDataRoot() string {
-	if data := os.Getenv("TEBOX_DATA_DIR"); data != "" {
-		return data
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ".tebox"
-	}
-	return filepath.Join(home, ".tebox")
-}
-
-func ResolveProjectRoot() (string, error) {
-	if root := os.Getenv("TEBOX_ROOT"); root != "" {
-		return root, nil
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	return cwd, nil
-}
-
 func (m *Manager) instancesDir() string {
 	return filepath.Join(m.DataRoot, "instances")
 }
 
-func (m *Manager) List() ([]Instance, error) {
+func (m *Manager) List() ([]types.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.reapLocked()
@@ -120,7 +57,7 @@ func (m *Manager) List() ([]Instance, error) {
 		}
 		return nil, err
 	}
-	out := make([]Instance, 0, len(entries))
+	out := make([]types.Instance, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
@@ -138,25 +75,25 @@ func (m *Manager) List() ([]Instance, error) {
 	return out, nil
 }
 
-func (m *Manager) Create() (Instance, error) {
+func (m *Manager) Create() (types.Instance, error) {
 	now := time.Now()
-	item := Instance{
+	item := types.Instance{
 		ID:      fmt.Sprintf("android-%d-%d", now.Unix(), now.Nanosecond()/1e6),
 		Name:    fmt.Sprintf("Android %d", now.Unix()),
 		Variant: m.Variant,
-		Profile: DeviceProfile{Latitude: 39.9042, Longitude: 116.4074, Country: "CN", OperatorNumeric: "46000", OperatorName: "China Mobile", CellId: "0x1001", PhoneNumber: "+8613800138000"},
+		Profile: types.DeviceProfile{Latitude: 39.9042, Longitude: 116.4074, Country: "CN", OperatorNumeric: "46000", OperatorName: "China Mobile", CellId: "0x1001", PhoneNumber: "+8613800138000"},
 	}
 	item.Dir = filepath.Join(m.instancesDir(), item.ID)
 	port, err := m.allocateAdbPort(item.ID)
 	if err != nil {
-		return Instance{}, err
+		return types.Instance{}, err
 	}
 	item.AdbPort = port
 	if err := os.MkdirAll(item.Dir, 0o755); err != nil {
-		return Instance{}, err
+		return types.Instance{}, err
 	}
 	if err := writeMetadata(item); err != nil {
-		return Instance{}, err
+		return types.Instance{}, err
 	}
 	return item, nil
 }
@@ -291,7 +228,7 @@ func (m *Manager) Reset(id string, wipeData bool) error {
 
 // Configure applies instance-specific guest identity/location values over ADB.
 // It deliberately leaves system.img and the kernel untouched.
-func (m *Manager) Configure(id string, profile DeviceProfile) error {
+func (m *Manager) Configure(id string, profile types.DeviceProfile) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	item, err := m.readMetadata(filepath.Join(m.instancesDir(), id))
@@ -368,30 +305,24 @@ func (m *Manager) reapLocked() {
 	}
 }
 
-func (m *Manager) readMetadata(dir string) (Instance, error) {
+func (m *Manager) readMetadata(dir string) (types.Instance, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "instance.json"))
 	if err != nil {
-		return Instance{}, err
+		return types.Instance{}, err
 	}
-	var item Instance
+	var item types.Instance
 	if err := json.Unmarshal(data, &item); err != nil {
-		return Instance{}, err
+		return types.Instance{}, err
 	}
 	item.Dir = dir
 	if item.ID == "" || item.Variant == "" {
-		return Instance{}, fmt.Errorf("invalid metadata")
+		return types.Instance{}, fmt.Errorf("invalid metadata")
 	}
 	return item, nil
 }
 
-func writeMetadata(item Instance) error {
-	data, err := json.Marshal(struct {
-		ID      string        `json:"id"`
-		Name    string        `json:"name"`
-		Variant string        `json:"variant"`
-		AdbPort int           `json:"adbPort"`
-		Profile DeviceProfile `json:"profile"`
-	}{item.ID, item.Name, item.Variant, item.AdbPort, item.Profile})
+func writeMetadata(item types.Instance) error {
+	data, err := json.Marshal(item.Metadata())
 	if err != nil {
 		return err
 	}
@@ -429,19 +360,10 @@ func (m *Manager) allocateAdbPortLocked(skipID string) (int, error) {
 		if used[port] {
 			continue
 		}
-		if !portFree(port) {
+		if !utils.TCPPortFree(port) {
 			continue
 		}
 		return port, nil
 	}
 	return 0, fmt.Errorf("no free ADB port available")
-}
-
-func portFree(port int) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return false
-	}
-	_ = ln.Close()
-	return true
 }

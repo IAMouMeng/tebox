@@ -1,5 +1,5 @@
 {
-  "name": "tebox-client-frontend",
+  "name": "tebox-client-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",

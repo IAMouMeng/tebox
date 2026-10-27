@@ -1,4 +1,4 @@
-package tebox
+package service
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"tebox-api/internal/constants"
-	"tebox-api/internal/tebox/types"
+	"tebox-api/internal/service/types"
 	"tebox-api/internal/utils"
 )
 

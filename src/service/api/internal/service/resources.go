@@ -1,4 +1,4 @@
-package tebox
+package service
 
 import (
 	"context"
@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
+	api "tebox-api/api/v1"
 	"tebox-api/internal/constants"
-	"tebox-api/internal/tebox/types"
+	"tebox-api/internal/service/types"
 	"tebox-api/internal/utils"
 )
 
@@ -100,8 +101,8 @@ func (m *Manager) fillResources(item *types.Instance) {
 	if err == nil {
 		item.DiskUsedMB = utils.FileUsedMB(img)
 	}
-	if item.State == "" {
-		item.State = constants.StateStopped
+	if item.State == api.InstanceState_INSTANCE_STATE_UNSPECIFIED {
+		item.State = api.InstanceState_INSTANCE_STATE_STOPPED
 	}
 }
 

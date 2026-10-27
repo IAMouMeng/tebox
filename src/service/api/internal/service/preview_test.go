@@ -1,4 +1,4 @@
-package tebox
+package service
 
 import (
 	"image"

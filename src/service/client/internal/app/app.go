@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -8,26 +8,30 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	api "tebox-client/api/v1"
-	"tebox-client/internal/tebox"
+	"tebox-client/internal/service/types"
 )
 
+// App is the Wails-bound desktop launcher.
 type App struct {
 	ctx  context.Context
 	conn *grpc.ClientConn
 	api  api.AndroidServiceClient
 }
 
+// Status is the launcher status shown in the UI.
 type Status struct {
 	Variant  string `json:"variant"`
 	DataRoot string `json:"dataRoot"`
 	Root     string `json:"root"`
 }
 
-func NewApp() *App {
+// New returns an unbound launcher. Startup connects it to tebox-api.
+func New() *App {
 	return &App{}
 }
 
-func (a *App) startup(ctx context.Context) {
+// Startup dials TEBOX_API_ADDR (default 127.0.0.1:50051).
+func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	addr := os.Getenv("TEBOX_API_ADDR")
 	if addr == "" {
@@ -40,7 +44,8 @@ func (a *App) startup(ctx context.Context) {
 	a.conn, a.api = conn, api.NewAndroidServiceClient(conn)
 }
 
-func (a *App) shutdown(ctx context.Context) {
+// Shutdown closes the API connection.
+func (a *App) Shutdown(ctx context.Context) {
 	_ = ctx
 	if a.conn != nil {
 		_ = a.conn.Close()
@@ -59,11 +64,13 @@ func (a *App) GetStatus() (Status, error) {
 		return Status{}, err
 	}
 	return Status{
-		Variant: os.Getenv("TEBOX_VARIANT"), DataRoot: os.Getenv("TEBOX_DATA_DIR"), Root: os.Getenv("TEBOX_ROOT"),
+		Variant:  os.Getenv("TEBOX_VARIANT"),
+		DataRoot: os.Getenv("TEBOX_DATA_DIR"),
+		Root:     os.Getenv("TEBOX_ROOT"),
 	}, nil
 }
 
-func (a *App) ListInstances() ([]tebox.Instance, error) {
+func (a *App) ListInstances() ([]types.Instance, error) {
 	if err := a.ensure(); err != nil {
 		return nil, err
 	}
@@ -74,13 +81,13 @@ func (a *App) ListInstances() ([]tebox.Instance, error) {
 	return fromMessages(res.Instances), nil
 }
 
-func (a *App) CreateInstance() (tebox.Instance, error) {
+func (a *App) CreateInstance() (types.Instance, error) {
 	if err := a.ensure(); err != nil {
-		return tebox.Instance{}, err
+		return types.Instance{}, err
 	}
 	item, err := a.api.CreateInstance(a.ctx, &api.CreateInstanceRequest{})
 	if err != nil {
-		return tebox.Instance{}, err
+		return types.Instance{}, err
 	}
 	return fromMessage(item), nil
 }
@@ -109,11 +116,23 @@ func (a *App) StopInstance(id string) error {
 	return err
 }
 
-func (a *App) ConfigureInstance(id string, profile tebox.DeviceProfile) error {
+func (a *App) ConfigureInstance(id string, profile types.DeviceProfile) error {
 	if err := a.ensure(); err != nil {
 		return err
 	}
-	_, err := a.api.ConfigureInstance(a.ctx, &api.ConfigureInstanceRequest{Id: id, Profile: &api.DeviceProfile{Latitude: profile.Latitude, Longitude: profile.Longitude, Country: profile.Country, OperatorNumeric: profile.OperatorNumeric, OperatorName: profile.OperatorName, CellId: profile.CellId, PhoneNumber: profile.PhoneNumber, Root: profile.Root}})
+	_, err := a.api.ConfigureInstance(a.ctx, &api.ConfigureInstanceRequest{
+		Id: id,
+		Profile: &api.DeviceProfile{
+			Latitude:        profile.Latitude,
+			Longitude:       profile.Longitude,
+			Country:         profile.Country,
+			OperatorNumeric: profile.OperatorNumeric,
+			OperatorName:    profile.OperatorName,
+			CellId:          profile.CellId,
+			PhoneNumber:     profile.PhoneNumber,
+			Root:            profile.Root,
+		},
+	})
 	return err
 }
 
@@ -141,17 +160,36 @@ func (a *App) ResetInstance(id string, wipeData bool) error {
 	return err
 }
 
-func fromMessages(items []*api.Instance) []tebox.Instance {
-	out := make([]tebox.Instance, 0, len(items))
-	for _, i := range items {
-		out = append(out, fromMessage(i))
+func fromMessages(items []*api.Instance) []types.Instance {
+	out := make([]types.Instance, 0, len(items))
+	for _, item := range items {
+		out = append(out, fromMessage(item))
 	}
 	return out
 }
-func fromMessage(i *api.Instance) tebox.Instance {
-	p := tebox.DeviceProfile{}
-	if i.Profile != nil {
-		p = tebox.DeviceProfile{Latitude: i.Profile.Latitude, Longitude: i.Profile.Longitude, Country: i.Profile.Country, OperatorNumeric: i.Profile.OperatorNumeric, OperatorName: i.Profile.OperatorName, CellId: i.Profile.CellId, PhoneNumber: i.Profile.PhoneNumber, Root: i.Profile.Root}
+
+func fromMessage(item *api.Instance) types.Instance {
+	profile := types.DeviceProfile{}
+	if item.Profile != nil {
+		profile = types.DeviceProfile{
+			Latitude:        item.Profile.Latitude,
+			Longitude:       item.Profile.Longitude,
+			Country:         item.Profile.Country,
+			OperatorNumeric: item.Profile.OperatorNumeric,
+			OperatorName:    item.Profile.OperatorName,
+			CellId:          item.Profile.CellId,
+			PhoneNumber:     item.Profile.PhoneNumber,
+			Root:            item.Profile.Root,
+		}
 	}
-	return tebox.Instance{ID: i.Id, Name: i.Name, Variant: i.Variant, Dir: i.Dir, AdbPort: int(i.AdbPort), PID: int(i.Pid), Running: i.Running, Profile: p}
+	return types.Instance{
+		ID:      item.Id,
+		Name:    item.Name,
+		Variant: item.Variant,
+		Dir:     item.Dir,
+		AdbPort: int(item.AdbPort),
+		PID:     int(item.Pid),
+		Running: item.Running,
+		Profile: profile,
+	}
 }

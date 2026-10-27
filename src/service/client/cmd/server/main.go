@@ -7,13 +7,14 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"tebox-client/internal/app"
 )
 
-//go:embed all:frontend/dist
+//go:embed all:web/dist
 var assets embed.FS
 
 func main() {
-	app := NewApp()
+	application := app.New()
 	err := wails.Run(&options.App{
 		Title:     "tebox",
 		Width:     960,
@@ -24,10 +25,10 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 246, G: 247, B: 249, A: 255},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
+		OnStartup:        application.Startup,
+		OnShutdown:       application.Shutdown,
 		Bind: []interface{}{
-			app,
+			application,
 		},
 		Mac: &mac.Options{
 			TitleBar: mac.TitleBarDefault(),

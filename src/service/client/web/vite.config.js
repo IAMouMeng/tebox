@@ -8,7 +8,7 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
-    outDir: 'dist',
+    outDir: '../cmd/server/web/dist',
     emptyOutDir: true,
   },
 })

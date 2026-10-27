@@ -103,7 +103,7 @@ build_tebox_api() {
     [[ -z "$newest" ]] && { echo "reuse $BIN/tebox-api"; return 0; }
   fi
   (cd "$ROOT/src/service/api" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-    go build -ldflags='-s -w' -o "$BIN/tebox-api" ./cmd/tebox-api)
+    go build -ldflags='-s -w' -o "$BIN/tebox-api" ./cmd/server)
 }
 
 require_products() {
