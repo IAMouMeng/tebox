@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Mali-G720 / libGLES_mali exposes the Android Extension Pack (ES 3.1 AEP).
-     Without this, PackageManager has only reqGlEsVersion and AnTuTu's device
-     info marks GLES3.x as Not Support even though EGL contexts work. -->
-<permissions>
-    <feature name="android.hardware.opengles.aep" />
-</permissions>

@@ -1,8 +1,0 @@
-# From cuttlefish/guest/hals/health/android.hardware.health-service.cuttlefish.rc
-# (path rewritten from APEX to /vendor/bin/hw for this NDK vendor image).
-service vendor.health-cuttlefish /vendor/bin/hw/android.hardware.health-service
-    class early_hal
-    user system
-    group system
-    seclabel u:r:hal_keymint_system:s0
-    interface aidl android.hardware.health.IHealth/default

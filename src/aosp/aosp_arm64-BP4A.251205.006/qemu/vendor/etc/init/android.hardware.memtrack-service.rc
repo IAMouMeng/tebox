@@ -1,7 +1,0 @@
-# From hardware/interfaces/memtrack/aidl/default/memtrack-default.rc
-service vendor.memtrack-default /vendor/bin/hw/android.hardware.memtrack-service
-    class hal
-    user system
-    group system
-    seclabel u:r:hal_keymint_system:s0
-    interface aidl android.hardware.memtrack.IMemtrack/default

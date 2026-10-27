@@ -16,7 +16,6 @@ typedef struct egl_dpy {
     egl_fb guest_fb;
     egl_fb cursor_fb;
     egl_fb blit_fb;
-    DisplaySurface *dump_ds;
     bool y_0_top;
     uint32_t pos_x;
     uint32_t pos_y;
@@ -153,82 +152,6 @@ static void egl_release_dmabuf(DisplayChangeListener *dcl,
 
 #endif
 
-/*
- * PIXMAN_x8r8g8b8 is B,G,R,x in memory. Mali GLES cannot read the
- * imported guest texture or a GL_BGRA intermediate with GL_BGRA, so
- * blit into a fresh GL_RGBA target (same path as tebox cast) and swizzle.
- */
-static bool egl_read_guest_rgba(DisplaySurface *dst, egl_fb *src)
-{
-    int w = surface_width(dst);
-    int h = surface_height(dst);
-    uint8_t *data = surface_data(dst);
-    GLuint tex = 0, fbo = 0;
-    GLenum err;
-    int i, n = w * h;
-
-    while (glGetError() != GL_NO_ERROR) {
-    }
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, tex, 0);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, src->framebuffer);
-    glBlitFramebuffer(0, 0, src->width, src->height,
-                      0, 0, w, h,
-                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, data);
-    err = glGetError();
-    glDeleteFramebuffers(1, &fbo);
-    glDeleteTextures(1, &tex);
-    if (err != GL_NO_ERROR) {
-        return false;
-    }
-    for (i = 0; i < n; i++) {
-        uint8_t r = data[i * 4];
-        data[i * 4] = data[i * 4 + 2];
-        data[i * 4 + 2] = r;
-    }
-    return true;
-}
-
-/* screendump: GL/dma-buf scanout never installs a console surface. */
-static pixman_image_t *egl_gl_readback(DisplayChangeListener *dcl)
-{
-    egl_dpy *edpy = container_of(dcl, egl_dpy, dcl);
-    int w, h;
-
-    if (!edpy->guest_fb.texture || !edpy->guest_fb.width ||
-        !edpy->guest_fb.height) {
-        return NULL;
-    }
-    w = edpy->guest_fb.width;
-    h = edpy->guest_fb.height;
-    if (!edpy->dump_ds || surface_width(edpy->dump_ds) != w ||
-        surface_height(edpy->dump_ds) != h) {
-        qemu_free_displaysurface(edpy->dump_ds);
-        edpy->dump_ds = qemu_create_displaysurface(w, h);
-    }
-    if (!edpy->dump_ds) {
-        return NULL;
-    }
-
-    eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE,
-                   EGL_NO_SURFACE, qemu_egl_rn_ctx);
-    if (!egl_read_guest_rgba(edpy->dump_ds, &edpy->guest_fb)) {
-        return NULL;
-    }
-    return pixman_image_ref(edpy->dump_ds->image);
-}
-
 static void egl_cursor_position(DisplayChangeListener *dcl,
                                 uint32_t pos_x, uint32_t pos_y)
 {
@@ -292,7 +215,6 @@ static const DisplayChangeListenerOps egl_ops = {
 #endif
     .dpy_gl_cursor_position  = egl_cursor_position,
     .dpy_gl_update           = egl_scanout_flush,
-    .dpy_gl_readback         = egl_gl_readback,
 };
 
 static bool

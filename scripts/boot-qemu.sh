@@ -242,10 +242,8 @@ elif [[ "$FORCE_RUTABAGA" == 1 ]]; then
     if [[ -z "${GFXSTREAM_DMABUF_HEAP+x}" && -w /dev/dma_heap/system ]]; then
       export GFXSTREAM_DMABUF_HEAP=/dev/dma_heap/system
     fi
-    # Cast scales on the GPU. Per-frame CPU readback stays off; QMP
-    # screendump asks egl-headless for one readback of the GL scanout
-    # (dma-buf scanout has no console surface, so leaving this at 0 does
-    # not by itself make GetPreview work).
+    # Cast: the GPU scales into a dma-buf the VPU encodes in place, and the
+    # headless display skips its full-frame readback (nothing consumes it).
     if [[ -z "${TEBOX_CAST_DMABUF_HEAP+x}" && -w /dev/dma_heap/system ]]; then
       export TEBOX_CAST_DMABUF_HEAP=/dev/dma_heap/system
     fi
