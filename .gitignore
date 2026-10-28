@@ -56,3 +56,9 @@ __pycache__/
 # Claude Code runtime state.
 /.claude/scheduled_tasks.lock
 src/aosp/*/prebuilts/
+
+# qemu/vendor/bin/hw/* are HAL services soong-compiled from src/common at
+# vendor build time (build-vendor-img.sh runs soong.py --variant); build
+# outputs, not committed. (lib64/ stays: mostly committed HAL-dep prebuilts
+# the build does not regenerate.)
+src/aosp/*/qemu/vendor/bin/hw/
