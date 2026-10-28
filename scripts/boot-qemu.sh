@@ -267,6 +267,15 @@ else
     androidboot.hwui.renderer="${HWUI_RENDERER:-skiagl}"
     androidboot.hardware.gralloc=stub
     androidboot.tebox.video_encode=1 androidboot.tebox.video_decode=1)
+  if [[ "$HOST_OS" == linux ]]; then
+    # Cast scales into a dma-heap buffer the encoder reads in place; without
+    # this the GL path falls back to a per-frame synchronous glReadPixels on
+    # the UI thread (CIX Mali egl-headless, virtio-gpu-gl).
+    if [[ -z "${TEBOX_CAST_DMABUF_HEAP+x}" && -w /dev/dma_heap/system ]]; then
+      export TEBOX_CAST_DMABUF_HEAP=/dev/dma_heap/system
+    fi
+    export TEBOX_EGL_READBACK="${TEBOX_EGL_READBACK:-0}"
+  fi
   echo "gpu:     virgl (Mesa + stub gralloc + c2.tebox; from GPU file / FORCE_RUTABAGA=0)"
 fi
 # Display refresh rate (graphics HAL vsync). It caps every app's frame rate,

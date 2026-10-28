@@ -36,7 +36,15 @@ static void egl_gfx_update(DisplayChangeListener *dcl,
 {
     egl_dpy *edpy = container_of(dcl, egl_dpy, dcl);
 
-    /* Local tebox cast: 2D scanouts (virtio-gpu-rutabaga) have no GL fb. */
+    /*
+     * GL scanout is cast from the guest framebuffer in egl_scanout_flush.
+     * This surface is only the CPU shadow; sending it here replaces a good
+     * cast frame (screenshot readback leaves it stale or black).
+     */
+    if (edpy->guest_fb.texture) {
+        return;
+    }
+    /* 2D scanouts (virtio-gpu-rutabaga) have no GL fb. */
     if (edpy->ds && surface_format(edpy->ds) == PIXMAN_x8r8g8b8) {
         tebox_cast_capture_pixels(surface_data(edpy->ds),
                                   surface_width(edpy->ds),
@@ -163,10 +171,19 @@ static bool egl_read_guest_rgba(DisplaySurface *dst, egl_fb *src)
     int w = surface_width(dst);
     int h = surface_height(dst);
     uint8_t *data = surface_data(dst);
+    GLint draw_fb = 0, read_fb = 0, tex_binding = 0, read_buffer = 0;
     GLuint tex = 0, fbo = 0;
     GLenum err;
     int i, n = w * h;
 
+    /*
+     * Cast samples this same guest framebuffer on the next flush. Leave
+     * its bindings as we found them or that frame is black.
+     */
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw_fb);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex_binding);
+    glGetIntegerv(GL_READ_BUFFER, &read_buffer);
     while (glGetError() != GL_NO_ERROR) {
     }
     glGenTextures(1, &tex);
@@ -187,8 +204,14 @@ static bool egl_read_guest_rgba(DisplaySurface *dst, egl_fb *src)
     glReadBuffer(GL_COLOR_ATTACHMENT0);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, data);
     err = glGetError();
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_fb);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fb);
+    glReadBuffer(read_buffer);
+    glBindTexture(GL_TEXTURE_2D, tex_binding);
     glDeleteFramebuffers(1, &fbo);
     glDeleteTextures(1, &tex);
+    while (glGetError() != GL_NO_ERROR) {
+    }
     if (err != GL_NO_ERROR) {
         return false;
     }
@@ -243,11 +266,15 @@ static void egl_scanout_flush(DisplayChangeListener *dcl,
                               uint32_t w, uint32_t h)
 {
     egl_dpy *edpy = container_of(dcl, egl_dpy, dcl);
+    bool readback = !g_strcmp0(g_getenv("TEBOX_EGL_READBACK"), "1");
 
-    if (!edpy->guest_fb.texture || !edpy->ds) {
+    if (!edpy->guest_fb.texture) {
         return;
     }
-    assert(surface_format(edpy->ds) == PIXMAN_x8r8g8b8);
+    /* Unset used to mean on. That glReadPixels ran on every virgl frame. */
+    if (readback && !edpy->ds) {
+        readback = false;
+    }
 
     eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE,
                    EGL_NO_SURFACE, qemu_egl_rn_ctx);
@@ -258,23 +285,17 @@ static void egl_scanout_flush(DisplayChangeListener *dcl,
         egl_texture_blend(edpy->gls, &edpy->blit_fb, &edpy->cursor_fb,
                           !edpy->y_0_top, edpy->pos_x, edpy->pos_y,
                           1.0, 1.0);
-    } else {
-        /* no cursor -> use simple framebuffer blit */
+    } else if (readback) {
+        assert(surface_format(edpy->ds) == PIXMAN_x8r8g8b8);
         egl_fb_blit(&edpy->blit_fb, &edpy->guest_fb, edpy->y_0_top);
-    }
-
-    /*
-     * Local tebox: TEBOX_EGL_READBACK=0 skips the full-frame CPU readback
-     * into the console surface when nothing (VNC, screendump) consumes it;
-     * cast gets the frame on the GPU below.
-     */
-    if (g_strcmp0(g_getenv("TEBOX_EGL_READBACK"), "0")) {
         egl_fb_read(edpy->ds, &edpy->blit_fb);
     }
     /* Local tebox cast: headless hosts (CIX R1P) have no SDL window. */
     tebox_cast_capture(edpy->guest_fb.framebuffer, edpy->guest_fb.width,
                        edpy->guest_fb.height, edpy->y_0_top);
-    qemu_console_update(edpy->dcl.con, x, y, w, h);
+    if (readback) {
+        qemu_console_update(edpy->dcl.con, x, y, w, h);
+    }
 }
 
 static const DisplayChangeListenerOps egl_ops = {

@@ -48,6 +48,7 @@ typedef struct TeboxCastFrame {
     uint32_t format;
     uint64_t pts_us;
     int dmabuf_fd;
+    int fence_fd; /* GPU done with the dma-buf; -1 if already finished */
 } TeboxCastFrame;
 
 typedef struct TeboxCastState {
@@ -90,6 +91,8 @@ typedef struct TeboxCastState {
 static TeboxCastState tebox_cast = {
     .fd = -1,
     .dma_fd = -1,
+    .pending.dmabuf_fd = -1,
+    .pending.fence_fd = -1,
 };
 
 bool tebox_cast_enabled(void)
@@ -370,8 +373,16 @@ static bool tebox_ensure_scale_fbo(int w, int h)
     return true;
 }
 
+static void tebox_close_fence(int fence_fd)
+{
+    if (fence_fd >= 0) {
+        close(fence_fd);
+    }
+}
+
 static void tebox_queue_frame(uint8_t *pixels, size_t nbytes, int dmabuf_fd,
-                              int w, int h, uint32_t format, uint64_t pts)
+                              int fence_fd, int w, int h, uint32_t format,
+                              uint64_t pts)
 {
     g_mutex_lock(&tebox_cast.lock);
     if (tebox_cast.busy || tebox_cast.has_pending) {
@@ -381,6 +392,7 @@ static void tebox_queue_frame(uint8_t *pixels, size_t nbytes, int dmabuf_fd,
             if (tebox_cast.pending.dmabuf_fd >= 0) {
                 close(tebox_cast.pending.dmabuf_fd);
             }
+            tebox_close_fence(tebox_cast.pending.fence_fd);
         } else {
             tebox_cast.dropped++;
             g_mutex_unlock(&tebox_cast.lock);
@@ -388,12 +400,14 @@ static void tebox_queue_frame(uint8_t *pixels, size_t nbytes, int dmabuf_fd,
             if (dmabuf_fd >= 0) {
                 close(dmabuf_fd);
             }
+            tebox_close_fence(fence_fd);
             return;
         }
         tebox_cast.dropped++;
     }
     tebox_cast.pending.pixels = pixels;
     tebox_cast.pending.dmabuf_fd = dmabuf_fd;
+    tebox_cast.pending.fence_fd = fence_fd;
     tebox_cast.pending.nbytes = nbytes;
     tebox_cast.pending.width = w;
     tebox_cast.pending.height = h;
@@ -405,6 +419,19 @@ static void tebox_queue_frame(uint8_t *pixels, size_t nbytes, int dmabuf_fd,
 }
 
 #ifdef CONFIG_GBM
+/* Sender thread: the blit is already queued. Wait here, not on the UI thread. */
+static void tebox_wait_fence(int fence_fd)
+{
+    struct pollfd pfd = { .fd = fence_fd, .events = POLLIN };
+
+    if (fence_fd < 0) {
+        return;
+    }
+    while (poll(&pfd, 1, 1000) < 0 && errno == EINTR) {
+    }
+    close(fence_fd);
+}
+
 /* Header + 4-byte payload with the dma-buf attached; waits for the ack. */
 static bool tebox_send_dmabuf(int fd, const TeboxCastFrame *fr)
 {
@@ -569,14 +596,31 @@ static bool tebox_cast_capture_dmabuf(unsigned int framebuffer, int src_w,
     }
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_fb);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fb);
-    glFinish();  /* the encoder reads the buffer right after the hand-off */
+    /*
+     * The UI thread is inside virtio-gpu's renderer_blocked. glFinish here
+     * holds that lock until the blit retires and the guest spins. Queue a
+     * native fence and let the sender wait; fall back only if the driver
+     * cannot hand one out.
+     */
+    {
+        EGLSyncKHR sync = egl_create_sync();
+        int fence_fd = -1;
 
-    fd = dup(tebox_cast.dma_fd);
-    if (fd < 0) {
-        return false;
+        if (sync) {
+            glFlush();
+            fence_fd = egl_create_fence(sync);
+        }
+        if (fence_fd < 0) {
+            glFinish();
+        }
+        fd = dup(tebox_cast.dma_fd);
+        if (fd < 0) {
+            tebox_close_fence(fence_fd);
+            return false;
+        }
+        tebox_queue_frame(NULL, 0, fd, fence_fd, out_w, out_h,
+                          TEBOX_CAST_RGBA | TEBOX_CAST_DMABUF, now);
     }
-    tebox_queue_frame(NULL, 0, fd, out_w, out_h,
-                      TEBOX_CAST_RGBA | TEBOX_CAST_DMABUF, now);
     tebox_cast.last_us = now;
     return true;
 }
@@ -602,6 +646,8 @@ static gpointer tebox_sender_thread(gpointer opaque)
 
         fr = tebox_cast.pending;
         tebox_cast.pending.pixels = NULL;
+        tebox_cast.pending.dmabuf_fd = -1;
+        tebox_cast.pending.fence_fd = -1;
         tebox_cast.has_pending = false;
         tebox_cast.busy = true;
 
@@ -610,6 +656,7 @@ static gpointer tebox_sender_thread(gpointer opaque)
             if (fr.dmabuf_fd >= 0) {
                 close(fr.dmabuf_fd);
             }
+            tebox_close_fence(fr.fence_fd);
             tebox_cast.busy = false;
             continue;
         }
@@ -618,7 +665,11 @@ static gpointer tebox_sender_thread(gpointer opaque)
 
 #ifdef CONFIG_GBM
         if (fr.dmabuf_fd >= 0) {
-            bool ok = tebox_send_dmabuf(fd, &fr);
+            bool ok;
+
+            tebox_wait_fence(fr.fence_fd);
+            fr.fence_fd = -1;
+            ok = tebox_send_dmabuf(fd, &fr);
 
             close(fr.dmabuf_fd);
             g_mutex_lock(&tebox_cast.lock);
@@ -668,6 +719,8 @@ static gpointer tebox_sender_thread(gpointer opaque)
         if (tebox_cast.pending.dmabuf_fd >= 0) {
             close(tebox_cast.pending.dmabuf_fd);
         }
+        tebox_close_fence(tebox_cast.pending.fence_fd);
+        tebox_cast.pending.fence_fd = -1;
         tebox_cast.has_pending = false;
     }
     tebox_cast_close_locked();
@@ -810,7 +863,7 @@ void tebox_cast_capture(unsigned int framebuffer, int src_w, int src_h,
         tebox_flip_vertical(copy, out_w, out_h);
     }
 
-    tebox_queue_frame(copy, nbytes, -1, out_w, out_h, format, now);
+    tebox_queue_frame(copy, nbytes, -1, -1, out_w, out_h, format, now);
     tebox_cast.last_us = now;
 }
 
@@ -870,7 +923,7 @@ void tebox_cast_capture_pixels(const void *pixels, int width, int height,
     pixman_image_unref(src);
     pixman_image_unref(dst);
     tebox_cast.last_us = now;
-    tebox_queue_frame(copy, (size_t)out_w * out_h * 4, -1, out_w, out_h,
+    tebox_queue_frame(copy, (size_t)out_w * out_h * 4, -1, -1, out_w, out_h,
                       0 /* CAST_FMT_BGRA8888 */, now);
 }
 
