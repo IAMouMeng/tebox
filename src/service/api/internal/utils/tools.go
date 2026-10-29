@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -46,28 +45,6 @@ func DefaultDataRoot() string {
 		return ".tebox"
 	}
 	return filepath.Join(home, ".tebox")
-}
-
-// ChooseVariant picks TEBOX_VARIANT (if it has KERNEL) or the first src/aosp/* with KERNEL.
-func ChooseVariant(root string) (string, error) {
-	if preferred := os.Getenv(constants.EnvVariant); preferred != "" {
-		if _, err := os.Stat(filepath.Join(root, "src", "aosp", preferred, "KERNEL")); err == nil {
-			return preferred, nil
-		}
-	}
-	entries, err := os.ReadDir(filepath.Join(root, "src", "aosp"))
-	if err != nil {
-		return "", fmt.Errorf("no Android variant under %s/src/aosp", root)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(root, "src", "aosp", entry.Name(), "KERNEL")); err == nil {
-			return entry.Name(), nil
-		}
-	}
-	return "", fmt.Errorf("no Android variant under %s/src/aosp", root)
 }
 
 // TCPPortFree reports whether 127.0.0.1:port can be bound.

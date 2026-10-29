@@ -322,7 +322,6 @@ func instanceMessage(item types.Instance) *api.Instance {
 	return &api.Instance{
 		Id:             item.ID,
 		Name:           item.Name,
-		Variant:        item.Variant,
 		Dir:            item.Dir,
 		AdbPort:        int32(item.AdbPort),
 		Pid:            int32(item.PID),

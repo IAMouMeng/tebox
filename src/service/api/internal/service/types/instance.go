@@ -6,7 +6,6 @@ import api "tebox-api/api/v1"
 type Instance struct {
 	ID      string        `json:"id"`
 	Name    string        `json:"name"`
-	Variant string        `json:"variant"`
 	Dir     string        `json:"dir"`
 	AdbPort int           `json:"adbPort"`
 	PID     int           `json:"pid"`
@@ -29,12 +28,13 @@ type Instance struct {
 	SystemImage    string `json:"systemImage,omitempty"`
 	VendorImage    string `json:"vendorImage,omitempty"`
 	InitramfsImage string `json:"initramfsImage,omitempty"`
-	// Boot overrides set at creation; empty means the variant's file default
-	// (src/aosp/<variant>/qemu/cmdline/boot, GPU, KERNEL).
+	// Boot overrides set at creation. Empty Cmdline means the API passes its
+	// fixed default (constants.DefaultCmdline); empty Gpu / Kernel fall back to
+	// the variant's files inside boot-qemu.sh.
 	Cmdline []string `json:"cmdline,omitempty"`
 	Gpu     string   `json:"gpu,omitempty"`
 	Kernel  string   `json:"kernel,omitempty"`
-	// Append adds tokens on top of Cmdline (or the variant default), not replacing it.
+	// Append adds tokens on top of Cmdline (or the default), not replacing it.
 	Append []string `json:"append,omitempty"`
 	// RunDir is the instance directory chosen at creation (empty: default under data root).
 	RunDir string `json:"runDir,omitempty"`
@@ -47,7 +47,6 @@ type Instance struct {
 type Metadata struct {
 	ID       string        `json:"id"`
 	Name     string        `json:"name"`
-	Variant  string        `json:"variant"`
 	AdbPort  int           `json:"adbPort"`
 	Profile  DeviceProfile `json:"profile"`
 	CPUCores int           `json:"cpuCores"`
@@ -69,7 +68,6 @@ func (item Instance) Metadata() Metadata {
 	return Metadata{
 		ID:             item.ID,
 		Name:           item.Name,
-		Variant:        item.Variant,
 		AdbPort:        item.AdbPort,
 		Profile:        item.Profile,
 		CPUCores:       item.CPUCores,

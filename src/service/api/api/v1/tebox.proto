@@ -101,9 +101,10 @@ message ListInstancesResponse {
 }
 
 message Instance {
+  reserved 3;                // was `variant`
+  reserved "variant";
   string id = 1;
   string name = 2;
-  string variant = 3;
   string dir = 4;  // instance directory (userdata, sockets)
   int32 adb_port = 5;
   int32 pid = 6;
@@ -123,7 +124,8 @@ message Instance {
   string vendor_image = 17;
   string initramfs_image = 18;
   int32 disk_free_mb = 19;  // max(0, disk_mb - disk_used_mb)
-  // Boot overrides set at creation; empty means the variant's file default.
+  // Boot overrides set at creation; empty cmdline means the API's fixed
+  // default, empty gpu / kernel the variant's files.
   repeated string cmdline = 20;
   string gpu = 21;
   string kernel = 22;

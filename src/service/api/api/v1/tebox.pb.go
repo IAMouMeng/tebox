@@ -860,7 +860,6 @@ type Instance struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Name     string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Variant  string                 `protobuf:"bytes,3,opt,name=variant,proto3" json:"variant,omitempty"`
 	Dir      string                 `protobuf:"bytes,4,opt,name=dir,proto3" json:"dir,omitempty"` // instance directory (userdata, sockets)
 	AdbPort  int32                  `protobuf:"varint,5,opt,name=adb_port,json=adbPort,proto3" json:"adb_port,omitempty"`
 	Pid      int32                  `protobuf:"varint,6,opt,name=pid,proto3" json:"pid,omitempty"`
@@ -880,7 +879,8 @@ type Instance struct {
 	VendorImage    string `protobuf:"bytes,17,opt,name=vendor_image,json=vendorImage,proto3" json:"vendor_image,omitempty"`
 	InitramfsImage string `protobuf:"bytes,18,opt,name=initramfs_image,json=initramfsImage,proto3" json:"initramfs_image,omitempty"`
 	DiskFreeMb     int32  `protobuf:"varint,19,opt,name=disk_free_mb,json=diskFreeMb,proto3" json:"disk_free_mb,omitempty"` // max(0, disk_mb - disk_used_mb)
-	// Boot overrides set at creation; empty means the variant's file default.
+	// Boot overrides set at creation; empty cmdline means the API's fixed
+	// default, empty gpu / kernel the variant's files.
 	Cmdline       []string `protobuf:"bytes,20,rep,name=cmdline,proto3" json:"cmdline,omitempty"`
 	Gpu           string   `protobuf:"bytes,21,opt,name=gpu,proto3" json:"gpu,omitempty"`
 	Kernel        string   `protobuf:"bytes,22,opt,name=kernel,proto3" json:"kernel,omitempty"`
@@ -929,13 +929,6 @@ func (x *Instance) GetId() string {
 func (x *Instance) GetName() string {
 	if x != nil {
 		return x.Name
-	}
-	return ""
-}
-
-func (x *Instance) GetVariant() string {
-	if x != nil {
-		return x.Variant
 	}
 	return ""
 }
@@ -1396,11 +1389,10 @@ const file_tebox_proto_rawDesc = "" +
 	"\x0fConsoleLogChunk\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\"I\n" +
 	"\x15ListInstancesResponse\x120\n" +
-	"\tinstances\x18\x01 \x03(\v2\x12.tebox.v1.InstanceR\tinstances\"\xa5\x05\n" +
+	"\tinstances\x18\x01 \x03(\v2\x12.tebox.v1.InstanceR\tinstances\"\x9a\x05\n" +
 	"\bInstance\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
-	"\avariant\x18\x03 \x01(\tR\avariant\x12\x10\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
 	"\x03dir\x18\x04 \x01(\tR\x03dir\x12\x19\n" +
 	"\badb_port\x18\x05 \x01(\x05R\aadbPort\x12\x10\n" +
 	"\x03pid\x18\x06 \x01(\x05R\x03pid\x12\x18\n" +
@@ -1423,7 +1415,7 @@ const file_tebox_proto_rawDesc = "" +
 	"\acmdline\x18\x14 \x03(\tR\acmdline\x12\x10\n" +
 	"\x03gpu\x18\x15 \x01(\tR\x03gpu\x12\x16\n" +
 	"\x06kernel\x18\x16 \x01(\tR\x06kernel\x12\x16\n" +
-	"\x06append\x18\x17 \x03(\tR\x06append\"i\n" +
+	"\x06append\x18\x17 \x03(\tR\x06appendJ\x04\b\x03\x10\x04R\avariant\"i\n" +
 	"\x11GetPreviewRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x05R\x04size\x12\x16\n" +

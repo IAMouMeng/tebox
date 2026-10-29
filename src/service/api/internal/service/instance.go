@@ -26,7 +26,6 @@ import (
 type Manager struct {
 	ProjectRoot string
 	DataRoot    string
-	Variant     string
 
 	mu        sync.Mutex
 	procs     map[string]*exec.Cmd
@@ -39,14 +38,9 @@ type Manager struct {
 }
 
 func NewManager(projectRoot, dataRoot string) (*Manager, error) {
-	variant, err := utils.ChooseVariant(projectRoot)
-	if err != nil {
-		return nil, err
-	}
 	m := &Manager{
 		ProjectRoot: projectRoot,
 		DataRoot:    dataRoot,
-		Variant:     variant,
 		procs:       make(map[string]*exec.Cmd),
 		castProcs:   make(map[string]*exec.Cmd),
 		castPorts:   make(map[string]int),
@@ -163,7 +157,7 @@ func (m *Manager) liveLocked(item types.Instance) types.Instance {
 	}
 	item.CastPort = m.castPorts[item.ID]
 	item.ControlPort = m.ControlPort(item.ID)
-	return m.withImages(item)
+	return item
 }
 
 func (m *Manager) Create(opts types.CreateOptions) (types.Instance, error) {
@@ -174,7 +168,6 @@ func (m *Manager) Create(opts types.CreateOptions) (types.Instance, error) {
 	item := types.Instance{
 		ID:       fmt.Sprintf("android-%d-%d", now.Unix(), now.Nanosecond()/1e6),
 		Name:     fmt.Sprintf("Android %d", now.Unix()),
-		Variant:  m.Variant,
 		Profile:  types.DeviceProfile{Latitude: 39.9042, Longitude: 116.4074, Country: "CN", OperatorNumeric: "46000", OperatorName: "China Mobile", CellId: "0x1001", PhoneNumber: "+8613800138000"},
 		CPUCores: opts.CPUCores,
 		MemoryMB: opts.MemoryMB,
@@ -221,27 +214,12 @@ func (m *Manager) Create(opts types.CreateOptions) (types.Instance, error) {
 	if err := m.writeMetadata(item); err != nil {
 		return types.Instance{}, err
 	}
-	return m.withImages(item), nil
-}
-
-// withImages fills the image paths the instance boots, defaulting to the
-// variant's images.
-func (m *Manager) withImages(item types.Instance) types.Instance {
-	images := filepath.Join(m.ProjectRoot, "src", "aosp", item.Variant, "images")
-	if item.SystemImage == "" {
-		item.SystemImage = filepath.Join(images, "system.img")
-	}
-	if item.VendorImage == "" {
-		item.VendorImage = filepath.Join(images, "vendor.img")
-	}
-	if item.InitramfsImage == "" {
-		item.InitramfsImage = filepath.Join(images, "initramfs.img")
-	}
-	return item
+	return item, nil
 }
 
 // imageEnv passes the instance's own images to ./run, after checking they
-// are still there.
+// are still there. Empty paths are left to ./run, which boots the sole
+// variant's own images under src/aosp/<variant>/images.
 func (m *Manager) imageEnv(item types.Instance) ([]string, error) {
 	var env []string
 	for _, img := range []struct{ key, path string }{
@@ -323,7 +301,7 @@ func (m *Manager) Update(id string, opts types.UpdateOptions) (types.Instance, e
 		return types.Instance{}, err
 	}
 	m.fillResources(&item)
-	return m.withImages(item), nil
+	return item, nil
 }
 
 // ConsoleLogPath resolves an instance's serial console capture file.
@@ -429,7 +407,7 @@ func (m *Manager) Start(id string) error {
 	_ = os.Remove(qmpPath)
 	_ = os.Remove(utils.InputQMPPath(item.Dir))
 
-	cmd := exec.Command(runPath, item.Variant)
+	cmd := exec.Command(runPath)
 	cmd.Dir = m.ProjectRoot
 	cmd.Env = append(os.Environ(),
 		"TEBOX_INSTANCE_DIR="+item.Dir,
@@ -447,11 +425,14 @@ func (m *Manager) Start(id string) error {
 		"TEBOX_CAST_SOCK="+filepath.Join(item.Dir, "cast.sock"),
 	)
 	cmd.Env = append(cmd.Env, images...)
-	// Boot overrides passed at creation; boot-qemu.sh falls back to the
-	// variant's files when these are empty.
-	if len(item.Cmdline) > 0 {
-		cmd.Env = append(cmd.Env, "TEBOX_CMDLINE="+strings.Join(item.Cmdline, " "))
+	// Always hand boot-qemu.sh a cmdline: the instance's own tokens when set
+	// at creation, otherwise the fixed default. GPU / kernel stay empty here
+	// and fall back to the variant's files inside boot-qemu.sh.
+	cmdline := item.Cmdline
+	if len(cmdline) == 0 {
+		cmdline = constants.DefaultCmdline
 	}
+	cmd.Env = append(cmd.Env, "TEBOX_CMDLINE="+strings.Join(cmdline, " "))
 	if item.Gpu != "" {
 		cmd.Env = append(cmd.Env, "TEBOX_GPU="+item.Gpu)
 	}
@@ -766,7 +747,7 @@ func (m *Manager) readMetadata(dir string) (types.Instance, error) {
 	if item.RunDir != "" {
 		item.Dir = item.RunDir
 	}
-	if item.ID == "" || item.Variant == "" {
+	if item.ID == "" {
 		return types.Instance{}, fmt.Errorf("invalid metadata")
 	}
 	m.fillResources(&item)

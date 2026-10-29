@@ -24,8 +24,23 @@ const (
 	EnvADB     = "TEBOX_ADB"
 	EnvRoot    = "TEBOX_ROOT"
 	EnvDataDir = "TEBOX_DATA_DIR"
-	EnvVariant = "TEBOX_VARIANT"
 )
+
+// DefaultCmdline is the fixed kernel / androidboot cmdline the API passes as
+// TEBOX_CMDLINE when an instance was created without one of its own.
+// boot-qemu.sh layers GPU / debug / extra tokens on top of these.
+var DefaultCmdline = []string{
+	"console=ttyAMA0,115200",
+	"earlycon=pl011,0x9000000",
+	"ignore_loglevel",
+	"androidboot.console=ttyAMA0",
+	"androidboot.hardware=ranchu",
+	"androidboot.selinux=permissive",
+	"androidboot.zygote=zygote64",
+	"androidboot.init_fatal_reboot_target=",
+	"rdinit=/init",
+	"module.sig_enforce=0",
+}
 
 // Control / input event types and actions (JSON wire values).
 const (
