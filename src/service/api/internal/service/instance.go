@@ -1,12 +1,17 @@
 package service
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +19,7 @@ import (
 	api "tebox-api/api/v1"
 	"tebox-api/internal/constants"
 	"tebox-api/internal/service/types"
+	"tebox-api/internal/teboxctl"
 	"tebox-api/internal/utils"
 )
 
@@ -52,6 +58,52 @@ func NewManager(projectRoot, dataRoot string) (*Manager, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+// watchControl reads the guest's framed control-channel messages from the
+// instance's ctl.sock (QEMU virtio-serial tebox.ctl, guest -> host) and
+// dispatches each frame by channel. This is the one internal guest<->host
+// link (see internal/teboxctl); the API never asks the guest over adb. It
+// reconnects until the process is replaced.
+func (m *Manager) watchControl(id string, cmd *exec.Cmd, sock string) {
+	dir := filepath.Dir(sock)
+	for {
+		m.mu.Lock()
+		current := m.procs[id] == cmd
+		m.mu.Unlock()
+		if !current {
+			return
+		}
+		conn, err := net.DialTimeout("unix", sock, 2*time.Second)
+		if err != nil {
+			time.Sleep(time.Second)
+			continue
+		}
+		r := bufio.NewReader(conn)
+		for {
+			f, rerr := teboxctl.ReadFrame(r)
+			if rerr != nil {
+				break
+			}
+			m.dispatchControl(dir, f)
+		}
+		_ = conn.Close()
+		time.Sleep(time.Second)
+	}
+}
+
+// dispatchControl routes one decoded control frame to its subsystem. Unknown
+// channels are ignored so a newer guest can add channels without breaking an
+// older host.
+func (m *Manager) dispatchControl(dir string, f teboxctl.Frame) {
+	switch f.Channel {
+	case teboxctl.ChannelRotation:
+		if f.Type == teboxctl.RotationData && len(f.Payload) == 1 && f.Payload[0] <= 3 {
+			// QEMU reads cast.rotation to rotate cast/screendump upright.
+			_ = os.WriteFile(filepath.Join(dir, "cast.rotation"),
+				[]byte(strconv.Itoa(int(f.Payload[0]))+"\n"), 0o644)
+		}
+	}
 }
 
 func (m *Manager) instancesDir() string {
@@ -132,6 +184,10 @@ func (m *Manager) Create(opts types.CreateOptions) (types.Instance, error) {
 		SystemImage:    opts.SystemImage,
 		VendorImage:    opts.VendorImage,
 		InitramfsImage: opts.InitramfsImage,
+		Cmdline:        opts.Cmdline,
+		Gpu:            opts.Gpu,
+		Kernel:         opts.Kernel,
+		Append:         opts.Append,
 		RunDir:         opts.InstanceDir,
 	}
 	if opts.Name != "" {
@@ -202,6 +258,115 @@ func (m *Manager) imageEnv(item types.Instance) ([]string, error) {
 		env = append(env, img.key+"="+img.path)
 	}
 	return env, nil
+}
+
+// Update changes a stopped instance's stored config; running instances keep
+// their current config until the next Start. nil fields are left unchanged.
+func (m *Manager) Update(id string, opts types.UpdateOptions) (types.Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, err := m.readMetadata(filepath.Join(m.instancesDir(), id))
+	if err != nil {
+		return types.Instance{}, err
+	}
+	if opts.Name != nil {
+		item.Name = strings.TrimSpace(*opts.Name)
+	}
+	if opts.CPUCores != nil {
+		if *opts.CPUCores < 1 || *opts.CPUCores > runtime.NumCPU() {
+			return types.Instance{}, fmt.Errorf("%w: cpu_cores must be 1..%d (host cores)", constants.ErrInvalidOptions, runtime.NumCPU())
+		}
+		item.CPUCores = *opts.CPUCores
+	}
+	if opts.MemoryMB != nil {
+		if *opts.MemoryMB < 1024 || *opts.MemoryMB > 65536 {
+			return types.Instance{}, fmt.Errorf("%w: memory_mb must be 1024..65536", constants.ErrInvalidOptions)
+		}
+		item.MemoryMB = *opts.MemoryMB
+	}
+	for _, f := range []struct{ in, out *string }{
+		{opts.SystemImage, &item.SystemImage},
+		{opts.VendorImage, &item.VendorImage},
+		{opts.InitramfsImage, &item.InitramfsImage},
+	} {
+		if f.in == nil {
+			continue
+		}
+		v := strings.TrimSpace(*f.in)
+		if v != "" {
+			if !filepath.IsAbs(v) {
+				return types.Instance{}, fmt.Errorf("%w: image path must be absolute: %s", constants.ErrInvalidOptions, v)
+			}
+			v = filepath.Clean(v)
+			if err := utils.CheckReadableImage(v); err != nil {
+				return types.Instance{}, fmt.Errorf("%w: %v", constants.ErrInvalidOptions, err)
+			}
+		}
+		*f.out = v
+	}
+	if opts.Gpu != nil {
+		item.Gpu = strings.TrimSpace(*opts.Gpu)
+	}
+	if opts.Kernel != nil {
+		item.Kernel = strings.TrimSpace(*opts.Kernel)
+	}
+	if opts.Cmdline != nil {
+		item.Cmdline = *opts.Cmdline
+	}
+	if opts.Append != nil {
+		item.Append = *opts.Append
+	}
+	if opts.Profile != nil {
+		item.Profile = *opts.Profile
+	}
+	if err := m.writeMetadata(item); err != nil {
+		return types.Instance{}, err
+	}
+	m.fillResources(&item)
+	return m.withImages(item), nil
+}
+
+// ConsoleLogPath resolves an instance's serial console capture file.
+func (m *Manager) ConsoleLogPath(id string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, err := m.readMetadata(filepath.Join(m.instancesDir(), id))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(item.Dir, constants.ConsoleLogName), nil
+}
+
+// ConsoleLog returns up to maxBytes from the tail of the console log.
+func (m *Manager) ConsoleLog(id string, maxBytes int) ([]byte, error) {
+	path, err := m.ConsoleLogPath(id)
+	if err != nil {
+		return nil, err
+	}
+	if maxBytes <= 0 {
+		maxBytes = constants.ConsoleLogTailDefault
+	}
+	if maxBytes > constants.ConsoleLogTailMax {
+		maxBytes = constants.ConsoleLogTailMax
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: no console log yet (instance not started)", constants.ErrInputNotRunning)
+		}
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if off := st.Size() - int64(maxBytes); off > 0 {
+		if _, err := f.Seek(off, io.SeekStart); err != nil {
+			return nil, err
+		}
+	}
+	return io.ReadAll(f)
 }
 
 func (m *Manager) Delete(id string) error {
@@ -282,11 +447,44 @@ func (m *Manager) Start(id string) error {
 		"TEBOX_CAST_SOCK="+filepath.Join(item.Dir, "cast.sock"),
 	)
 	cmd.Env = append(cmd.Env, images...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Boot overrides passed at creation; boot-qemu.sh falls back to the
+	// variant's files when these are empty.
+	if len(item.Cmdline) > 0 {
+		cmd.Env = append(cmd.Env, "TEBOX_CMDLINE="+strings.Join(item.Cmdline, " "))
+	}
+	if item.Gpu != "" {
+		cmd.Env = append(cmd.Env, "TEBOX_GPU="+item.Gpu)
+	}
+	if item.Kernel != "" {
+		cmd.Env = append(cmd.Env, "KERNEL_IMG="+item.Kernel)
+	}
+	if len(item.Append) > 0 {
+		// Append on top of any QEMU_EXTRA_APPEND the container already set
+		// (e.g. cix-r1p-start.sh), rather than clobbering it.
+		extra := strings.Join(item.Append, " ")
+		if cur := os.Getenv("QEMU_EXTRA_APPEND"); cur != "" {
+			extra = cur + " " + extra
+		}
+		cmd.Env = append(cmd.Env, "QEMU_EXTRA_APPEND="+extra)
+	}
+	// Capture this instance's serial console (-serial stdio) to its own file
+	// so logs are not interleaved across instances; still mirror to the
+	// container stdout. GetConsoleLog / StreamConsoleLog read this file.
+	var logFile *os.File
+	if f, ferr := os.Create(filepath.Join(item.Dir, constants.ConsoleLogName)); ferr == nil {
+		logFile = f
+		cmd.Stdout = io.MultiWriter(os.Stdout, f)
+		cmd.Stderr = io.MultiWriter(os.Stderr, f)
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 	delete(m.castFails, id)
 	m.startCastLocked(item)
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
 		if cast := m.castProcs[item.ID]; cast != nil && cast.Process != nil {
 			_ = cast.Process.Kill()
 			delete(m.castProcs, item.ID)
@@ -299,8 +497,12 @@ func (m *Manager) Start(id string) error {
 	delete(m.booted, id)
 	delete(m.stopping, id)
 	go m.watchBoot(id, cmd, fmt.Sprintf("127.0.0.1:%d", item.AdbPort))
+	go m.watchControl(id, cmd, filepath.Join(item.Dir, "ctl.sock"))
 	go func() {
 		_ = cmd.Wait()
+		if logFile != nil {
+			_ = logFile.Close()
+		}
 		m.mu.Lock()
 		if m.procs[id] == cmd {
 			delete(m.procs, id)

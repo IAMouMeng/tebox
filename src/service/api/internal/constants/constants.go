@@ -100,6 +100,11 @@ const (
 	RunDirMarker      = ".tebox-instance"
 	MaxInstanceDirLen = 103 - len("/qmp-input.sock")
 	DefaultADBBinary  = "adb"
+	// ConsoleLogName is the per-instance serial console capture under its dir.
+	ConsoleLogName = "console.log"
+	// ConsoleLogTailDefault / Max bound GetConsoleLog's tail read (bytes).
+	ConsoleLogTailDefault = 64 * 1024
+	ConsoleLogTailMax     = 4 * 1024 * 1024
 )
 
 // Cast framing. Codecs match cast/include/cast/protocol.h.
@@ -109,9 +114,10 @@ const (
 	ProtoCtrl   = "TEBOX-CTRL/1"
 	ProtoCamera = "TEBOX-CAMERA/1"
 
-	CodecAAC   = 16
-	CodecMJPEG = 32
-	CodecPCM   = 33
+	CodecAAC      = 16
+	CodecMJPEG    = 32
+	CodecPCM      = 33
+	CodecRotation = 48 // server -> viewer: guest rotation, 1 byte quarter-turns
 
 	CastRecordHeader = 10
 	CastUplinkMax    = 4 << 20 // CAST_UPLINK_MAX

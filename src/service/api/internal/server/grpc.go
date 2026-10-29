@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"io"
+	"os"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -56,11 +59,145 @@ func (s *Service) CreateInstance(_ context.Context, req *api.CreateInstanceReque
 		VendorImage:    req.GetVendorImage(),
 		InitramfsImage: req.GetInitramfsImage(),
 		InstanceDir:    req.GetInstanceDir(),
+		Cmdline:        req.GetCmdline(),
+		Gpu:            req.GetGpu(),
+		Kernel:         req.GetKernel(),
+		Append:         req.GetAppend(),
 	})
 	if err != nil {
 		return nil, utils.RPCError(err)
 	}
 	return instanceMessage(item), nil
+}
+
+func (s *Service) UpdateInstance(_ context.Context, req *api.UpdateInstanceRequest) (*api.Instance, error) {
+	id, err := utils.RequireID(req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	var opts types.UpdateOptions
+	if req.Name != nil {
+		v := req.GetName()
+		opts.Name = &v
+	}
+	if req.CpuCores != nil {
+		v := int(req.GetCpuCores())
+		opts.CPUCores = &v
+	}
+	if req.MemoryMb != nil {
+		v := int(req.GetMemoryMb())
+		opts.MemoryMB = &v
+	}
+	if req.SystemImage != nil {
+		v := req.GetSystemImage()
+		opts.SystemImage = &v
+	}
+	if req.VendorImage != nil {
+		v := req.GetVendorImage()
+		opts.VendorImage = &v
+	}
+	if req.InitramfsImage != nil {
+		v := req.GetInitramfsImage()
+		opts.InitramfsImage = &v
+	}
+	if req.GetCmdline() != nil {
+		v := req.GetCmdline().GetValues()
+		opts.Cmdline = &v
+	}
+	if req.Gpu != nil {
+		v := req.GetGpu()
+		opts.Gpu = &v
+	}
+	if req.Kernel != nil {
+		v := req.GetKernel()
+		opts.Kernel = &v
+	}
+	if req.GetAppend() != nil {
+		v := req.GetAppend().GetValues()
+		opts.Append = &v
+	}
+	if p := req.GetProfile(); p != nil {
+		dp := deviceProfile(p)
+		opts.Profile = &dp
+	}
+	item, err := s.mgr.Update(id, opts)
+	if err != nil {
+		return nil, utils.RPCError(err)
+	}
+	return instanceMessage(item), nil
+}
+
+func (s *Service) GetConsoleLog(_ context.Context, req *api.ConsoleLogRequest) (*api.ConsoleLogResponse, error) {
+	id, err := utils.RequireID(req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	data, err := s.mgr.ConsoleLog(id, int(req.GetMaxBytes()))
+	if err != nil {
+		return nil, utils.RPCError(err)
+	}
+	return &api.ConsoleLogResponse{Data: data}, nil
+}
+
+func (s *Service) StreamConsoleLog(req *api.ConsoleLogRequest, stream api.AndroidService_StreamConsoleLogServer) error {
+	id, err := utils.RequireID(req.GetId())
+	if err != nil {
+		return err
+	}
+	path, err := s.mgr.ConsoleLogPath(id)
+	if err != nil {
+		return utils.RPCError(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return utils.RPCError(err)
+	}
+	defer f.Close()
+	// Start near the tail so the client gets recent context, then follow.
+	tail := int64(req.GetMaxBytes())
+	if tail <= 0 {
+		tail = int64(64 * 1024)
+	}
+	if st, serr := f.Stat(); serr == nil {
+		if off := st.Size() - tail; off > 0 {
+			_, _ = f.Seek(off, io.SeekStart)
+		}
+	}
+	ctx := stream.Context()
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := f.Read(buf)
+		if n > 0 {
+			if serr := stream.Send(&api.ConsoleLogChunk{Data: append([]byte(nil), buf[:n]...)}); serr != nil {
+				return serr
+			}
+		}
+		if rerr == io.EOF || (rerr == nil && n == 0) {
+			// A restart recreates console.log (truncate to 0); our read
+			// offset would then sit past EOF and miss the new boot. Detect
+			// the shrink and rewind to the start of the fresh file.
+			if st, serr := f.Stat(); serr == nil {
+				if pos, perr := f.Seek(0, io.SeekCurrent); perr == nil && st.Size() < pos {
+					_, _ = f.Seek(0, io.SeekStart)
+					continue
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(150 * time.Millisecond):
+			}
+			continue
+		}
+		if rerr != nil {
+			return utils.RPCError(rerr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
 }
 
 func (s *Service) DeleteInstance(_ context.Context, req *api.InstanceRequest) (*api.Empty, error) {
@@ -201,6 +338,10 @@ func instanceMessage(item types.Instance) *api.Instance {
 		SystemImage:    item.SystemImage,
 		VendorImage:    item.VendorImage,
 		InitramfsImage: item.InitramfsImage,
+		Cmdline:        item.Cmdline,
+		Gpu:            item.Gpu,
+		Kernel:         item.Kernel,
+		Append:         item.Append,
 		Profile:        profileMessage(item.Profile),
 	}
 }

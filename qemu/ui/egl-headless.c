@@ -162,24 +162,74 @@ static void egl_release_dmabuf(DisplayChangeListener *dcl,
 #endif
 
 /*
+ * Local tebox: the guest's display rotation, reported by the guest over the
+ * tebox.rotation virtio-serial port and written to cast.rotation next to
+ * cast.sock (TEBOX_CAST_SOCK). The raw scanout is always the physical portrait
+ * buffer, so cast and screendump rotate by this to come out upright. Cached by
+ * mtime; 0 (no rotation) when absent. Never queries the guest over adb.
+ */
+int tebox_display_rotation(void)
+{
+    static char path[512];
+    static int have_path = -1;
+    static int cached;
+    static time_t last_mtime;
+    struct stat st;
+    const char *sock;
+    const char *slash;
+    FILE *f;
+    int q;
+
+    if (have_path < 0) {
+        sock = getenv("TEBOX_CAST_SOCK");
+        if (sock && sock[0] && (slash = strrchr(sock, '/')) != NULL) {
+            snprintf(path, sizeof(path), "%.*s/cast.rotation",
+                     (int)(slash - sock), sock);
+            have_path = 1;
+        } else {
+            have_path = 0;
+        }
+    }
+    if (have_path != 1 || stat(path, &st) != 0) {
+        return cached;
+    }
+    if (st.st_mtime != last_mtime) {
+        last_mtime = st.st_mtime;
+        f = fopen(path, "r");
+        if (f) {
+            if (fscanf(f, "%d", &q) == 1 && q >= 0 && q <= 3) {
+                cached = q * 90;
+            }
+            fclose(f);
+        }
+    }
+    return cached;
+}
+
+/*
  * PIXMAN_x8r8g8b8 is B,G,R,x in memory. Mali GLES cannot read the
  * imported guest texture or a GL_BGRA intermediate with GL_BGRA, so
- * blit into a fresh GL_RGBA target (same path as tebox cast) and swizzle.
+ * blit into a fresh GL_RGBA target (same path as tebox cast), then rotate
+ * by the guest rotation and swizzle into dst. dst is sized for the rotation
+ * (width/height swapped for 90/270) by the caller.
  */
-static bool egl_read_guest_rgba(DisplaySurface *dst, egl_fb *src)
+static bool egl_read_guest_rgba(DisplaySurface *dst, egl_fb *src, int rot)
 {
-    int w = surface_width(dst);
-    int h = surface_height(dst);
+    int gw = src->width;
+    int gh = src->height;
+    int dw = surface_width(dst);
     uint8_t *data = surface_data(dst);
     GLint draw_fb = 0, read_fb = 0, tex_binding = 0, read_buffer = 0;
     GLuint tex = 0, fbo = 0;
     GLenum err;
-    int i, n = w * h;
+    uint8_t *tmp;
+    int cw = (360 - rot) % 360; /* rotate the portrait buffer upright */
+    int x, y;
 
-    /*
-     * Cast samples this same guest framebuffer on the next flush. Leave
-     * its bindings as we found them or that frame is black.
-     */
+    tmp = g_try_malloc((size_t)gw * gh * 4);
+    if (!tmp) {
+        return false;
+    }
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw_fb);
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex_binding);
@@ -190,19 +240,18 @@ static bool egl_read_guest_rgba(DisplaySurface *dst, egl_fb *src)
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0,
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gw, gh, 0,
                  GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, tex, 0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, src->framebuffer);
-    glBlitFramebuffer(0, 0, src->width, src->height,
-                      0, 0, w, h,
+    glBlitFramebuffer(0, 0, gw, gh, 0, 0, gw, gh,
                       GL_COLOR_BUFFER_BIT, GL_NEAREST);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
     glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glReadPixels(0, 0, gw, gh, GL_RGBA, GL_UNSIGNED_BYTE, tmp);
     err = glGetError();
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_fb);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fb);
@@ -213,13 +262,30 @@ static bool egl_read_guest_rgba(DisplaySurface *dst, egl_fb *src)
     while (glGetError() != GL_NO_ERROR) {
     }
     if (err != GL_NO_ERROR) {
+        g_free(tmp);
         return false;
     }
-    for (i = 0; i < n; i++) {
-        uint8_t r = data[i * 4];
-        data[i * 4] = data[i * 4 + 2];
-        data[i * 4 + 2] = r;
+    /* Rotate tmp (gw x gh, RGBA) clockwise by cw into dst (BGRA), swizzled. */
+    for (y = 0; y < gh; y++) {
+        for (x = 0; x < gw; x++) {
+            const uint8_t *s = tmp + ((size_t)y * gw + x) * 4;
+            int dx, dy;
+            uint8_t *d;
+
+            switch (cw) {
+            case 90:  dx = gh - 1 - y; dy = x;          break;
+            case 180: dx = gw - 1 - x; dy = gh - 1 - y; break;
+            case 270: dx = y;          dy = gw - 1 - x; break;
+            default:  dx = x;          dy = y;          break;
+            }
+            d = data + ((size_t)dy * dw + dx) * 4;
+            d[0] = s[2];
+            d[1] = s[1];
+            d[2] = s[0];
+            d[3] = 255;
+        }
     }
+    g_free(tmp);
     return true;
 }
 
@@ -233,21 +299,30 @@ static pixman_image_t *egl_gl_readback(DisplayChangeListener *dcl)
         !edpy->guest_fb.height) {
         return NULL;
     }
-    w = edpy->guest_fb.width;
-    h = edpy->guest_fb.height;
-    if (!edpy->dump_ds || surface_width(edpy->dump_ds) != w ||
-        surface_height(edpy->dump_ds) != h) {
-        qemu_free_displaysurface(edpy->dump_ds);
-        edpy->dump_ds = qemu_create_displaysurface(w, h);
-    }
-    if (!edpy->dump_ds) {
-        return NULL;
-    }
+    {
+        int rot = tebox_display_rotation();
 
-    eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE,
-                   EGL_NO_SURFACE, qemu_egl_rn_ctx);
-    if (!egl_read_guest_rgba(edpy->dump_ds, &edpy->guest_fb)) {
-        return NULL;
+        w = edpy->guest_fb.width;
+        h = edpy->guest_fb.height;
+        if (rot == 90 || rot == 270) {
+            int t = w;
+            w = h;
+            h = t;
+        }
+        if (!edpy->dump_ds || surface_width(edpy->dump_ds) != w ||
+            surface_height(edpy->dump_ds) != h) {
+            qemu_free_displaysurface(edpy->dump_ds);
+            edpy->dump_ds = qemu_create_displaysurface(w, h);
+        }
+        if (!edpy->dump_ds) {
+            return NULL;
+        }
+
+        eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE,
+                       EGL_NO_SURFACE, qemu_egl_rn_ctx);
+        if (!egl_read_guest_rgba(edpy->dump_ds, &edpy->guest_fb, rot)) {
+            return NULL;
+        }
     }
     return pixman_image_ref(edpy->dump_ds->image);
 }

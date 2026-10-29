@@ -29,6 +29,13 @@ type Instance struct {
 	SystemImage    string `json:"systemImage,omitempty"`
 	VendorImage    string `json:"vendorImage,omitempty"`
 	InitramfsImage string `json:"initramfsImage,omitempty"`
+	// Boot overrides set at creation; empty means the variant's file default
+	// (src/aosp/<variant>/qemu/cmdline/boot, GPU, KERNEL).
+	Cmdline []string `json:"cmdline,omitempty"`
+	Gpu     string   `json:"gpu,omitempty"`
+	Kernel  string   `json:"kernel,omitempty"`
+	// Append adds tokens on top of Cmdline (or the variant default), not replacing it.
+	Append []string `json:"append,omitempty"`
 	// RunDir is the instance directory chosen at creation (empty: default under data root).
 	RunDir string `json:"runDir,omitempty"`
 
@@ -47,10 +54,14 @@ type Metadata struct {
 	MemoryMB int           `json:"memoryMb"`
 	DiskMB   int           `json:"diskMb"`
 
-	SystemImage    string `json:"systemImage,omitempty"`
-	VendorImage    string `json:"vendorImage,omitempty"`
-	InitramfsImage string `json:"initramfsImage,omitempty"`
-	RunDir         string `json:"runDir,omitempty"`
+	SystemImage    string   `json:"systemImage,omitempty"`
+	VendorImage    string   `json:"vendorImage,omitempty"`
+	InitramfsImage string   `json:"initramfsImage,omitempty"`
+	Cmdline        []string `json:"cmdline,omitempty"`
+	Gpu            string   `json:"gpu,omitempty"`
+	Kernel         string   `json:"kernel,omitempty"`
+	Append         []string `json:"append,omitempty"`
+	RunDir         string   `json:"runDir,omitempty"`
 }
 
 // Metadata returns the fields stored in instance.json.
@@ -67,6 +78,10 @@ func (item Instance) Metadata() Metadata {
 		SystemImage:    item.SystemImage,
 		VendorImage:    item.VendorImage,
 		InitramfsImage: item.InitramfsImage,
+		Cmdline:        item.Cmdline,
+		Gpu:            item.Gpu,
+		Kernel:         item.Kernel,
+		Append:         item.Append,
 		RunDir:         item.RunDir,
 	}
 }
@@ -81,6 +96,26 @@ type CreateOptions struct {
 	VendorImage    string
 	InitramfsImage string
 	InstanceDir    string
+	Cmdline        []string
+	Gpu            string
+	Kernel         string
+	Append         []string
+}
+
+// UpdateOptions changes a stopped instance's stored config; nil pointers and
+// nil slices leave a field unchanged. Changes take effect on the next Start.
+type UpdateOptions struct {
+	Name           *string
+	CPUCores       *int
+	MemoryMB       *int
+	SystemImage    *string
+	VendorImage    *string
+	InitramfsImage *string
+	Cmdline        *[]string
+	Gpu            *string
+	Kernel         *string
+	Append         *[]string
+	Profile        *DeviceProfile
 }
 
 // DeviceProfile is guest identity / location applied over adb.

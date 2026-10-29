@@ -38,6 +38,8 @@ func (m *Manager) Preview(id string, opts types.PreviewOptions) (types.Preview, 
 	if err != nil {
 		return types.Preview{}, err
 	}
+	// QEMU's screendump (egl_gl_readback) already rotates to upright using
+	// the guest-reported rotation, so the dump is correctly oriented here.
 	img = utils.ScalePreview(img, opts.Size)
 
 	var buf bytes.Buffer
